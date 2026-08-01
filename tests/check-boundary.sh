@@ -10,7 +10,7 @@ if [ ! -d "$kryon" ]; then
 fi
 
 matches=$(
-    rg -n '(^|[^[:alnum:]_])kite([^[:alnum:]_]|$)|/kite' \
+    rg -in '(^|[^[:alnum:]_])(kite|krait)([^[:alnum:]_]|$)|/(kite|krait)' \
         "$kryon"/Makefile "$kryon"/GNUmakefile "$kryon"/makefile \
         "$kryon"/README.md "$kryon"/CHANGELOG.md "$kryon"/docs \
         "$kryon"/mk "$kryon"/cmd "$kryon"/include "$kryon"/src \
@@ -18,13 +18,13 @@ matches=$(
 )
 
 if [ -n "$matches" ]; then
-    echo "Kryon must not reference the standalone KITE repository:" >&2
+    echo "Kryon must not reference standalone IDE repositories:" >&2
     echo "$matches" >&2
     status=1
 fi
 
 if [ -d "$kryon/ide" ]; then
-    echo "Kry-written app sources must live in KITE, not Kryon: $kryon/ide" >&2
+    echo "Kry-written app sources must live in Krait, not Kryon: $kryon/ide" >&2
     status=1
 fi
 

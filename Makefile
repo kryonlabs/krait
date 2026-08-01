@@ -7,11 +7,11 @@ KRYON_DIR ?= ../kryon
 KRYON_BUILD_DIR ?= $(KRYON_DIR)/build
 KRYON_PLATFORM ?= $(shell uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
 
-KITE = $(BUILD_DIR)/bin/kite
+KRAIT = $(BUILD_DIR)/bin/krait
 KRYON_IDE = $(BUILD_DIR)/bin/kryon-ide
-KITE_GEN = $(BUILD_DIR)/gen
-KITE_SRCS := $(wildcard ide/*.kry)
-KITE_OBJS := $(patsubst ide/%.kry,$(KITE_GEN)/ide/%.o,$(KITE_SRCS))
+KRAIT_GEN = $(BUILD_DIR)/gen
+KRAIT_SRCS := $(wildcard ide/*.kry)
+KRAIT_OBJS := $(patsubst ide/%.kry,$(KRAIT_GEN)/ide/%.o,$(KRAIT_SRCS))
 
 KC = $(KRYON_BUILD_DIR)/bin/kc
 KRYON_LIB = $(KRYON_DIR)/libkryon.a
@@ -57,37 +57,37 @@ else
 KRYON_PLATFORM_LDLIBS ?=
 endif
 
-.PHONY: all kite kryon-ide run test smoke clean install uninstall kryon-deps boundary-check
+.PHONY: all krait kryon-ide run test smoke clean install uninstall kryon-deps boundary-check
 
-all: kite
+all: krait
 
-kite: $(KITE)
+krait: $(KRAIT)
 
 kryon-ide: $(KRYON_IDE)
 
 kryon-deps:
 	$(MAKE) -C $(KRYON_DIR) all
 
-$(KITE_GEN)/.transpiled: $(KITE_SRCS) | $(KC)
-	@mkdir -p $(KITE_GEN)
-	$(KC) --root . -o $(KITE_GEN) $(KITE_SRCS)
+$(KRAIT_GEN)/.transpiled: $(KRAIT_SRCS) | $(KC)
+	@mkdir -p $(KRAIT_GEN)
+	$(KC) --root . -o $(KRAIT_GEN) $(KRAIT_SRCS)
 	@touch $@
 
-$(KITE_GEN)/ide/%.o: $(KITE_GEN)/.transpiled
+$(KRAIT_GEN)/ide/%.o: $(KRAIT_GEN)/.transpiled
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -I$(KITE_GEN) -c $(KITE_GEN)/ide/$*.c -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -I$(KRAIT_GEN) -c $(KRAIT_GEN)/ide/$*.c -o $@
 
-$(KITE): $(KITE_OBJS) $(KITE_GEN)/.transpiled $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) | $(BUILD_DIR)/bin
-	$(CC) $(CFLAGS) $(CPPFLAGS) -I$(KITE_GEN) $(RAY_CFLAGS) $(SYSTEM_THEME_CFLAGS) -o $@ \
-		$(KITE_OBJS) \
+$(KRAIT): $(KRAIT_OBJS) $(KRAIT_GEN)/.transpiled $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) | $(BUILD_DIR)/bin
+	$(CC) $(CFLAGS) $(CPPFLAGS) -I$(KRAIT_GEN) $(RAY_CFLAGS) $(SYSTEM_THEME_CFLAGS) -o $@ \
+		$(KRAIT_OBJS) \
 		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
 		$(RAYLIB_A) $(RAY_LDLIBS) $(KRYON_LIBOQS_A) $(KRYON_CURL_LDLIBS) \
 		$(KRYON_MARKDOWN_LDLIBS) \
 		-Wl,-export-dynamic $(KRYON_PLATFORM_LDLIBS) \
 		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) -lz -lpthread -lm
 
-$(KRYON_IDE): $(KITE) | $(BUILD_DIR)/bin
-	ln -sf kite $@
+$(KRYON_IDE): $(KRAIT) | $(BUILD_DIR)/bin
+	ln -sf krait $@
 
 $(KC) $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A):
 	$(MAKE) -C $(KRYON_DIR) all
@@ -95,22 +95,22 @@ $(KC) $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_G
 $(BUILD_DIR)/bin:
 	mkdir -p $@
 
-run: kite
+run: krait
 	@kryon_dir=$$(cd "$(KRYON_DIR)" && pwd); \
-	KRYON_DIR="$$kryon_dir" $(KITE) $(ARGS)
+	KRYON_DIR="$$kryon_dir" $(KRAIT) $(ARGS)
 
-test: kite boundary-check
+test: krait boundary-check
 
 smoke: test
-	@printf '%s\n' 'KITE smoke build passed. Runtime preview smoke will be added with the KITE CLI smoke runner.'
+	@printf '%s\n' 'Krait smoke build passed. Runtime preview smoke will be added with the Krait CLI smoke runner.'
 
-install: $(KITE)
+install: $(KRAIT)
 	mkdir -p $(DESTDIR)$(BINDIR)
-	$(INSTALL) -m 755 $(KITE) $(DESTDIR)$(BINDIR)/kite
-	ln -sf kite $(DESTDIR)$(BINDIR)/kryon-ide
+	$(INSTALL) -m 755 $(KRAIT) $(DESTDIR)$(BINDIR)/krait
+	ln -sf krait $(DESTDIR)$(BINDIR)/kryon-ide
 
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/kite $(DESTDIR)$(BINDIR)/kryon-ide
+	rm -f $(DESTDIR)$(BINDIR)/krait $(DESTDIR)$(BINDIR)/kryon-ide
 
 boundary-check:
 	sh tests/check-boundary.sh "$(KRYON_DIR)"

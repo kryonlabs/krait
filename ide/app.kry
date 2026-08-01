@@ -72,7 +72,7 @@ draw_top_bar :: (view_w: int) {
         DrawText(istate.project.name, ScaleUIPx(12), ScaleUIPx(11),
                  ScaleUIPx(15), GetThemeText())
     } else {
-        DrawText("Kryon IDE", ScaleUIPx(12), ScaleUIPx(11),
+        DrawText("Kryon Studio", ScaleUIPx(12), ScaleUIPx(11),
                  ScaleUIPx(15), GetThemeText())
     }
     if istate.project.loaded {
@@ -275,7 +275,7 @@ status_bar_height :: () -> int {
     return ScaleUIPx(24)
 }
 
-app "Kryon IDE" {
+app "Kryon Studio" {
     size 1400 900
     fps 60
     init init
