@@ -1,0 +1,102 @@
+#module "ide.problems"
+#import "kryon.h"
+#import <string.h>
+#import <stdlib.h>
+state :: #import "ide/state"
+
+#global
+
+#private
+
+is_digit :: (c: char) -> int {
+    return c >= '0' && c <= '9'
+}
+
+parse_diagnostic_line :: (st: state.IdeState*, line: char*) {
+    if st->diagnostic_count >= 64 {
+        return
+    }
+    p1 := strchr(line, ':')
+    if p1 == NULL {
+        return
+    }
+    p2 := strchr(p1 + 1, ':')
+    if p2 == NULL {
+        return
+    }
+    p1[0] = 0
+    p2[0] = 0
+    line_no := atoi(p1 + 1)
+    if line_no <= 0 {
+        return
+    }
+    msg := p2 + 1
+    col := 0
+    p3 := strchr(msg, ':')
+    if p3 != NULL {
+        all_digits := 1
+        q := msg
+        while q[0] != 0 && q < p3 {
+            if !is_digit(q[0]) {
+                all_digits = 0
+            }
+            q = q + 1
+        }
+        if all_digits && p3 > msg {
+            col = atoi(msg)
+            msg = p3 + 1
+        }
+    }
+    while msg[0] == ' ' {
+        msg = msg + 1
+    }
+    diag := &st->diagnostics[st->diagnostic_count]
+    snprintf(diag->path, sizeof(diag->path), "%s", line)
+    diag->line = line_no
+    diag->column = col
+    snprintf(diag->message, sizeof(diag->message), "%s", msg)
+    st->diagnostic_count = st->diagnostic_count + 1
+}
+
+problems_parse :: (st: state.IdeState*, output: const char*) {
+    st->diagnostic_count = 0
+    copy: [8192] char
+    snprintf(copy, sizeof(copy), "%s", output)
+    p := &copy[0]
+    start := p
+    while p[0] != 0 {
+        if p[0] == '\n' {
+            p[0] = 0
+            if strlen(start) > 0 {
+                parse_diagnostic_line(st, start)
+            }
+            start = p + 1
+        }
+        p = p + 1
+    }
+    if strlen(start) > 0 {
+        parse_diagnostic_line(st, start)
+    }
+}
+
+draw_problems :: (bounds: Rectangle, st: state.IdeState*) {
+    DrawRectangleRec(bounds, DarkenUIColor(GetThemeBackground(), 4))
+    y := (int)bounds.y + ScaleUIPx(6)
+    if st->diagnostic_count == 0 {
+        DrawText("No problems", (int)bounds.x + ScaleUIPx(10), y,
+                 ScaleUIPx(13), GetThemeText())
+        return
+    }
+    for int i = 0; i < st->diagnostic_count; i++ {
+        diag := &st->diagnostics[i]
+        label: [1100] char
+        snprintf(label, sizeof(label), "%s:%d: %s",
+                 diag->path, diag->line, diag->message)
+        DrawText(label, (int)bounds.x + ScaleUIPx(10), y,
+                 ScaleUIPx(13), GetThemeText())
+        y = y + ScaleUIPx(18)
+        if y > (int)(bounds.y + bounds.height) {
+            break
+        }
+    }
+}

@@ -1,0 +1,284 @@
+#module "ide.app"
+#import "kryon.h"
+#import "file_dialog.h"
+state :: #import "ide/state"
+start :: #import "ide/start_page"
+proj :: #import "ide/project"
+tree :: #import "ide/tree"
+ed :: #import "ide/editor"
+prev :: #import "ide/preview"
+con :: #import "ide/console"
+prob :: #import "ide/problems"
+
+istate :: state.IdeState #global
+project_dialog :: FileDialog #global
+
+init :: () {
+    istate.view = state.IDE_VIEW_START
+    istate.layout_mode = state.IDE_LAYOUT_SPLIT
+    istate.bottom_panel = state.IDE_BOTTOM_NONE
+    snprintf(istate.status, sizeof(istate.status), "%s", "Ready")
+    InitFileDialog(&project_dialog)
+}
+
+shutdown :: () {
+    CloseFileDialog(&project_dialog)
+}
+
+frame :: () {
+    w := GetScreenWidth()
+    h := GetScreenHeight()
+    BeginDrawing()
+    ClearBackground(GetThemeBackground())
+    BeginUIFrame(w, h, GetUIScale())
+    draw_chrome(w, h)
+    content := (Rectangle){0, (float)top_bar_height(),
+                           (float)w, (float)(h - top_bar_height() - status_bar_height())}
+    if istate.view == state.IDE_VIEW_START {
+        start.draw_start_page(content, &istate)
+    } else {
+        draw_project_view(content, &istate)
+    }
+    if istate.project.loaded {
+        was_running := istate.build_running
+        prev.preview_build_poll(&istate)
+        if was_running && !istate.build_running {
+            # build just finished: parse diagnostics from the output buffer
+            prob.problems_parse(&istate, istate.output)
+            if istate.diagnostic_count > 0 {
+                istate.bottom_visible = 1
+                istate.bottom_tab = state.IDE_BOTTOM_PROBLEMS
+            }
+        }
+        prev.preview_maybe_reload(&istate)
+        con.console_poll(&istate)
+    }
+    update_dialog(&istate)
+    EndUIFocus()
+    EndDrawing()
+}
+
+draw_chrome :: (view_w: int, view_h: int) {
+    draw_top_bar(view_w)
+    draw_status_bar(view_w, view_h)
+}
+
+draw_top_bar :: (view_w: int) {
+    top_h := top_bar_height()
+    DrawRectangle(0, 0, view_w, top_h, DarkenUIColor(GetThemeBackground(), 12))
+    DrawLine(0, top_h - 1, view_w, top_h - 1,
+             DarkenUIColor(GetThemeBackground(), 42))
+    if istate.project.loaded {
+        DrawText(istate.project.name, ScaleUIPx(12), ScaleUIPx(11),
+                 ScaleUIPx(15), GetThemeText())
+    } else {
+        DrawText("Kryon IDE", ScaleUIPx(12), ScaleUIPx(11),
+                 ScaleUIPx(15), GetThemeText())
+    }
+    if istate.project.loaded {
+        draw_project_toolbar(view_w, top_h)
+    }
+}
+
+draw_project_toolbar :: (view_w: int, top_h: int) {
+    btn_h := ScaleUIPx(24)
+    y := (top_h - btn_h) / 2
+    x := view_w - ScaleUIPx(716)
+    if x < ScaleUIPx(180) {
+        x = ScaleUIPx(180)
+    }
+    if DrawUIGenericButton(x, y, ScaleUIPx(72), btn_h, "Build",
+                           UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+        prev.preview_build_start(&istate)
+        istate.bottom_visible = 1
+        istate.bottom_tab = state.IDE_BOTTOM_OUTPUT
+    }
+    x = x + ScaleUIPx(80)
+    if DrawUIGenericButton(x, y, ScaleUIPx(70), btn_h, "Source",
+                           layout_button_style(state.IDE_LAYOUT_SOURCE), 0, NULL) {
+        istate.layout_mode = state.IDE_LAYOUT_SOURCE
+    }
+    x = x + ScaleUIPx(72)
+    if DrawUIGenericButton(x, y, ScaleUIPx(54), btn_h, "Split",
+                           layout_button_style(state.IDE_LAYOUT_SPLIT), 0, NULL) {
+        istate.layout_mode = state.IDE_LAYOUT_SPLIT
+    }
+    x = x + ScaleUIPx(56)
+    if DrawUIGenericButton(x, y, ScaleUIPx(76), btn_h, "Preview",
+                           layout_button_style(state.IDE_LAYOUT_PREVIEW), 0, NULL) {
+        istate.layout_mode = state.IDE_LAYOUT_PREVIEW
+    }
+    x = x + ScaleUIPx(86)
+    if DrawUIGenericButton(x, y, ScaleUIPx(76), btn_h, "Console",
+                           bottom_button_style(state.IDE_BOTTOM_CONSOLE), 0, NULL) {
+        show_bottom_panel(&istate, state.IDE_BOTTOM_CONSOLE)
+    }
+    x = x + ScaleUIPx(82)
+    problems_label: [32] char
+    snprintf(problems_label, sizeof(problems_label), "Problems %d",
+             istate.diagnostic_count)
+    if DrawUIGenericButton(x, y, ScaleUIPx(104), btn_h, problems_label,
+                           bottom_button_style(state.IDE_BOTTOM_PROBLEMS), 0, NULL) {
+        show_bottom_panel(&istate, state.IDE_BOTTOM_PROBLEMS)
+    }
+    x = x + ScaleUIPx(110)
+    if DrawUIGenericButton(x, y, ScaleUIPx(64), btn_h, "Output",
+                           bottom_button_style(state.IDE_BOTTOM_OUTPUT), 0, NULL) {
+        show_bottom_panel(&istate, state.IDE_BOTTOM_OUTPUT)
+    }
+}
+
+draw_status_bar :: (view_w: int, view_h: int) {
+    bar_h := status_bar_height()
+    bar_y := view_h - bar_h
+    DrawRectangle(0, bar_y, view_w, bar_h, DarkenUIColor(GetThemeBackground(), 20))
+    DrawText(istate.status, ScaleUIPx(10), bar_y + ScaleUIPx(5),
+             ScaleUIPx(13), GetThemeText())
+}
+
+draw_project_view :: (content: Rectangle, st: state.IdeState*) {
+    sidebar_w := ScaleUIPx(260)
+    sidebar := (Rectangle){content.x, content.y, (float)sidebar_w, content.height}
+    rest := (Rectangle){content.x + (float)sidebar_w, content.y,
+                        content.width - (float)sidebar_w, content.height}
+    bottom_h := ScaleUIPx(180)
+    if st->bottom_visible == 0 {
+        bottom_h = 0
+    }
+    main_area := (Rectangle){rest.x, rest.y, rest.width, rest.height - (float)bottom_h}
+    bottom := (Rectangle){rest.x, rest.y + main_area.height,
+                          rest.width, (float)bottom_h}
+    preview_w := ScaleUIPx(360)
+    editor_bounds := (Rectangle){main_area.x, main_area.y,
+                                 main_area.width - preview_w, main_area.height}
+    preview_bounds := (Rectangle){main_area.x + main_area.width - preview_w,
+                                  main_area.y, preview_w, main_area.height}
+    DrawRectangleRec(sidebar, DarkenUIColor(GetThemeBackground(), 8))
+    DrawLine((int)sidebar.x + sidebar_w, (int)sidebar.y,
+             (int)sidebar.x + sidebar_w, (int)(sidebar.y + sidebar.height),
+             DarkenUIColor(GetThemeBackground(), 42))
+    tree.draw_tree(sidebar, st)
+    handle_tree_selection(st)
+    if st->layout_mode == state.IDE_LAYOUT_SOURCE {
+        ed.draw_editor(main_area, st)
+    } else if st->layout_mode == state.IDE_LAYOUT_PREVIEW {
+        prev.draw_preview(main_area, st)
+    } else {
+        DrawLine((int)preview_bounds.x, (int)preview_bounds.y,
+                 (int)preview_bounds.x, (int)(preview_bounds.y + preview_bounds.height),
+                 DarkenUIColor(GetThemeBackground(), 42))
+        ed.draw_editor(editor_bounds, st)
+        prev.draw_preview(preview_bounds, st)
+    }
+    if bottom_h > 0 {
+        draw_bottom_panel(bottom, st)
+    }
+}
+
+draw_bottom_panel :: (bounds: Rectangle, st: state.IdeState*) {
+    tab_h := ScaleUIPx(30)
+    pad := ScaleUIPx(8)
+    DrawRectangleRec(bounds, DarkenUIColor(GetThemeBackground(), 6))
+    DrawLine((int)bounds.x, (int)bounds.y,
+             (int)(bounds.x + bounds.width), (int)bounds.y,
+             DarkenUIColor(GetThemeBackground(), 42))
+    problems_label: [32] char
+    snprintf(problems_label, sizeof(problems_label), "Problems %d",
+             st->diagnostic_count)
+    x := (int)bounds.x + pad
+    y := (int)bounds.y + ScaleUIPx(4)
+    if DrawUIGenericButton(x, y, ScaleUIPx(104), ScaleUIPx(22), problems_label,
+                           bottom_button_style(state.IDE_BOTTOM_PROBLEMS), 0, NULL) {
+        st->bottom_tab = state.IDE_BOTTOM_PROBLEMS
+    }
+    x = x + ScaleUIPx(110)
+    if DrawUIGenericButton(x, y, ScaleUIPx(76), ScaleUIPx(22), "Output",
+                           bottom_button_style(state.IDE_BOTTOM_OUTPUT), 0, NULL) {
+        st->bottom_tab = state.IDE_BOTTOM_OUTPUT
+    }
+    x = x + ScaleUIPx(82)
+    if DrawUIGenericButton(x, y, ScaleUIPx(82), ScaleUIPx(22), "Console",
+                           bottom_button_style(state.IDE_BOTTOM_CONSOLE), 0, NULL) {
+        st->bottom_tab = state.IDE_BOTTOM_CONSOLE
+    }
+    if DrawUIGenericButton((int)(bounds.x + bounds.width) - ScaleUIPx(66), y,
+                           ScaleUIPx(54), ScaleUIPx(22), "Close",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        st->bottom_visible = 0
+    }
+    body := (Rectangle){bounds.x, bounds.y + (float)tab_h,
+                        bounds.width, bounds.height - (float)tab_h}
+    if st->bottom_tab == state.IDE_BOTTOM_PROBLEMS {
+        prob.draw_problems(body, st)
+    } else if st->bottom_tab == state.IDE_BOTTOM_CONSOLE {
+        con.draw_console(body, st)
+    } else {
+        DrawText(st->output, (int)body.x + ScaleUIPx(10),
+                 (int)body.y + ScaleUIPx(8), ScaleUIPx(13), GetThemeText())
+    }
+}
+
+show_bottom_panel :: (st: state.IdeState*, tab: int) {
+    st->bottom_visible = 1
+    st->bottom_tab = tab
+}
+
+layout_button_style :: (mode: int) -> int {
+    if istate.layout_mode == mode {
+        return UI_BUTTON_STYLE_TAB_SELECTED
+    }
+    return UI_BUTTON_STYLE_TAB
+}
+
+bottom_button_style :: (tab: int) -> int {
+    if istate.bottom_visible != 0 && istate.bottom_tab == tab {
+        return UI_BUTTON_STYLE_TAB_SELECTED
+    }
+    return UI_BUTTON_STYLE_TAB
+}
+
+handle_tree_selection :: (st: state.IdeState*) {
+    if st->selected_entry <= 0 {
+        return
+    }
+    idx := st->selected_entry - 1
+    if idx >= st->entry_count {
+        return
+    }
+    if st->entries[idx].is_dir {
+        return
+    }
+    ed.editor_open(st, st->entries[idx].name)
+    st->selected_entry = 0
+}
+
+update_dialog :: (st: state.IdeState*) {
+    if st->dialog_active {
+        result := UpdateFileDialog(&project_dialog)
+        if result == 1 {
+            path := GetFileDialogPath(&project_dialog)
+            proj.project_open(st, path)
+        } else if result == 0 {
+            state.project_set_status(st, "Open cancelled")
+        }
+        if result >= 0 {
+            st->dialog_active = 0
+        }
+    }
+}
+
+top_bar_height :: () -> int {
+    return ScaleUIPx(40)
+}
+
+status_bar_height :: () -> int {
+    return ScaleUIPx(24)
+}
+
+app "Kryon IDE" {
+    size 1400 900
+    fps 60
+    init init
+    frame frame
+    shutdown shutdown
+}

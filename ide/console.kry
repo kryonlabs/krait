@@ -1,0 +1,103 @@
+#module "ide.console"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+
+kry_process_spawn :: (p: KryProcess*, command: const char*, cwd: const char*) -> int #extern
+kry_process_read_poll :: (p: KryProcess*, buf: char*, cap: int) -> int #extern
+kry_process_wait_poll :: (p: KryProcess*) -> int #extern
+kry_process_kill :: (p: KryProcess*) #extern
+kry_process_close :: (p: KryProcess*) #extern
+
+#global
+
+console_run :: (st: state.IdeState*) {
+    if st->console_running {
+        return
+    }
+    cmd: [768] char
+    snprintf(cmd, sizeof(cmd), "%s", st->console_input)
+    if kry_process_spawn(&st->console_proc, cmd, st->project.path) {
+        st->console_running = 1
+        state.project_set_status(st, "Console running")
+    } else {
+        state.project_set_status(st, "Could not start console")
+    }
+}
+
+console_stop :: (st: state.IdeState*) {
+    if !st->console_running {
+        return
+    }
+    kry_process_kill(&st->console_proc)
+    kry_process_close(&st->console_proc)
+    st->console_running = 0
+    state.project_set_status(st, "Console stopped")
+}
+
+console_poll :: (st: state.IdeState*) {
+    if !st->console_running {
+        return
+    }
+    buf: [4096] char
+    drained := 0
+    while drained == 0 {
+        n := kry_process_read_poll(&st->console_proc, buf, sizeof(buf))
+        if n <= 0 {
+            drained = 1
+        } else {
+            cur := strlen(st->console_output)
+            room := sizeof(st->console_output) - cur - 1
+            if room > 0 {
+                strncat(st->console_output, buf, room)
+            }
+        }
+    }
+    if kry_process_wait_poll(&st->console_proc) {
+        st->console_running = 0
+        kry_process_close(&st->console_proc)
+        state.project_set_status(st, "Console finished")
+    }
+}
+
+draw_console :: (bounds: Rectangle, st: state.IdeState*) {
+    input_h := ScaleUIPx(28)
+    action_w := ScaleUIPx(58)
+    gap := ScaleUIPx(6)
+    input_bounds := (Rectangle){bounds.x, bounds.y,
+                                bounds.width - (float)(action_w * 2 + gap * 2),
+                                (float)input_h}
+    stop_bounds := (Rectangle){input_bounds.x + input_bounds.width + (float)gap,
+                               bounds.y, (float)action_w, (float)input_h}
+    clear_bounds := (Rectangle){stop_bounds.x + stop_bounds.width + (float)gap,
+                                bounds.y, (float)action_w, (float)input_h}
+    log_bounds := (Rectangle){bounds.x, bounds.y + (float)input_h + (float)gap,
+                              bounds.width, bounds.height - (float)input_h - (float)gap}
+    DrawUIReadonlyTextBox((UIReadonlyTextBox){
+        log_bounds, st->console_output, ScaleUIPx(13),
+        (UITextInputStyle){0}, ScaleUIPx(4)
+    })
+    DrawUITextField((UITextField){
+        input_bounds, st->console_input, sizeof(st->console_input),
+        &st->console_cursor, &st->console_focused,
+        sizeof(st->console_input) - 1, ScaleUIPx(13), 4002,
+        (UITextInputStyle){0}, (UITextInputFilter){0}, NULL, NULL
+    })
+    if DrawUIGenericButton((int)stop_bounds.x, (int)stop_bounds.y,
+                           (int)stop_bounds.width, (int)stop_bounds.height,
+                           "Stop", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        console_stop(st)
+    }
+    if DrawUIGenericButton((int)clear_bounds.x, (int)clear_bounds.y,
+                           (int)clear_bounds.width, (int)clear_bounds.height,
+                           "Clear", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        st->console_output[0] = 0
+        state.project_set_status(st, "Console cleared")
+    }
+    if st->console_focused != 0 && UIKeyPressed(KEY_ENTER) {
+        if st->console_input[0] != 0 {
+            console_run(st)
+            st->console_input[0] = 0
+        }
+    }
+}

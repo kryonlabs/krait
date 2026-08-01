@@ -1,0 +1,45 @@
+#module "ide.project"
+#import "kryon.h"
+state :: #import "ide/state"
+
+kry_fs_realpath :: (path: const char*, out: char*, cap: int) -> int #extern
+kry_fs_exists :: (path: const char*) -> int #extern
+
+#enum {
+    PROJECT_OK,
+    PROJECT_MISSING,
+}
+
+#global
+
+#private
+
+path_basename :: (dst: char*, dst_size: int, path: const char*) {
+    base := path
+    p := path
+    while *p != 0 {
+        if *p == '/' {
+            base = p + 1
+        }
+        p = p + 1
+    }
+    snprintf(dst, dst_size, "%s", base)
+}
+
+project_open :: (st: state.IdeState*, path: const char*) -> int {
+    resolved: [1024] char
+    if kry_fs_exists(path) == 0 {
+        state.project_set_status(st, "Project path does not exist")
+        return PROJECT_MISSING
+    }
+    if kry_fs_realpath(path, resolved, sizeof(resolved)) == 0 {
+        snprintf(resolved, sizeof(resolved), "%s", path)
+    }
+    snprintf(st->project.path, sizeof(st->project.path), "%s", resolved)
+    path_basename(st->project.name, sizeof(st->project.name), resolved)
+    st->project.loaded = 1
+    st->view = state.IDE_VIEW_PROJECT
+    st->entry_count = kry_fs_list_dir(resolved, &st->entries[0], 256)
+    state.project_set_status(st, st->project.name)
+    return PROJECT_OK
+}

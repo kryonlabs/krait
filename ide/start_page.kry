@@ -1,0 +1,25 @@
+#module "ide.start_page"
+#import "kryon.h"
+state :: #import "ide/state"
+
+draw_start_page :: (content: Rectangle, st: state.IdeState*) {
+    title_y := (int)content.y + ScaleUIPx(60)
+    DrawText("Kryon", (int)content.x + ScaleUIPx(40), title_y,
+             ScaleUIPx(40), GetThemeText())
+    DrawText("Choose a project to begin",
+             (int)content.x + ScaleUIPx(40), title_y + ScaleUIPx(52),
+             ScaleUIPx(16), GetThemeText())
+    card_x := (int)content.x + ScaleUIPx(40)
+    card_y := title_y + ScaleUIPx(110)
+    card_w := ScaleUIPx(220)
+    card_h := ScaleUIPx(120)
+    if DrawUIGenericButton(card_x, card_y, card_w, card_h,
+                           "Open Project", UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+        st->dialog_active = 1
+    }
+    if DrawUIGenericButton(card_x + card_w + ScaleUIPx(16), card_y,
+                           card_w, card_h, "New Project",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        state.project_set_status(st, "New Project not implemented yet")
+    }
+}

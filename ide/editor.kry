@@ -1,0 +1,246 @@
+#module "ide.editor"
+#import "kryon.h"
+#import <string.h>
+#import <stdlib.h>
+state :: #import "ide/state"
+
+kry_fs_read_file :: (path: const char*, buf: char*, cap: int) -> int #extern
+kry_fs_write_file :: (path: const char*, text: const char*, len: int) -> int #extern
+
+#private
+
+undo_ring :: [24] char* #global
+undo_count :: int #global
+undo_head :: int #global
+redo_ring :: [24] char* #global
+redo_count :: int #global
+
+mod_key_down :: () -> int {
+    return UIKeyDown(KEY_LEFT_CONTROL) || UIKeyDown(KEY_RIGHT_CONTROL) ||
+           UIKeyDown(KEY_LEFT_SUPER) || UIKeyDown(KEY_RIGHT_SUPER)
+}
+
+snapshot_push :: (ring: char**, count: int*, text: const char*) {
+    if *count >= 24 {
+        free(ring[0])
+        for int i = 0; i < 23; i++ {
+            ring[i] = ring[i + 1]
+        }
+        *count = 23
+    }
+    ring[*count] = strdup(text)
+    *count = *count + 1
+}
+
+editor_history_reset :: () {
+    for int i = 0; i < undo_count; i++ {
+        free(undo_ring[i])
+        undo_ring[i] = NULL
+    }
+    for int i = 0; i < redo_count; i++ {
+        free(redo_ring[i])
+        redo_ring[i] = NULL
+    }
+    undo_count = 0
+    redo_count = 0
+}
+
+editor_undo :: (st: state.IdeState*) {
+    f := state.active_file(st)
+    if f == NULL || undo_count == 0 {
+        return
+    }
+    undo_count = undo_count - 1
+    snap := undo_ring[undo_count]
+    undo_ring[undo_count] = NULL
+    snapshot_push(redo_ring, &redo_count, f->source)
+    snprintf(f->source, sizeof(f->source), "%s", snap)
+    f->dirty = 1
+    free(snap)
+}
+
+editor_redo :: (st: state.IdeState*) {
+    f := state.active_file(st)
+    if f == NULL || redo_count == 0 {
+        return
+    }
+    redo_count = redo_count - 1
+    snap := redo_ring[redo_count]
+    redo_ring[redo_count] = NULL
+    snapshot_push(undo_ring, &undo_count, f->source)
+    snprintf(f->source, sizeof(f->source), "%s", snap)
+    f->dirty = 1
+    free(snap)
+}
+
+#global
+
+find_open_file :: (st: state.IdeState*, name: const char*) -> int {
+    for int i = 0; i < st->open_count; i++ {
+        if strcmp(st->open_files[i].name, name) == 0 {
+            return i
+        }
+    }
+    return -1
+}
+
+editor_open :: (st: state.IdeState*, name: const char*) {
+    existing := find_open_file(st, name)
+    if existing >= 0 {
+        if existing != st->active_open {
+            editor_history_reset()
+        }
+        st->active_open = existing
+        state.project_set_status(st, st->open_files[existing].path)
+        return
+    }
+    if st->open_count >= 12 {
+        state.project_set_status(st, "Too many open files")
+        return
+    }
+    slot := &st->open_files[st->open_count]
+    full: [1024] char
+    snprintf(full, sizeof(full), "%s/%s", st->project.path, name)
+    n := kry_fs_read_file(full, slot->source, sizeof(slot->source))
+    if n < 0 {
+        state.project_set_status(st, "Could not read file")
+        return
+    }
+    snprintf(slot->name, sizeof(slot->name), "%s", name)
+    snprintf(slot->path, sizeof(slot->path), "%s", full)
+    slot->used = 1
+    slot->cursor = 0
+    slot->focused = 0
+    slot->scroll = 0
+    slot->dirty = 0
+    st->active_open = st->open_count
+    st->open_count = st->open_count + 1
+    editor_history_reset()
+    state.project_set_status(st, full)
+}
+
+editor_close_active :: (st: state.IdeState*) {
+    if st->active_open < 0 || st->active_open >= st->open_count {
+        return
+    }
+    idx := st->active_open
+    # shift later tabs down
+    for int i = idx; i < st->open_count - 1; i++ {
+        st->open_files[i] = st->open_files[i + 1]
+    }
+    st->open_count = st->open_count - 1
+    if st->active_open >= st->open_count {
+        st->active_open = st->open_count - 1
+    }
+}
+
+editor_save_active :: (st: state.IdeState*) {
+    f := state.active_file(st)
+    if f == NULL {
+        return
+    }
+    len := strlen(f->source)
+    if kry_fs_write_file(f->path, f->source, len) < 0 {
+        state.project_set_status(st, "Save failed")
+        return
+    }
+    f->dirty = 0
+    state.project_set_status(st, "Saved")
+}
+
+draw_tabs :: (bounds: Rectangle, st: state.IdeState*) {
+    tab_h := ScaleUIPx(28)
+    x := (int)bounds.x
+    for int i = 0; i < st->open_count; i++ {
+        f := &st->open_files[i]
+        label: [300] char
+        if f->dirty != 0 {
+            snprintf(label, sizeof(label), "%s *", f->name)
+        } else {
+            snprintf(label, sizeof(label), "%s", f->name)
+        }
+        w := MeasureText(label, ScaleUIPx(13)) + ScaleUIPx(24)
+        if i == st->active_open {
+            DrawRectangle(x, (int)bounds.y, w, tab_h,
+                          DarkenUIColor(GetThemeBackground(), 8))
+        }
+        DrawText(label, x + ScaleUIPx(10), (int)bounds.y + ScaleUIPx(7),
+                 ScaleUIPx(13), GetThemeText())
+        close_x := x + w - ScaleUIPx(16)
+        if CheckCollisionPointRec(GetMousePosition(),
+                                  (Rectangle){(float)close_x,
+                                              (float)(bounds.y + ScaleUIPx(4)),
+                                              (float)ScaleUIPx(16),
+                                              (float)ScaleUIPx(20)}) {
+            DrawText("x", close_x, (int)bounds.y + ScaleUIPx(6),
+                     ScaleUIPx(13), GetThemeText())
+            if IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
+                st->active_open = i
+                editor_close_active(st)
+                return
+            }
+        }
+        x = x + w
+    }
+    DrawLine((int)bounds.x, (int)bounds.y + tab_h,
+             (int)(bounds.x + bounds.width), (int)bounds.y + tab_h,
+             DarkenUIColor(GetThemeBackground(), 42))
+}
+
+draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
+    if st->open_count == 0 {
+        DrawText("Select a file from the tree",
+                 (int)bounds.x + ScaleUIPx(16), (int)bounds.y + ScaleUIPx(16),
+                 ScaleUIPx(15), GetThemeText())
+        return
+    }
+    tab_h := ScaleUIPx(28)
+    tab_bounds := (Rectangle){bounds.x, bounds.y, bounds.width, (float)tab_h}
+    draw_tabs(tab_bounds, st)
+    body := (Rectangle){bounds.x, bounds.y + (float)tab_h,
+                        bounds.width, bounds.height - (float)tab_h}
+    f := state.active_file(st)
+    if f == NULL {
+        return
+    }
+    # Undo/redo before the textarea consumes the keypress.
+    if f->focused != 0 && mod_key_down() {
+        if UIKeyPressed(KEY_Z) {
+            editor_undo(st)
+        } else if UIKeyPressed(KEY_Y) {
+            editor_redo(st)
+        }
+    }
+    # Snapshot the pre-edit state so a detected change pushes one undo entry.
+    before: [4096] char
+    snapshot_taken := 0
+    if f->focused != 0 {
+        snprintf(before, sizeof(before), "%s", f->source)
+        snapshot_taken = 1
+    }
+    before_len := strlen(f->source)
+    DrawUITextArea((UITextArea){
+        body, f->source, sizeof(f->source),
+        &f->cursor, &f->focused, &f->scroll,
+        sizeof(f->source) - 1, ScaleUIPx(14), ScaleUIPx(6), 3001,
+        "Source", UI_SYNTAX_KRY,
+        (UITextInputStyle){0}, (UITextInputFilter){0}, NULL
+    })
+    after_len := strlen(f->source)
+    if after_len != before_len {
+        f->dirty = 1
+        if snapshot_taken != 0 {
+            snapshot_push(undo_ring, &undo_count, before)
+            # A new edit invalidates the redo stack.
+            for int i = 0; i < redo_count; i++ {
+                free(redo_ring[i])
+                redo_ring[i] = NULL
+            }
+            redo_count = 0
+        }
+    }
+    # Ctrl/Cmd+S saves the active buffer.
+    if f->focused != 0 && mod_key_down() && UIKeyPressed(KEY_S) {
+        editor_save_active(st)
+    }
+}

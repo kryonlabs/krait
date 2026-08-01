@@ -1,0 +1,110 @@
+#module "ide.state"
+#import "kryon.h"
+
+#enum {
+    IDE_LAYOUT_SPLIT,
+    IDE_LAYOUT_SOURCE,
+    IDE_LAYOUT_PREVIEW,
+}
+
+#enum {
+    IDE_BOTTOM_NONE,
+    IDE_BOTTOM_PROBLEMS,
+    IDE_BOTTOM_OUTPUT,
+    IDE_BOTTOM_CONSOLE,
+}
+
+#enum {
+    IDE_VIEW_START,
+    IDE_VIEW_PROJECT,
+}
+
+Diagnostic :: struct {
+    path: [512] char
+    line: int
+    column: int
+    message: [512] char
+}
+
+Project :: struct {
+    loaded: int
+    path: [1024] char
+    name: [256] char
+}
+
+OpenFile :: struct {
+    used: int
+    name: [256] char
+    path: [1024] char
+    source: [131072] char
+    cursor: int
+    focused: int
+    scroll: int
+    dirty: int
+    undo_head: int
+    undo_count: int
+    redo_count: int
+}
+
+IdeState :: struct {
+    view: int
+    layout_mode: int
+    bottom_panel: int
+    status: [256] char
+    project: Project
+    dialog_active: int
+    # file tree
+    entries: [256] KryDirEntry
+    entry_count: int
+    selected_entry: int
+    tree_scroll: int
+    # open files / tabs
+    open_files: [12] OpenFile
+    open_count: int
+    active_open: int
+    # find bar
+    find_visible: int
+    find_text: [256] char
+    find_cursor: int
+    find_focused: int
+    # preview / build
+    host_library: void*
+    host: AppHost*
+    build_proc: KryProcess
+    build_running: int
+    preview_texture: RenderTexture2D
+    preview_texture_w: int
+    preview_texture_h: int
+    output: [65536] char
+    source_mtime: long
+    last_reload_check: float
+    # console
+    console_proc: KryProcess
+    console_running: int
+    console_output: [65536] char
+    console_input: [512] char
+    console_cursor: int
+    console_focused: int
+    console_scroll: int
+    # problems
+    diagnostics: [64] Diagnostic
+    diagnostic_count: int
+    selected_diagnostic: int
+    # bottom panel
+    bottom_visible: int
+    bottom_tab: int
+}
+
+project_set_status :: (st: IdeState*, msg: const char*) {
+    snprintf(st->status, sizeof(st->status), "%s", msg)
+}
+
+active_file :: (st: IdeState*) -> OpenFile* {
+    if st->active_open < 0 {
+        return NULL
+    }
+    if st->active_open >= st->open_count {
+        return NULL
+    }
+    return &st->open_files[st->active_open]
+}

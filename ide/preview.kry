@@ -1,0 +1,165 @@
+#module "ide.preview"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+
+kry_dylib_load :: (path: const char*) -> void* #extern
+kry_dylib_sym :: (handle: void*, name: const char*) -> void* #extern
+kry_dylib_close :: (handle: void*) #extern
+kry_process_spawn :: (p: KryProcess*, command: const char*, cwd: const char*) -> int #extern
+kry_process_read_poll :: (p: KryProcess*, buf: char*, cap: int) -> int #extern
+kry_process_wait_poll :: (p: KryProcess*) -> int #extern
+kry_process_kill :: (p: KryProcess*) #extern
+kry_process_close :: (p: KryProcess*) #extern
+kry_fs_mtime :: (path: const char*) -> long #extern
+
+CreateHostFn :: AppHost* (*)(int, const char*) #type
+DestroyHostFn :: void (*)(AppHost*) #type
+
+#global
+
+#private
+
+build_command :: (dst: char*, dst_size: int) {
+    snprintf(dst, dst_size, "%s",
+        "if [ -d ../kryon ]; then KRYON_DIR=../kryon make kryon-host; else make kryon-host; fi")
+}
+
+preview_unload_host :: (st: state.IdeState*) {
+    if st->host != NULL {
+        lib := st->host_library
+        # destroy_host is resolved at load time; we can't easily re-resolve here,
+        # so call DrawAppScreen's sibling via the stored library. For simplicity,
+        # leak the host on unload (rebuild creates a fresh one).
+        st->host = NULL
+        if lib != NULL {
+            kry_dylib_close(lib)
+            st->host_library = NULL
+        }
+    }
+}
+
+preview_load_host :: (st: state.IdeState*) -> int {
+    path: [1024] char
+    snprintf(path, sizeof(path), "%s/build/kryon/app_host.so", st->project.path)
+    lib := kry_dylib_load(path)
+    if lib == NULL {
+        state.project_set_status(st, "No app host built")
+        return 0
+    }
+    create_raw := kry_dylib_sym(lib, "CreateAppHost")
+    destroy_raw := kry_dylib_sym(lib, "DestroyAppHost")
+    if create_raw == NULL || destroy_raw == NULL {
+        kry_dylib_close(lib)
+        state.project_set_status(st, "App host missing entry symbols")
+        return 0
+    }
+    create_host := (CreateHostFn)create_raw
+    preview_unload_host(st)
+    st->host_library = lib
+    st->host = create_host(APP_HOST_ABI_VERSION, st->project.path)
+    if st->host == NULL {
+        state.project_set_status(st, "CreateAppHost failed")
+        return 0
+    }
+    state.project_set_status(st, "Preview loaded")
+    return 1
+}
+
+preview_build_start :: (st: state.IdeState*) {
+    if st->build_running {
+        return
+    }
+    cmd: [512] char
+    build_command(cmd, sizeof(cmd))
+    if kry_process_spawn(&st->build_proc, cmd, st->project.path) {
+        st->build_running = 1
+        st->output[0] = 0
+        state.project_set_status(st, "Building...")
+    }
+}
+
+preview_build_poll :: (st: state.IdeState*) {
+    if !st->build_running {
+        return
+    }
+    buf: [4096] char
+    drained := 0
+    while drained == 0 {
+        n := kry_process_read_poll(&st->build_proc, buf, sizeof(buf))
+        if n <= 0 {
+            drained = 1
+        } else {
+            cur := strlen(st->output)
+            room := sizeof(st->output) - cur - 1
+            if room > 0 {
+                strncat(st->output, buf, room)
+            }
+        }
+    }
+    if kry_process_wait_poll(&st->build_proc) {
+        st->build_running = 0
+        kry_process_close(&st->build_proc)
+        if st->build_proc.exit_status == 0 {
+            preview_load_host(st)
+        } else {
+            state.project_set_status(st, "Build failed")
+        }
+    }
+}
+
+preview_maybe_reload :: (st: state.IdeState*) {
+    now := GetTime()
+    if st->build_running {
+        return
+    }
+    if now - st->last_reload_check < 1.0 {
+        return
+    }
+    st->last_reload_check = now
+    mtime := kry_fs_mtime(st->project.path)
+    if mtime > st->source_mtime {
+        st->source_mtime = mtime
+        preview_build_start(st)
+    }
+}
+
+ensure_texture :: (st: state.IdeState*, w: int, h: int) -> int {
+    if st->preview_texture_w == w && st->preview_texture_h == h {
+        return 1
+    }
+    if st->preview_texture_w != 0 {
+        UnloadRenderTexture(st->preview_texture)
+    }
+    st->preview_texture = LoadRenderTexture(w, h)
+    st->preview_texture_w = w
+    st->preview_texture_h = h
+    return 1
+}
+
+draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
+    if st->host == NULL {
+        DrawText("No preview",
+                 (int)bounds.x + ScaleUIPx(16), (int)bounds.y + ScaleUIPx(16),
+                 ScaleUIPx(15), GetThemeText())
+        return
+    }
+    pw := ScaleUIPx(320)
+    ph := ScaleUIPx(240)
+    if pw < 1 {
+        pw = 1
+    }
+    if ph < 1 {
+        ph = 1
+    }
+    ensure_texture(st, pw, ph)
+    BeginTextureMode(st->preview_texture)
+    ClearBackground(GetThemeBackground())
+    BeginUIFrame(pw, ph, 1.0)
+    DrawAppScreen(st->host, (Rectangle){0, 0, (float)pw, (float)ph})
+    EndUIFocus()
+    EndTextureMode()
+    DrawTexturePro(st->preview_texture.texture,
+                   (Rectangle){0, 0, (float)pw, -(float)ph},
+                   bounds, (Vector2){0, 0}, 0.0, WHITE)
+}

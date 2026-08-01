@@ -1,0 +1,34 @@
+#module "ide.tree"
+#import "kryon.h"
+state :: #import "ide/state"
+
+kry_fs_list_dir :: (dir: const char*, out: KryDirEntry*, cap: int) -> int #extern
+
+#private
+
+#global
+
+entries :: [256] UICascadingTreeItem #global
+
+build_items :: (st: state.IdeState*) {
+    for int i = 0; i < st->entry_count; i++ {
+        entries[i].label = st->entries[i].name
+        entries[i].depth = 0
+        entries[i].id = i + 1
+        entries[i].is_dir = st->entries[i].is_dir
+        entries[i].selectable = 1
+    }
+}
+
+draw_tree :: (bounds: Rectangle, st: state.IdeState*) {
+    if st->entry_count <= 0 {
+        return
+    }
+    build_items(st)
+    DrawUICascadingTreeView((UICascadingTreeView){
+        bounds, 2000, entries, st->entry_count,
+        &st->selected_entry, NULL,
+        (UICascadingTreeExpansion){NULL, NULL, 0},
+        &st->tree_scroll, ScaleUIPx(22)
+    })
+}
