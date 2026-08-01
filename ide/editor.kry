@@ -159,21 +159,21 @@ draw_tabs :: (bounds: Rectangle, st: state.IdeState*) {
         } else {
             snprintf(label, sizeof(label), "%s", f->name)
         }
-        w := MeasureText(label, ScaleUIPx(13)) + ScaleUIPx(24)
+        w := MeasureUIText(label, ScaleUIPx(13)) + ScaleUIPx(24)
         if i == st->active_open {
             DrawRectangle(x, (int)bounds.y, w, tab_h,
                           DarkenUIColor(GetThemeBackground(), 8))
         }
-        DrawText(label, x + ScaleUIPx(10), (int)bounds.y + ScaleUIPx(7),
-                 ScaleUIPx(13), GetThemeText())
+        DrawUIText(label, x + ScaleUIPx(10), (int)bounds.y + ScaleUIPx(7),
+                   ScaleUIPx(13), GetThemeText())
         close_x := x + w - ScaleUIPx(16)
         if CheckCollisionPointRec(GetMousePosition(),
                                   (Rectangle){(float)close_x,
                                               (float)(bounds.y + ScaleUIPx(4)),
                                               (float)ScaleUIPx(16),
                                               (float)ScaleUIPx(20)}) {
-            DrawText("x", close_x, (int)bounds.y + ScaleUIPx(6),
-                     ScaleUIPx(13), GetThemeText())
+            DrawUIText("x", close_x, (int)bounds.y + ScaleUIPx(6),
+                       ScaleUIPx(13), GetThemeText())
             if IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
                 st->active_open = i
                 editor_close_active(st)
@@ -189,9 +189,9 @@ draw_tabs :: (bounds: Rectangle, st: state.IdeState*) {
 
 draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
     if st->open_count == 0 {
-        DrawText("Select a file from the tree",
-                 (int)bounds.x + ScaleUIPx(16), (int)bounds.y + ScaleUIPx(16),
-                 ScaleUIPx(15), GetThemeText())
+        DrawUIText("Select a file from the tree",
+                   (int)bounds.x + ScaleUIPx(16), (int)bounds.y + ScaleUIPx(16),
+                   ScaleUIPx(15), GetThemeText())
         return
     }
     tab_h := ScaleUIPx(28)

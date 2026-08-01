@@ -139,9 +139,9 @@ ensure_texture :: (st: state.IdeState*, w: int, h: int) -> int {
 
 draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
     if st->host == NULL {
-        DrawText("No preview",
-                 (int)bounds.x + ScaleUIPx(16), (int)bounds.y + ScaleUIPx(16),
-                 ScaleUIPx(15), GetThemeText())
+        DrawUIText("No preview",
+                   (int)bounds.x + ScaleUIPx(16), (int)bounds.y + ScaleUIPx(16),
+                   ScaleUIPx(15), GetThemeText())
         return
     }
     pw := ScaleUIPx(320)

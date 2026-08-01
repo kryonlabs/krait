@@ -10,10 +10,13 @@ prev :: #import "ide/preview"
 con :: #import "ide/console"
 prob :: #import "ide/problems"
 
+krait_load_ui_font :: () -> int #extern
+
 istate :: state.IdeState #global
 project_dialog :: FileDialog #global
 
 init :: () {
+    krait_load_ui_font()
     istate.view = state.IDE_VIEW_START
     istate.layout_mode = state.IDE_LAYOUT_SPLIT
     istate.bottom_panel = state.IDE_BOTTOM_NONE
@@ -69,11 +72,11 @@ draw_top_bar :: (view_w: int) {
     DrawLine(0, top_h - 1, view_w, top_h - 1,
              DarkenUIColor(GetThemeBackground(), 42))
     if istate.project.loaded {
-        DrawText(istate.project.name, ScaleUIPx(12), ScaleUIPx(11),
-                 ScaleUIPx(15), GetThemeText())
+        DrawUIText(istate.project.name, ScaleUIPx(12), ScaleUIPx(11),
+                   ScaleUIPx(15), GetThemeText())
     } else {
-        DrawText("Kryon Studio", ScaleUIPx(12), ScaleUIPx(11),
-                 ScaleUIPx(15), GetThemeText())
+        DrawUIText("Kryon Studio", ScaleUIPx(12), ScaleUIPx(11),
+                   ScaleUIPx(15), GetThemeText())
     }
     if istate.project.loaded {
         draw_project_toolbar(view_w, top_h)
@@ -132,8 +135,8 @@ draw_status_bar :: (view_w: int, view_h: int) {
     bar_h := status_bar_height()
     bar_y := view_h - bar_h
     DrawRectangle(0, bar_y, view_w, bar_h, DarkenUIColor(GetThemeBackground(), 20))
-    DrawText(istate.status, ScaleUIPx(10), bar_y + ScaleUIPx(5),
-             ScaleUIPx(13), GetThemeText())
+    DrawUIText(istate.status, ScaleUIPx(10), bar_y + ScaleUIPx(5),
+               ScaleUIPx(13), GetThemeText())
 }
 
 draw_project_view :: (content: Rectangle, st: state.IdeState*) {
@@ -213,8 +216,8 @@ draw_bottom_panel :: (bounds: Rectangle, st: state.IdeState*) {
     } else if st->bottom_tab == state.IDE_BOTTOM_CONSOLE {
         con.draw_console(body, st)
     } else {
-        DrawText(st->output, (int)body.x + ScaleUIPx(10),
-                 (int)body.y + ScaleUIPx(8), ScaleUIPx(13), GetThemeText())
+        DrawUIText(st->output, (int)body.x + ScaleUIPx(10),
+                   (int)body.y + ScaleUIPx(8), ScaleUIPx(13), GetThemeText())
     }
 }
 

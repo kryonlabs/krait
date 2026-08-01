@@ -12,6 +12,8 @@ KRYON_IDE = $(BUILD_DIR)/bin/kryon-ide
 KRAIT_GEN = $(BUILD_DIR)/gen
 KRAIT_SRCS := $(wildcard ide/*.kry)
 KRAIT_OBJS := $(patsubst ide/%.kry,$(KRAIT_GEN)/ide/%.o,$(KRAIT_SRCS))
+KRAIT_NATIVE_SRCS := src/native.c
+KRAIT_NATIVE_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/src/%.o,$(KRAIT_NATIVE_SRCS))
 
 KC = $(KRYON_BUILD_DIR)/bin/kc
 KRYON_LIB = $(KRYON_DIR)/libkryon.a
@@ -77,9 +79,13 @@ $(KRAIT_GEN)/ide/%.o: $(KRAIT_GEN)/.transpiled
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -I$(KRAIT_GEN) -c $(KRAIT_GEN)/ide/$*.c -o $@
 
-$(KRAIT): $(KRAIT_OBJS) $(KRAIT_GEN)/.transpiled $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) | $(BUILD_DIR)/bin
+$(BUILD_DIR)/src/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
+
+$(KRAIT): $(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KRAIT_GEN)/.transpiled $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) | $(BUILD_DIR)/bin
 	$(CC) $(CFLAGS) $(CPPFLAGS) -I$(KRAIT_GEN) $(RAY_CFLAGS) $(SYSTEM_THEME_CFLAGS) -o $@ \
-		$(KRAIT_OBJS) \
+		$(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) \
 		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
 		$(RAYLIB_A) $(RAY_LDLIBS) $(KRYON_LIBOQS_A) $(KRYON_CURL_LDLIBS) \
 		$(KRYON_MARKDOWN_LDLIBS) \
@@ -106,11 +112,14 @@ smoke: test
 
 install: $(KRAIT)
 	mkdir -p $(DESTDIR)$(BINDIR)
+	mkdir -p $(DESTDIR)$(PREFIX)/share/krait/assets/fonts
 	$(INSTALL) -m 755 $(KRAIT) $(DESTDIR)$(BINDIR)/krait
+	$(INSTALL) -m 644 assets/fonts/DepartureMono-Regular.otf $(DESTDIR)$(PREFIX)/share/krait/assets/fonts/DepartureMono-Regular.otf
 	ln -sf krait $(DESTDIR)$(BINDIR)/kryon-ide
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/krait $(DESTDIR)$(BINDIR)/kryon-ide
+	rm -f $(DESTDIR)$(PREFIX)/share/krait/assets/fonts/DepartureMono-Regular.otf
 
 boundary-check:
 	sh tests/check-boundary.sh "$(KRYON_DIR)"

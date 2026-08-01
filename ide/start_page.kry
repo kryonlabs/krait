@@ -1,25 +1,140 @@
 #module "ide.start_page"
 #import "kryon.h"
 state :: #import "ide/state"
+proj :: #import "ide/project"
+
+krait_recent_count :: () -> int #extern
+krait_recent_path :: (index: int, out: char*, cap: int) -> int #extern
+krait_recent_remove :: (index: int) #extern
+krait_example_count :: () -> int #extern
+krait_example_path :: (index: int, out: char*, cap: int) -> int #extern
+krait_example_title :: (index: int, out: char*, cap: int) -> int #extern
+
+#private
+
+path_basename :: (dst: char*, dst_size: int, path: const char*) {
+    base := path
+    p := path
+    while *p != 0 {
+        if *p == '/' {
+            base = p + 1
+        }
+        p = p + 1
+    }
+    snprintf(dst, dst_size, "%s", base)
+}
+
+draw_project_card :: (x: int, y: int, w: int, h: int,
+                      title: const char*, path: const char*) -> int {
+    DrawRectangle(x, y, w, h, DarkenUIColor(GetThemeBackground(), 6))
+    DrawRectangleLines(x, y, w, h, DarkenUIColor(GetThemeBackground(), 42))
+    DrawUIText(title, x + ScaleUIPx(12), y + ScaleUIPx(10),
+               ScaleUIPx(15), GetThemeText())
+    DrawUIText(path, x + ScaleUIPx(12), y + ScaleUIPx(34),
+               ScaleUIPx(11), GetThemeIcon())
+    return CheckCollisionPointRec(GetMousePosition(),
+                                  (Rectangle){(float)x, (float)y,
+                                              (float)w, (float)h}) &&
+           IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
+}
+
+draw_recent_projects :: (x0: int, y0: int, card_w: int, card_h: int,
+                         gap: int, st: state.IdeState*) -> int {
+    y := y0
+    recent_count := krait_recent_count()
+    DrawUIText("Recent Projects", x0, y, ScaleUIPx(18), GetThemeText())
+    y = y + ScaleUIPx(30)
+    if recent_count == 0 {
+        DrawUIText("No recent projects yet - open or create one.",
+                   x0, y, ScaleUIPx(13), GetThemeIcon())
+        return y + ScaleUIPx(34)
+    }
+    for int i = 0; i < recent_count; i++ {
+        path: [1024] char
+        title: [256] char
+        if krait_recent_path(i, path, sizeof(path)) == 0 {
+            continue
+        }
+        path_basename(title, sizeof(title), path)
+        card_x := x0 + (i % 2) * (card_w + gap)
+        card_y := y + (i / 2) * (card_h + gap)
+        if draw_project_card(card_x, card_y, card_w, card_h, title, path) {
+            proj.project_open(st, path)
+            return -1
+        }
+        if DrawUIGenericButton(card_x + card_w - ScaleUIPx(78),
+                               card_y + ScaleUIPx(8),
+                               ScaleUIPx(62), ScaleUIPx(22), "Remove",
+                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            krait_recent_remove(i)
+            state.project_set_status(st, "Removed recent project")
+            return -1
+        }
+    }
+    return y + ((recent_count + 1) / 2) * (card_h + gap) + ScaleUIPx(18)
+}
+
+draw_examples :: (x0: int, y0: int, card_w: int, card_h: int, gap: int,
+                 bottom: int, st: state.IdeState*) {
+    y := y0
+    example_count := krait_example_count()
+    DrawUIText("Examples", x0, y, ScaleUIPx(18), GetThemeText())
+    y = y + ScaleUIPx(30)
+    if example_count == 0 {
+        DrawUIText("No examples found.", x0, y, ScaleUIPx(13), GetThemeIcon())
+        return
+    }
+    for int i = 0; i < example_count; i++ {
+        path: [1024] char
+        title: [256] char
+        if krait_example_path(i, path, sizeof(path)) == 0 {
+            continue
+        }
+        if krait_example_title(i, title, sizeof(title)) == 0 {
+            path_basename(title, sizeof(title), path)
+        }
+        card_x := x0 + (i % 2) * (card_w + gap)
+        card_y := y + (i / 2) * (card_h + gap)
+        if card_y + card_h > bottom {
+            break
+        }
+        if draw_project_card(card_x, card_y, card_w, card_h, title, path) {
+            proj.project_open(st, path)
+            return
+        }
+    }
+}
+
+#global
 
 draw_start_page :: (content: Rectangle, st: state.IdeState*) {
-    title_y := (int)content.y + ScaleUIPx(60)
-    DrawText("Kryon", (int)content.x + ScaleUIPx(40), title_y,
-             ScaleUIPx(40), GetThemeText())
-    DrawText("Choose a project to begin",
-             (int)content.x + ScaleUIPx(40), title_y + ScaleUIPx(52),
-             ScaleUIPx(16), GetThemeText())
-    card_x := (int)content.x + ScaleUIPx(40)
-    card_y := title_y + ScaleUIPx(110)
-    card_w := ScaleUIPx(220)
-    card_h := ScaleUIPx(120)
-    if DrawUIGenericButton(card_x, card_y, card_w, card_h,
+    pad := ScaleUIPx(40)
+    x0 := (int)content.x + pad
+    y := (int)content.y + ScaleUIPx(48)
+    card_w := ScaleUIPx(280)
+    card_h := ScaleUIPx(70)
+    gap := ScaleUIPx(14)
+    bottom := (int)(content.y + content.height - pad)
+
+    DrawUIText("Kryon Studio", x0, y, ScaleUIPx(32), GetThemeText())
+    y = y + ScaleUIPx(42)
+    DrawUIText("Choose a project to begin, or start something new.",
+               x0, y, ScaleUIPx(14), GetThemeIcon())
+    y = y + ScaleUIPx(34)
+    if DrawUIGenericButton(x0, y, ScaleUIPx(180), ScaleUIPx(42),
                            "Open Project", UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
         st->dialog_active = 1
     }
-    if DrawUIGenericButton(card_x + card_w + ScaleUIPx(16), card_y,
-                           card_w, card_h, "New Project",
+    if DrawUIGenericButton(x0 + ScaleUIPx(194), y,
+                           ScaleUIPx(180), ScaleUIPx(42), "New Project",
                            UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
         state.project_set_status(st, "New Project not implemented yet")
     }
+    y = y + ScaleUIPx(70)
+
+    y = draw_recent_projects(x0, y, card_w, card_h, gap, st)
+    if y < 0 {
+        return
+    }
+    draw_examples(x0, y, card_w, card_h, gap, bottom, st)
 }
