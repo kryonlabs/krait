@@ -25,14 +25,24 @@ path_basename :: (dst: char*, dst_size: int, path: const char*) {
 }
 
 draw_project_card :: (x: int, y: int, w: int, h: int,
-                      title: const char*, path: const char*) -> int {
+                      title: const char*, path: const char*,
+                      block_x: int, block_y: int,
+                      block_w: int, block_h: int) -> int {
+    mouse := GetMousePosition()
+    blocked := block_w > 0 && block_h > 0 &&
+               CheckCollisionPointRec(mouse, (Rectangle){
+                   (float)block_x, (float)block_y,
+                   (float)block_w, (float)block_h
+               })
+
     DrawRectangle(x, y, w, h, DarkenUIColor(GetThemeBackground(), 6))
     DrawRectangleLines(x, y, w, h, DarkenUIColor(GetThemeBackground(), 42))
     DrawUIText(title, x + ScaleUIPx(12), y + ScaleUIPx(10),
                ScaleUIPx(15), GetThemeText())
     DrawUIText(path, x + ScaleUIPx(12), y + ScaleUIPx(34),
                ScaleUIPx(11), GetThemeIcon())
-    return CheckCollisionPointRec(GetMousePosition(),
+    return !blocked &&
+           CheckCollisionPointRec(mouse,
                                   (Rectangle){(float)x, (float)y,
                                               (float)w, (float)h}) &&
            IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
@@ -58,13 +68,15 @@ draw_recent_projects :: (x0: int, y0: int, card_w: int, card_h: int,
         path_basename(title, sizeof(title), path)
         card_x := x0 + (i % 2) * (card_w + gap)
         card_y := y + (i / 2) * (card_h + gap)
-        if draw_project_card(card_x, card_y, card_w, card_h, title, path) {
+        remove_x := card_x + card_w - ScaleUIPx(32)
+        remove_y := card_y + ScaleUIPx(8)
+        remove_size := ScaleUIPx(22)
+        if draw_project_card(card_x, card_y, card_w, card_h, title, path,
+                             remove_x, remove_y, remove_size, remove_size) {
             proj.project_open(st, path)
             return -1
         }
-        if DrawUIGenericButton(card_x + card_w - ScaleUIPx(78),
-                               card_y + ScaleUIPx(8),
-                               ScaleUIPx(62), ScaleUIPx(22), "Remove",
+        if DrawUIGenericButton(remove_x, remove_y, remove_size, remove_size, "x",
                                UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
             krait_recent_remove(i)
             state.project_set_status(st, "Removed recent project")
@@ -98,7 +110,8 @@ draw_examples :: (x0: int, y0: int, card_w: int, card_h: int, gap: int,
         if card_y + card_h > bottom {
             break
         }
-        if draw_project_card(card_x, card_y, card_w, card_h, title, path) {
+        if draw_project_card(card_x, card_y, card_w, card_h, title, path,
+                             0, 0, 0, 0) {
             proj.project_open(st, path)
             return
         }

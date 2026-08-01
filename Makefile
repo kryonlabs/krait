@@ -8,7 +8,6 @@ KRYON_BUILD_DIR ?= $(KRYON_DIR)/build
 KRYON_PLATFORM ?= $(shell uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
 
 KRAIT = $(BUILD_DIR)/bin/krait
-KRYON_IDE = $(BUILD_DIR)/bin/kryon-ide
 KRAIT_GEN = $(BUILD_DIR)/gen
 KRAIT_SRCS := $(wildcard ide/*.kry)
 KRAIT_OBJS := $(patsubst ide/%.kry,$(KRAIT_GEN)/ide/%.o,$(KRAIT_SRCS))
@@ -59,13 +58,11 @@ else
 KRYON_PLATFORM_LDLIBS ?=
 endif
 
-.PHONY: all krait kryon-ide run test smoke clean install uninstall kryon-deps boundary-check
+.PHONY: all krait run test smoke clean install uninstall kryon-deps boundary-check
 
 all: krait
 
 krait: $(KRAIT)
-
-kryon-ide: $(KRYON_IDE)
 
 kryon-deps:
 	$(MAKE) -C $(KRYON_DIR) all
@@ -96,9 +93,6 @@ $(KRAIT): $(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KRAIT_GEN)/.transpiled $(KRYON_LI
 		-Wl,-export-dynamic $(KRYON_PLATFORM_LDLIBS) \
 		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) -lz -lpthread -lm
 
-$(KRYON_IDE): $(KRAIT) | $(BUILD_DIR)/bin
-	ln -sf krait $@
-
 $(KC) $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A):
 	$(MAKE) -C $(KRYON_DIR) all
 
@@ -120,10 +114,9 @@ install: $(KRAIT)
 	mkdir -p $(DESTDIR)$(PREFIX)/share/krait/assets/fonts
 	$(INSTALL) -m 755 $(KRAIT) $(DESTDIR)$(BINDIR)/krait
 	$(INSTALL) -m 644 assets/fonts/DepartureMono-Regular.otf $(DESTDIR)$(PREFIX)/share/krait/assets/fonts/DepartureMono-Regular.otf
-	ln -sf krait $(DESTDIR)$(BINDIR)/kryon-ide
 
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/krait $(DESTDIR)$(BINDIR)/kryon-ide
+	rm -f $(DESTDIR)$(BINDIR)/krait
 	rm -f $(DESTDIR)$(PREFIX)/share/krait/assets/fonts/DepartureMono-Regular.otf
 
 boundary-check:
