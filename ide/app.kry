@@ -185,7 +185,6 @@ draw_project_view :: (content: Rectangle, st: state.IdeState*) {
              (int)sidebar.x + sidebar_w, (int)(sidebar.y + sidebar.height),
              DarkenUIColor(GetThemeBackground(), 42))
     tree.draw_tree(sidebar, st)
-    handle_tree_selection(st)
     if st->layout_mode == state.IDE_LAYOUT_SOURCE {
         ed.draw_editor(main_area, st)
     } else if st->layout_mode == state.IDE_LAYOUT_PREVIEW {
@@ -269,31 +268,6 @@ bottom_button_style :: (tab: int) -> int {
         return UI_BUTTON_STYLE_TAB_SELECTED
     }
     return UI_BUTTON_STYLE_TAB
-}
-
-handle_tree_selection :: (st: state.IdeState*) {
-    if st->activated_entry <= 0 {
-        return
-    }
-    activated := st->activated_entry
-    st->activated_entry = 0
-    idx := -1
-    for int i = 0; i < st->entry_count; i++ {
-        if st->entries[i].id == activated {
-            idx = i
-            break
-        }
-    }
-    if idx < 0 {
-        return
-    }
-    if idx >= st->entry_count {
-        return
-    }
-    if st->entries[idx].is_dir {
-        return
-    }
-    ed.editor_open(st, st->entries[idx].path)
 }
 
 update_dialog :: (st: state.IdeState*) {

@@ -1,12 +1,23 @@
 #module "ide.tree"
 #import "kryon.h"
 state :: #import "ide/state"
+ed :: #import "ide/editor"
+
+krait_build_tree :: (root: const char*, out: state.FileTreeEntry*, cap: int) -> int #extern
 
 #private
 
 #global
 
 entries :: [1024] UICascadingTreeItem #global
+
+refresh_tree :: (st: state.IdeState*) {
+    if st->project.loaded == 0 {
+        st->entry_count = 0
+        return
+    }
+    st->entry_count = krait_build_tree(st->project.path, &st->entries[0], 1024)
+}
 
 build_items :: (st: state.IdeState*) {
     for int i = 0; i < st->entry_count; i++ {
@@ -18,7 +29,28 @@ build_items :: (st: state.IdeState*) {
     }
 }
 
+handle_activation :: (st: state.IdeState*) {
+    if st->activated_entry <= 0 {
+        return
+    }
+    activated := st->activated_entry
+    st->activated_entry = 0
+
+    for int i = 0; i < st->entry_count; i++ {
+        if st->entries[i].id == activated {
+            if st->entries[i].is_dir == 0 {
+                ed.editor_open(st, st->entries[i].path)
+                if st->layout_mode == state.IDE_LAYOUT_PREVIEW {
+                    st->layout_mode = state.IDE_LAYOUT_SOURCE
+                }
+            }
+            return
+        }
+    }
+}
+
 draw_tree :: (bounds: Rectangle, st: state.IdeState*) {
+    refresh_tree(st)
     if st->entry_count <= 0 {
         return
     }
@@ -29,6 +61,7 @@ draw_tree :: (bounds: Rectangle, st: state.IdeState*) {
         (UICascadingTreeExpansion){
             &st->expanded_entries[0], &st->expanded_count, 256
         },
-        &st->tree_scroll, ScaleUIPx(22)
+        &st->tree_scroll, 22
     })
+    handle_activation(st)
 }

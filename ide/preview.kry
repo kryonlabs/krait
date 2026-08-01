@@ -222,6 +222,8 @@ draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
     EndUIFocus()
     EndTextureMode()
     SetCurrentTheme(THEME_MONO, 0)
+    BeginUIFrame(GetScreenWidth(), GetScreenHeight(), GetUIScale())
+    BeginUIInspectFrame(st->project.path)
     scale_x := content.width / (float)pw
     scale_y := content.height / (float)ph
     scale := scale_x
