@@ -6,6 +6,7 @@ ed :: #import "ide/editor"
 kry_fs_realpath :: (path: const char*, out: char*, cap: int) -> int #extern
 kry_fs_exists :: (path: const char*) -> int #extern
 kry_fs_stat :: (path: const char*, out: KryFileStat*) -> int #extern
+krait_build_tree :: (root: const char*, out: state.FileTreeEntry*, cap: int) -> int #extern
 krait_recent_add :: (path: const char*) #extern
 
 #enum {
@@ -75,7 +76,11 @@ project_open :: (st: state.IdeState*, path: const char*) -> int {
     path_basename(st->project.name, sizeof(st->project.name), project_path)
     st->project.loaded = 1
     st->view = state.IDE_VIEW_PROJECT
-    st->entry_count = kry_fs_list_dir(project_path, &st->entries[0], 256)
+    st->entry_count = krait_build_tree(project_path, &st->entries[0], 1024)
+    st->selected_entry = 0
+    st->activated_entry = 0
+    st->expanded_count = 0
+    st->tree_scroll = 0
     krait_recent_add(project_path)
     if selected_file[0] != 0 {
         ed.editor_open(st, selected_file)

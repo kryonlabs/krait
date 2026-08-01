@@ -12,6 +12,7 @@
 #define KRAIT_MAX_RECENT 12
 #define KRAIT_MAX_EXAMPLES 32
 #define KRAIT_SEARCH_DEPTH 8
+#define KRAIT_TREE_DEPTH 8
 
 typedef struct {
     char path[KRAIT_PATH_MAX];
@@ -114,6 +115,89 @@ krait_ignored_dir(const char *name)
            strcmp(name, "build") == 0 ||
            strcmp(name, "vendor") == 0 ||
            strcmp(name, ".cache") == 0;
+}
+
+static int
+krait_tree_id(const char *path)
+{
+    unsigned int hash = 2166136261u;
+
+    if(path == NULL || path[0] == '\0')
+        return 1;
+    for(const unsigned char *p = (const unsigned char *)path; *p != '\0'; p++) {
+        hash ^= *p;
+        hash *= 16777619u;
+    }
+    hash &= 0x7fffffffu;
+    if(hash == 0)
+        hash = 1;
+    return (int)hash;
+}
+
+static int
+krait_add_tree_entry(FileTreeEntry *out, int count, int cap,
+                     const char *label, const char *path, int depth,
+                     int is_dir)
+{
+    FileTreeEntry *entry;
+
+    if(out == NULL || count >= cap || label == NULL || path == NULL)
+        return count;
+    entry = &out[count++];
+    snprintf(entry->label, sizeof(entry->label), "%s", label);
+    snprintf(entry->path, sizeof(entry->path), "%s", path);
+    entry->depth = depth;
+    entry->is_dir = is_dir ? 1 : 0;
+    entry->id = krait_tree_id(path);
+    return count;
+}
+
+static int
+krait_build_tree_dir(const char *root, const char *rel_dir,
+                     FileTreeEntry *out, int count, int cap, int depth)
+{
+    char dir[KRAIT_PATH_MAX];
+    KryDirEntry entries[256];
+    int entry_count;
+
+    if(root == NULL || out == NULL || count >= cap || depth > KRAIT_TREE_DEPTH)
+        return count;
+    if(rel_dir != NULL && rel_dir[0] != '\0')
+        krait_join(dir, sizeof(dir), root, rel_dir);
+    else
+        snprintf(dir, sizeof(dir), "%s", root);
+
+    entry_count = kry_fs_list_dir(dir, entries, 256);
+    for(int i = 0; i < entry_count && count < cap; i++) {
+        char rel_path[KRAIT_PATH_MAX];
+
+        if(rel_dir != NULL && rel_dir[0] != '\0')
+            krait_join(rel_path, sizeof(rel_path), rel_dir, entries[i].name);
+        else
+            snprintf(rel_path, sizeof(rel_path), "%s", entries[i].name);
+
+        if(entries[i].is_dir) {
+            if(krait_ignored_dir(entries[i].name))
+                continue;
+            count = krait_add_tree_entry(out, count, cap, entries[i].name,
+                                         rel_path, depth, 1);
+            if(depth < KRAIT_TREE_DEPTH)
+                count = krait_build_tree_dir(root, rel_path, out, count, cap,
+                                             depth + 1);
+        } else {
+            count = krait_add_tree_entry(out, count, cap, entries[i].name,
+                                         rel_path, depth, 0);
+        }
+    }
+    return count;
+}
+
+int
+krait_build_tree(const char *root, FileTreeEntry *out, int cap)
+{
+    if(root == NULL || root[0] == '\0' || out == NULL || cap <= 0)
+        return 0;
+    return krait_build_tree_dir(root, "", out, 0, cap, 0);
 }
 
 static void

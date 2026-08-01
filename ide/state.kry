@@ -44,6 +44,14 @@ SearchResult :: struct {
     excerpt: [256] char
 }
 
+FileTreeEntry :: struct {
+    label: [256] char
+    path: [1024] char
+    depth: int
+    is_dir: int
+    id: int
+}
+
 Project :: struct {
     loaded: int
     path: [1024] char
@@ -72,9 +80,12 @@ IdeState :: struct {
     project: Project
     dialog_mode: int
     # file tree
-    entries: [256] KryDirEntry
+    entries: [1024] FileTreeEntry
     entry_count: int
     selected_entry: int
+    activated_entry: int
+    expanded_entries: [256] int
+    expanded_count: int
     tree_scroll: int
     # open files / tabs
     open_files: [12] OpenFile

@@ -33,15 +33,15 @@ open_first_kry_file(IdeState *st)
         return;
     for(int i = 0; i < st->entry_count; i++) {
         if(!st->entries[i].is_dir &&
-           strcmp(st->entries[i].name, "main.kry") == 0) {
-            ide_editor_editor_open(st, st->entries[i].name);
+           strcmp(st->entries[i].path, "main.kry") == 0) {
+            ide_editor_editor_open(st, st->entries[i].path);
             return;
         }
     }
     for(int i = 0; i < st->entry_count; i++) {
         if(!st->entries[i].is_dir &&
-           path_has_suffix(st->entries[i].name, ".kry")) {
-            ide_editor_editor_open(st, st->entries[i].name);
+           path_has_suffix(st->entries[i].path, ".kry")) {
+            ide_editor_editor_open(st, st->entries[i].path);
             return;
         }
     }
