@@ -17,8 +17,13 @@ krait_scaffold_project :: (path: const char*, status: char*, status_size: int) -
 istate :: state.IdeState #global
 project_dialog :: FileDialog #global
 
+apply_studio_theme :: () {
+    SetCurrentTheme(THEME_MONO, 0)
+}
+
 init :: () {
     krait_load_ui_font()
+    apply_studio_theme()
     istate.view = state.IDE_VIEW_START
     istate.layout_mode = state.IDE_LAYOUT_SPLIT
     istate.bottom_panel = state.IDE_BOTTOM_NONE
@@ -35,6 +40,7 @@ shutdown :: () {
 frame :: () {
     w := GetScreenWidth()
     h := GetScreenHeight()
+    apply_studio_theme()
     BeginDrawing()
     ClearBackground(GetThemeBackground())
     BeginUIFrame(w, h, GetUIScale())

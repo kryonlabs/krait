@@ -221,6 +221,7 @@ draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
     DrawAppScreen(st->host, (Rectangle){0, 0, (float)pw, (float)ph})
     EndUIFocus()
     EndTextureMode()
+    SetCurrentTheme(THEME_MONO, 0)
     scale_x := content.width / (float)pw
     scale_y := content.height / (float)ph
     scale := scale_x
