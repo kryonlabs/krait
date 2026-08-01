@@ -137,10 +137,72 @@ ensure_texture :: (st: state.IdeState*, w: int, h: int) -> int {
     return 1
 }
 
+preview_set_fit :: (st: state.IdeState*) {
+    st->preview_scale_mode = state.IDE_PREVIEW_SCALE_FIT
+    st->preview_zoom = 1.0
+    st->preview_pan_x = 0.0
+    st->preview_pan_y = 0.0
+    state.project_set_status(st, "Preview fit")
+}
+
+preview_set_zoom :: (st: state.IdeState*, zoom: float) {
+    if zoom < 0.25 {
+        zoom = 0.25
+    }
+    if zoom > 6.0 {
+        zoom = 6.0
+    }
+    st->preview_scale_mode = state.IDE_PREVIEW_SCALE_CUSTOM
+    st->preview_zoom = zoom
+    state.project_set_status(st, "Preview zoom")
+}
+
+draw_preview_toolbar :: (bounds: Rectangle, st: state.IdeState*) {
+    y := (int)bounds.y + ScaleUIPx(4)
+    x := (int)bounds.x + ScaleUIPx(6)
+    h := ScaleUIPx(22)
+    if DrawUIGenericButton(x, y, ScaleUIPx(42), h, "Fit",
+                           st->preview_scale_mode == state.IDE_PREVIEW_SCALE_FIT ?
+                               UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB,
+                           0, NULL) {
+        preview_set_fit(st)
+    }
+    x = x + ScaleUIPx(48)
+    if DrawUIGenericButton(x, y, ScaleUIPx(36), h, "50",
+                           UI_BUTTON_STYLE_TAB, 0, NULL) {
+        preview_set_zoom(st, 0.5)
+    }
+    x = x + ScaleUIPx(40)
+    if DrawUIGenericButton(x, y, ScaleUIPx(36), h, "75",
+                           UI_BUTTON_STYLE_TAB, 0, NULL) {
+        preview_set_zoom(st, 0.75)
+    }
+    x = x + ScaleUIPx(40)
+    if DrawUIGenericButton(x, y, ScaleUIPx(42), h, "100",
+                           UI_BUTTON_STYLE_TAB, 0, NULL) {
+        preview_set_zoom(st, 1.0)
+    }
+    x = x + ScaleUIPx(48)
+    if DrawUIGenericButton(x, y, ScaleUIPx(28), h, "-",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        preview_set_zoom(st, st->preview_zoom * 0.85)
+    }
+    x = x + ScaleUIPx(32)
+    if DrawUIGenericButton(x, y, ScaleUIPx(28), h, "+",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        preview_set_zoom(st, st->preview_zoom * 1.18)
+    }
+}
+
 draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
+    toolbar_h := ScaleUIPx(30)
+    draw_preview_toolbar((Rectangle){bounds.x, bounds.y, bounds.width,
+                                     (float)toolbar_h}, st)
+    content := (Rectangle){bounds.x, bounds.y + (float)toolbar_h,
+                           bounds.width, bounds.height - (float)toolbar_h}
     if st->host == NULL {
         DrawUIText("No preview",
-                   (int)bounds.x + ScaleUIPx(16), (int)bounds.y + ScaleUIPx(16),
+                   (int)content.x + ScaleUIPx(16), (int)content.y + ScaleUIPx(16),
                    ScaleUIPx(15), GetThemeText())
         return
     }
@@ -159,7 +221,45 @@ draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
     DrawAppScreen(st->host, (Rectangle){0, 0, (float)pw, (float)ph})
     EndUIFocus()
     EndTextureMode()
+    scale_x := content.width / (float)pw
+    scale_y := content.height / (float)ph
+    scale := scale_x
+    if scale_y < scale {
+        scale = scale_y
+    }
+    if st->preview_scale_mode == state.IDE_PREVIEW_SCALE_CUSTOM {
+        if st->preview_zoom <= 0.0 {
+            st->preview_zoom = 1.0
+        }
+        scale = st->preview_zoom
+    } else {
+        st->preview_pan_x = 0.0
+        st->preview_pan_y = 0.0
+    }
+    mouse := GetMousePosition()
+    if CheckCollisionPointRec(mouse, content) {
+        wheel := GetMouseWheelMove()
+        if wheel > 0.0 {
+            preview_set_zoom(st, st->preview_zoom * 1.12)
+        } else if wheel < 0.0 {
+            preview_set_zoom(st, st->preview_zoom * 0.90)
+        }
+        if IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) || IsMouseButtonDown(MOUSE_BUTTON_RIGHT) {
+            delta := GetMouseDelta()
+            st->preview_pan_x = st->preview_pan_x + delta.x
+            st->preview_pan_y = st->preview_pan_y + delta.y
+            st->preview_scale_mode = state.IDE_PREVIEW_SCALE_CUSTOM
+        }
+    }
+    draw_w := (float)pw * scale
+    draw_h := (float)ph * scale
+    dst := (Rectangle){content.x + (content.width - draw_w) * 0.5 + st->preview_pan_x,
+                       content.y + (content.height - draw_h) * 0.5 + st->preview_pan_y,
+                       draw_w, draw_h}
+    BeginScissorMode((int)content.x, (int)content.y,
+                     (int)content.width, (int)content.height)
     DrawTexturePro(st->preview_texture.texture,
                    (Rectangle){0, 0, (float)pw, -(float)ph},
-                   bounds, (Vector2){0, 0}, 0.0, WHITE)
+                   dst, (Vector2){0, 0}, 0.0, WHITE)
+    EndScissorMode()
 }

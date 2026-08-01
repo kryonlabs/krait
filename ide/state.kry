@@ -26,6 +26,11 @@
     IDE_DIALOG_NEW_PROJECT,
 }
 
+#enum {
+    IDE_PREVIEW_SCALE_FIT,
+    IDE_PREVIEW_SCALE_CUSTOM,
+}
+
 Diagnostic :: struct {
     path: [512] char
     line: int
@@ -88,6 +93,10 @@ IdeState :: struct {
     preview_texture: RenderTexture2D
     preview_texture_w: int
     preview_texture_h: int
+    preview_zoom: float
+    preview_pan_x: float
+    preview_pan_y: float
+    preview_scale_mode: int
     output: [65536] char
     source_mtime: long
     last_reload_check: float

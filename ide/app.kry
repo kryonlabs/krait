@@ -22,6 +22,8 @@ init :: () {
     istate.view = state.IDE_VIEW_START
     istate.layout_mode = state.IDE_LAYOUT_SPLIT
     istate.bottom_panel = state.IDE_BOTTOM_NONE
+    istate.preview_zoom = 1.0
+    istate.preview_scale_mode = state.IDE_PREVIEW_SCALE_FIT
     snprintf(istate.status, sizeof(istate.status), "%s", "Ready")
     InitFileDialog(&project_dialog)
 }
