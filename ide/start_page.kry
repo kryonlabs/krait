@@ -116,19 +116,19 @@ draw_start_page :: (content: Rectangle, st: state.IdeState*) {
     gap := ScaleUIPx(14)
     bottom := (int)(content.y + content.height - pad)
 
-    DrawUIText("Kryon Studio", x0, y, ScaleUIPx(32), GetThemeText())
+    DrawUIText("Krait", x0, y, ScaleUIPx(32), GetThemeText())
     y = y + ScaleUIPx(42)
     DrawUIText("Choose a project to begin, or start something new.",
                x0, y, ScaleUIPx(14), GetThemeIcon())
     y = y + ScaleUIPx(34)
     if DrawUIGenericButton(x0, y, ScaleUIPx(180), ScaleUIPx(42),
                            "Open Project", UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
-        st->dialog_active = 1
+        st->dialog_mode = state.IDE_DIALOG_OPEN_PROJECT
     }
     if DrawUIGenericButton(x0 + ScaleUIPx(194), y,
                            ScaleUIPx(180), ScaleUIPx(42), "New Project",
                            UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-        state.project_set_status(st, "New Project not implemented yet")
+        st->dialog_mode = state.IDE_DIALOG_NEW_PROJECT
     }
     y = y + ScaleUIPx(70)
 

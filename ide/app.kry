@@ -9,8 +9,10 @@ ed :: #import "ide/editor"
 prev :: #import "ide/preview"
 con :: #import "ide/console"
 prob :: #import "ide/problems"
+srch :: #import "ide/search"
 
 krait_load_ui_font :: () -> int #extern
+krait_scaffold_project :: (path: const char*, status: char*, status_size: int) -> int #extern
 
 istate :: state.IdeState #global
 project_dialog :: FileDialog #global
@@ -34,6 +36,7 @@ frame :: () {
     BeginDrawing()
     ClearBackground(GetThemeBackground())
     BeginUIFrame(w, h, GetUIScale())
+    BeginUIInspectFrame(istate.project.loaded ? istate.project.path : ".")
     draw_chrome(w, h)
     content := (Rectangle){0, (float)top_bar_height(),
                            (float)w, (float)(h - top_bar_height() - status_bar_height())}
@@ -55,6 +58,14 @@ frame :: () {
         }
         prev.preview_maybe_reload(&istate)
         con.console_poll(&istate)
+        if ed.mod_key_down() &&
+           (UIKeyDown(KEY_LEFT_SHIFT) || UIKeyDown(KEY_RIGHT_SHIFT)) &&
+           UIKeyPressed(KEY_F) {
+            srch.search_focus(&istate, 0)
+        }
+        if ed.mod_key_down() && UIKeyPressed(KEY_P) {
+            srch.search_focus(&istate, 1)
+        }
     }
     update_dialog(&istate)
     EndUIFocus()
@@ -75,7 +86,7 @@ draw_top_bar :: (view_w: int) {
         DrawUIText(istate.project.name, ScaleUIPx(12), ScaleUIPx(11),
                    ScaleUIPx(15), GetThemeText())
     } else {
-        DrawUIText("Kryon Studio", ScaleUIPx(12), ScaleUIPx(11),
+        DrawUIText("Krait", ScaleUIPx(12), ScaleUIPx(11),
                    ScaleUIPx(15), GetThemeText())
     }
     if istate.project.loaded {
@@ -86,7 +97,7 @@ draw_top_bar :: (view_w: int) {
 draw_project_toolbar :: (view_w: int, top_h: int) {
     btn_h := ScaleUIPx(24)
     y := (top_h - btn_h) / 2
-    x := view_w - ScaleUIPx(716)
+    x := view_w - ScaleUIPx(796)
     if x < ScaleUIPx(180) {
         x = ScaleUIPx(180)
     }
@@ -117,6 +128,11 @@ draw_project_toolbar :: (view_w: int, top_h: int) {
         show_bottom_panel(&istate, state.IDE_BOTTOM_CONSOLE)
     }
     x = x + ScaleUIPx(82)
+    if DrawUIGenericButton(x, y, ScaleUIPx(72), btn_h, "Search",
+                           bottom_button_style(state.IDE_BOTTOM_SEARCH), 0, NULL) {
+        srch.search_focus(&istate, 0)
+    }
+    x = x + ScaleUIPx(78)
     problems_label: [32] char
     snprintf(problems_label, sizeof(problems_label), "Problems %d",
              istate.diagnostic_count)
@@ -204,6 +220,11 @@ draw_bottom_panel :: (bounds: Rectangle, st: state.IdeState*) {
                            bottom_button_style(state.IDE_BOTTOM_CONSOLE), 0, NULL) {
         st->bottom_tab = state.IDE_BOTTOM_CONSOLE
     }
+    x = x + ScaleUIPx(88)
+    if DrawUIGenericButton(x, y, ScaleUIPx(76), ScaleUIPx(22), "Search",
+                           bottom_button_style(state.IDE_BOTTOM_SEARCH), 0, NULL) {
+        st->bottom_tab = state.IDE_BOTTOM_SEARCH
+    }
     if DrawUIGenericButton((int)(bounds.x + bounds.width) - ScaleUIPx(66), y,
                            ScaleUIPx(54), ScaleUIPx(22), "Close",
                            UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
@@ -215,6 +236,8 @@ draw_bottom_panel :: (bounds: Rectangle, st: state.IdeState*) {
         prob.draw_problems(body, st)
     } else if st->bottom_tab == state.IDE_BOTTOM_CONSOLE {
         con.draw_console(body, st)
+    } else if st->bottom_tab == state.IDE_BOTTOM_SEARCH {
+        srch.draw_search(body, st)
     } else {
         DrawUIText(st->output, (int)body.x + ScaleUIPx(10),
                    (int)body.y + ScaleUIPx(8), ScaleUIPx(13), GetThemeText())
@@ -256,17 +279,38 @@ handle_tree_selection :: (st: state.IdeState*) {
 }
 
 update_dialog :: (st: state.IdeState*) {
-    if st->dialog_active {
+    if st->dialog_mode == state.IDE_DIALOG_OPEN_PROJECT {
+        SetFileDialogCurrentDir(&project_dialog,
+                                st->project.loaded ? st->project.path : GetWorkingDirectory())
+        BeginSelectFileDialogFolder(&project_dialog, "Open Project")
+        result := UpdateFileDialog(&project_dialog)
+        if result == 1 {
+            proj.project_open(st, GetFileDialogPath(&project_dialog))
+            SetFileDialogCurrentDir(&project_dialog, st->project.path)
+        } else {
+            state.project_set_status(st, "Open cancelled")
+        }
+        project_dialog.confirmed = 0
+        project_dialog.result_path[0] = 0
+        st->dialog_mode = state.IDE_DIALOG_NONE
+    } else if st->dialog_mode == state.IDE_DIALOG_NEW_PROJECT {
+        SetFileDialogCurrentDir(&project_dialog,
+                                st->project.loaded ? st->project.path : GetWorkingDirectory())
+        BeginSelectFileDialogFolder(&project_dialog, "New Project Location")
         result := UpdateFileDialog(&project_dialog)
         if result == 1 {
             path := GetFileDialogPath(&project_dialog)
-            proj.project_open(st, path)
-        } else if result == 0 {
-            state.project_set_status(st, "Open cancelled")
+            if krait_scaffold_project(path, st->status, sizeof(st->status)) {
+                proj.project_open(st, path)
+                ed.editor_open(st, "main.kry")
+                SetFileDialogCurrentDir(&project_dialog, st->project.path)
+            }
+        } else {
+            state.project_set_status(st, "New project cancelled")
         }
-        if result >= 0 {
-            st->dialog_active = 0
-        }
+        project_dialog.confirmed = 0
+        project_dialog.result_path[0] = 0
+        st->dialog_mode = state.IDE_DIALOG_NONE
     }
 }
 
@@ -278,7 +322,7 @@ status_bar_height :: () -> int {
     return ScaleUIPx(24)
 }
 
-app "Kryon Studio" {
+app "Krait" {
     size 1400 900
     fps 60
     init init

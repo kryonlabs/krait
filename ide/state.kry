@@ -12,6 +12,7 @@
     IDE_BOTTOM_PROBLEMS,
     IDE_BOTTOM_OUTPUT,
     IDE_BOTTOM_CONSOLE,
+    IDE_BOTTOM_SEARCH,
 }
 
 #enum {
@@ -19,11 +20,23 @@
     IDE_VIEW_PROJECT,
 }
 
+#enum {
+    IDE_DIALOG_NONE,
+    IDE_DIALOG_OPEN_PROJECT,
+    IDE_DIALOG_NEW_PROJECT,
+}
+
 Diagnostic :: struct {
     path: [512] char
     line: int
     column: int
     message: [512] char
+}
+
+SearchResult :: struct {
+    path: [512] char
+    line: int
+    excerpt: [256] char
 }
 
 Project :: struct {
@@ -52,7 +65,7 @@ IdeState :: struct {
     bottom_panel: int
     status: [256] char
     project: Project
-    dialog_active: int
+    dialog_mode: int
     # file tree
     entries: [256] KryDirEntry
     entry_count: int
@@ -90,6 +103,12 @@ IdeState :: struct {
     diagnostics: [64] Diagnostic
     diagnostic_count: int
     selected_diagnostic: int
+    # search / quick open
+    search_results: [64] SearchResult
+    search_count: int
+    selected_search: int
+    search_scroll: int
+    quick_open_mode: int
     # bottom panel
     bottom_visible: int
     bottom_tab: int

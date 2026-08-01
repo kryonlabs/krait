@@ -1,0 +1,104 @@
+#module "ide.search"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+ed :: #import "ide/editor"
+
+krait_search_project :: (root: const char*, query: const char*,
+                         results: state.SearchResult*, cap: int) -> int #extern
+
+#global
+
+search_run :: (st: state.IdeState*) {
+    if st->project.loaded == 0 {
+        return
+    }
+    st->search_count = krait_search_project(st->project.path, st->find_text,
+                                            &st->search_results[0], 64)
+    st->selected_search = -1
+    st->search_scroll = 0
+    if st->find_text[0] == 0 {
+        state.project_set_status(st, "Type to search")
+    } else {
+        label: [96] char
+        snprintf(label, sizeof(label), "Found %d result%s", st->search_count,
+                 st->search_count == 1 ? "" : "s")
+        state.project_set_status(st, label)
+    }
+}
+
+search_focus :: (st: state.IdeState*, quick: int) {
+    st->quick_open_mode = quick
+    st->bottom_visible = 1
+    st->bottom_tab = state.IDE_BOTTOM_SEARCH
+    st->find_visible = 1
+    st->find_focused = 1
+    SetUIFocus(5100)
+    search_run(st)
+}
+
+draw_search :: (bounds: Rectangle, st: state.IdeState*) {
+    pad := ScaleUIPx(8)
+    btn_w := ScaleUIPx(76)
+    input_h := ScaleUIPx(28)
+    field := (Rectangle){bounds.x + (float)pad, bounds.y + (float)pad,
+                         bounds.width - (float)(pad * 3 + btn_w),
+                         (float)input_h}
+    button := (Rectangle){field.x + field.width + (float)pad, field.y,
+                          (float)btn_w, (float)input_h}
+    results := (Rectangle){bounds.x + (float)pad,
+                           bounds.y + (float)(pad * 2 + input_h),
+                           bounds.width - (float)(pad * 2),
+                           bounds.height - (float)(pad * 3 + input_h)}
+    old_len := strlen(st->find_text)
+    DrawUITextField((UITextField){
+        field, st->find_text, sizeof(st->find_text),
+        &st->find_cursor, &st->find_focused,
+        sizeof(st->find_text) - 1, ScaleUIPx(13), 5100,
+        (UITextInputStyle){0}, (UITextInputFilter){0}, NULL, NULL
+    })
+    if strlen(st->find_text) != old_len {
+        search_run(st)
+    }
+    if DrawUIGenericButton((int)button.x, (int)button.y,
+                           (int)button.width, (int)button.height,
+                           st->quick_open_mode != 0 ? "Open" : "Find",
+                           UI_BUTTON_STYLE_PRIMARY, st->find_text[0] == 0,
+                           NULL) {
+        search_run(st)
+    }
+    if st->find_focused != 0 && UIKeyPressed(KEY_ENTER) {
+        search_run(st)
+        if st->quick_open_mode != 0 && st->search_count > 0 {
+            ed.editor_open(st, st->search_results[0].path)
+        }
+    }
+    y := (int)results.y
+    row_h := ScaleUIPx(24)
+    for int i = 0; i < st->search_count; i++ {
+        r := &st->search_results[i]
+        if y + row_h > (int)(results.y + results.height) {
+            break
+        }
+        label: [900] char
+        if st->quick_open_mode != 0 {
+            snprintf(label, sizeof(label), "%s", r->path)
+        } else {
+            snprintf(label, sizeof(label), "%s:%d  %s",
+                     r->path, r->line, r->excerpt)
+        }
+        if DrawUIGenericButton((int)results.x, y, (int)results.width,
+                               row_h, label, UI_BUTTON_STYLE_SECONDARY,
+                               0, NULL) {
+            st->selected_search = i
+            ed.editor_open(st, r->path)
+            state.project_set_status(st, r->path)
+        }
+        y = y + row_h + ScaleUIPx(2)
+    }
+    if st->search_count == 0 {
+        DrawUIText(st->find_text[0] == 0 ? "Type a query" : "No results",
+                   (int)results.x, (int)results.y,
+                   ScaleUIPx(13), GetThemeText())
+    }
+}

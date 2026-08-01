@@ -12,7 +12,7 @@ KRYON_IDE = $(BUILD_DIR)/bin/kryon-ide
 KRAIT_GEN = $(BUILD_DIR)/gen
 KRAIT_SRCS := $(wildcard ide/*.kry)
 KRAIT_OBJS := $(patsubst ide/%.kry,$(KRAIT_GEN)/ide/%.o,$(KRAIT_SRCS))
-KRAIT_NATIVE_SRCS := src/native.c
+KRAIT_NATIVE_SRCS := src/main.c src/native.c
 KRAIT_NATIVE_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/src/%.o,$(KRAIT_NATIVE_SRCS))
 
 KC = $(KRYON_BUILD_DIR)/bin/kc
@@ -75,13 +75,17 @@ $(KRAIT_GEN)/.transpiled: $(KRAIT_SRCS) | $(KC)
 	$(KC) --root . -o $(KRAIT_GEN) $(KRAIT_SRCS)
 	@touch $@
 
+$(KRAIT_GEN)/ide/app.o: $(KRAIT_GEN)/.transpiled
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -Dmain=krait_generated_main -I$(KRAIT_GEN) -c $(KRAIT_GEN)/ide/app.c -o $@
+
 $(KRAIT_GEN)/ide/%.o: $(KRAIT_GEN)/.transpiled
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -I$(KRAIT_GEN) -c $(KRAIT_GEN)/ide/$*.c -o $@
 
-$(BUILD_DIR)/src/%.o: src/%.c
+$(BUILD_DIR)/src/%.o: src/%.c $(KRAIT_GEN)/.transpiled
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -I$(KRAIT_GEN) -c $< -o $@
 
 $(KRAIT): $(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KRAIT_GEN)/.transpiled $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) | $(BUILD_DIR)/bin
 	$(CC) $(CFLAGS) $(CPPFLAGS) -I$(KRAIT_GEN) $(RAY_CFLAGS) $(SYSTEM_THEME_CFLAGS) -o $@ \
@@ -108,7 +112,8 @@ run: krait
 test: krait boundary-check
 
 smoke: test
-	@printf '%s\n' 'Krait smoke build passed. Runtime preview smoke will be added with the Krait CLI smoke runner.'
+	@kryon_dir=$$(cd "$(KRYON_DIR)" && pwd); \
+	KRYON_DIR="$$kryon_dir" $(KRAIT) --smoke-screens samples/hello.kry /tmp/krait-smoke.png
 
 install: $(KRAIT)
 	mkdir -p $(DESTDIR)$(BINDIR)
