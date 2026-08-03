@@ -4,6 +4,7 @@ PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 INSTALL ?= install
 KRYON_DIR ?= vendor/kryon
+DEV_KRYON_DIR ?= ../kryon
 KRYON_BUILD_DIR ?= $(KRYON_DIR)/build
 KRYON_PLATFORM ?= $(shell uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
 
@@ -59,7 +60,7 @@ else
 KRYON_PLATFORM_LDLIBS ?=
 endif
 
-.PHONY: all krait run test smoke clean install uninstall kryon-deps boundary-check
+.PHONY: all krait run dev test smoke clean install uninstall kryon-deps boundary-check
 
 all: krait
 
@@ -106,6 +107,11 @@ $(BUILD_DIR)/bin:
 run: krait
 	@kryon_dir=$$(cd "$(KRYON_DIR)" && pwd); \
 	KRYON_DIR="$$kryon_dir" $(KRAIT) $(ARGS)
+
+dev: KRYON_DIR := $(DEV_KRYON_DIR)
+dev: krait
+	@kryon_dir=$$(cd "$(KRYON_DIR)" && pwd); \
+	KRYON_DIR="$$kryon_dir" $(KRAIT) --kryon-dir "$$kryon_dir" $(ARGS)
 
 test: krait boundary-check
 

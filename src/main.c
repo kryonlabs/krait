@@ -18,6 +18,14 @@ static unsigned char krait_key_down_now[KRAIT_KEY_COUNT];
 static unsigned char krait_key_pressed_now[KRAIT_KEY_COUNT];
 static unsigned char krait_key_pressed_pending[KRAIT_KEY_COUNT];
 
+static void
+krait_use_kryon_dir(const char *path)
+{
+    if(path == NULL || path[0] == '\0')
+        return;
+    setenv("KRYON_DIR", path, 1);
+}
+
 static int
 krait_sdl_keycode_to_ui_key(SDL_Keycode keycode)
 {
@@ -194,22 +202,42 @@ main(int argc, char **argv)
     const char *smoke_screenshot_path = "/tmp/krait-ide-smoke.png";
     int result = 0;
 
-    if(argi < argc && strcmp(argv[argi], "--temp-session") == 0)
-        argi++;
-    if(argi < argc && strcmp(argv[argi], "--smoke-screens") == 0) {
-        smoke_screens = 1;
-        if(argc > argi + 1)
-            project_arg = argv[argi + 1];
-        if(argc > argi + 2)
-            smoke_screenshot_path = argv[argi + 2];
-    } else if(argi < argc && strcmp(argv[argi], "--smoke-ide") == 0) {
-        smoke_ide = 1;
-        if(argc > argi + 1)
-            project_arg = argv[argi + 1];
-        if(argc > argi + 2)
-            smoke_screenshot_path = argv[argi + 2];
-    } else if(argi < argc) {
+    while(argi < argc) {
+        if(strcmp(argv[argi], "--temp-session") == 0) {
+            argi++;
+            continue;
+        }
+        if(strcmp(argv[argi], "--dev") == 0) {
+            krait_use_kryon_dir("../kryon");
+            argi++;
+            continue;
+        }
+        if(strcmp(argv[argi], "--kryon-dir") == 0) {
+            if(argc > argi + 1) {
+                krait_use_kryon_dir(argv[argi + 1]);
+                argi += 2;
+                continue;
+            }
+            break;
+        }
+        if(strcmp(argv[argi], "--smoke-screens") == 0) {
+            smoke_screens = 1;
+            if(argc > argi + 1)
+                project_arg = argv[argi + 1];
+            if(argc > argi + 2)
+                smoke_screenshot_path = argv[argi + 2];
+            break;
+        }
+        if(strcmp(argv[argi], "--smoke-ide") == 0) {
+            smoke_ide = 1;
+            if(argc > argi + 1)
+                project_arg = argv[argi + 1];
+            if(argc > argi + 2)
+                smoke_screenshot_path = argv[argi + 2];
+            break;
+        }
         project_arg = argv[argi];
+        break;
     }
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
