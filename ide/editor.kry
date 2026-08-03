@@ -14,10 +14,35 @@ undo_count :: int #global
 undo_head :: int #global
 redo_ring :: [24] char* #global
 redo_count :: int #global
+edit_snapshot :: [131072] char #global
+edit_snapshot_path :: [1024] char #global
+edit_snapshot_valid :: int #global
 
 mod_key_down :: () -> int {
     return UIKeyDown(KEY_LEFT_CONTROL) || UIKeyDown(KEY_RIGHT_CONTROL) ||
            UIKeyDown(KEY_LEFT_SUPER) || UIKeyDown(KEY_RIGHT_SUPER)
+}
+
+editor_snapshot_capture :: (f: state.OpenFile*) {
+    if f == NULL {
+        edit_snapshot_valid = 0
+        edit_snapshot[0] = 0
+        edit_snapshot_path[0] = 0
+        return
+    }
+    snprintf(edit_snapshot, sizeof(edit_snapshot), "%s", f->source)
+    snprintf(edit_snapshot_path, sizeof(edit_snapshot_path), "%s", f->path)
+    edit_snapshot_valid = 1
+}
+
+editor_snapshot_ensure :: (f: state.OpenFile*) {
+    if f == NULL {
+        return
+    }
+    if edit_snapshot_valid == 0 ||
+       strcmp(edit_snapshot_path, f->path) != 0 {
+        editor_snapshot_capture(f)
+    }
 }
 
 snapshot_push :: (ring: char**, count: int*, text: const char*) {
@@ -43,6 +68,7 @@ editor_history_reset :: () {
     }
     undo_count = 0
     redo_count = 0
+    edit_snapshot_valid = 0
 }
 
 editor_undo :: (st: state.IdeState*) {
@@ -56,6 +82,7 @@ editor_undo :: (st: state.IdeState*) {
     snapshot_push(redo_ring, &redo_count, f->source)
     snprintf(f->source, sizeof(f->source), "%s", snap)
     f->dirty = 1
+    editor_snapshot_capture(f)
     free(snap)
 }
 
@@ -70,6 +97,7 @@ editor_redo :: (st: state.IdeState*) {
     snapshot_push(undo_ring, &undo_count, f->source)
     snprintf(f->source, sizeof(f->source), "%s", snap)
     f->dirty = 1
+    editor_snapshot_capture(f)
     free(snap)
 }
 
@@ -242,15 +270,9 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
             editor_redo(st)
         }
     }
-    # Snapshot the pre-edit state so a detected change pushes one undo entry.
-    before: [4096] char
-    snapshot_taken := 0
-    if f->focused != 0 {
-        snprintf(before, sizeof(before), "%s", f->source)
-        snapshot_taken = 1
-    }
+    editor_snapshot_ensure(f)
     before_len := strlen(f->source)
-    DrawUITextArea((UITextArea){
+    text_changed := DrawUITextArea((UITextArea){
         body, f->source, sizeof(f->source),
         &f->cursor, &f->focused, &f->scroll,
         sizeof(f->source) - 1, ScaleUIPx(14), ScaleUIPx(6), 3001,
@@ -258,10 +280,10 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
         editor_style, (UITextInputFilter){0}, NULL
     })
     after_len := strlen(f->source)
-    if after_len != before_len {
+    if text_changed != 0 || after_len != before_len {
         f->dirty = 1
-        if snapshot_taken != 0 {
-            snapshot_push(undo_ring, &undo_count, before)
+        if edit_snapshot_valid != 0 {
+            snapshot_push(undo_ring, &undo_count, edit_snapshot)
             # A new edit invalidates the redo stack.
             for int i = 0; i < redo_count; i++ {
                 free(redo_ring[i])
@@ -269,6 +291,7 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
             }
             redo_count = 0
         }
+        editor_snapshot_capture(f)
     }
     # Ctrl/Cmd+S saves the active buffer.
     if f->focused != 0 && mod_key_down() && UIKeyPressed(KEY_S) {

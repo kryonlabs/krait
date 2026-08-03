@@ -5,11 +5,88 @@
 #include "ui_icons.h"
 #include "ui_inspect.h"
 
+#include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 extern IdeState istate;
+
+#define KRAIT_KEY_COUNT 512
+
+static unsigned char krait_key_down_now[KRAIT_KEY_COUNT];
+static unsigned char krait_key_pressed_now[KRAIT_KEY_COUNT];
+static unsigned char krait_key_pressed_pending[KRAIT_KEY_COUNT];
+
+static int
+krait_sdl_keycode_to_ui_key(SDL_Keycode keycode)
+{
+    if(keycode >= 'a' && keycode <= 'z')
+        return (int)(keycode - ('a' - 'A'));
+    if(keycode >= 'A' && keycode <= 'Z')
+        return (int)keycode;
+    if(keycode >= 32 && keycode <= 126)
+        return (int)keycode;
+    return 0;
+}
+
+static int
+krait_sdl_key_event(void *userdata, SDL_Event *event)
+{
+    int key;
+
+    (void)userdata;
+    if(event == NULL ||
+       (event->type != SDL_KEYDOWN && event->type != SDL_KEYUP))
+        return 0;
+    key = krait_sdl_keycode_to_ui_key(event->key.keysym.sym);
+    if(key <= 0 || key >= KRAIT_KEY_COUNT)
+        return 0;
+    if(event->type == SDL_KEYDOWN) {
+        if(!event->key.repeat && !krait_key_down_now[key])
+            krait_key_pressed_pending[key] = 1;
+        krait_key_down_now[key] = 1;
+    } else {
+        krait_key_down_now[key] = 0;
+    }
+    return 0;
+}
+
+static void
+krait_update_logical_keys(void)
+{
+    memcpy(krait_key_pressed_now, krait_key_pressed_pending,
+           sizeof(krait_key_pressed_now));
+    memset(krait_key_pressed_pending, 0, sizeof(krait_key_pressed_pending));
+}
+
+static void
+krait_init_logical_keys(void)
+{
+    SDL_AddEventWatch(krait_sdl_key_event, NULL);
+}
+
+static void
+krait_shutdown_logical_keys(void)
+{
+    SDL_DelEventWatch(krait_sdl_key_event, NULL);
+}
+
+static int
+krait_logical_key_pressed(int key)
+{
+    if(key <= 0 || key >= KRAIT_KEY_COUNT)
+        return 0;
+    return krait_key_pressed_now[key];
+}
+
+static int
+krait_logical_key_down(int key)
+{
+    if(key <= 0 || key >= KRAIT_KEY_COUNT)
+        return 0;
+    return krait_key_down_now[key];
+}
 
 static int
 path_has_suffix(const char *path, const char *suffix)
@@ -94,8 +171,10 @@ run_smoke(const char *project_path, const char *screenshot_path, int build_previ
         if(istate.host == NULL)
             return 1;
     }
-    for(int i = 0; i < 4; i++)
+    for(int i = 0; i < 4; i++) {
+        UpdateUIKeyPlatformState();
         ide_app_frame();
+    }
     if(!save_screen_image(screenshot_path))
         return 1;
     return 0;
@@ -146,6 +225,10 @@ main(int argc, char **argv)
     }
     SetTargetFPS(60);
     InitUI(screen_w, screen_h, GetUIScale());
+    krait_init_logical_keys();
+    SetUIKeyPlatformCallbacks(krait_update_logical_keys,
+                              krait_logical_key_pressed,
+                              krait_logical_key_down);
     SetCurrentTheme(THEME_MONO, 0);
     ide_app_init();
     open_startup_project(project_arg);
@@ -153,11 +236,14 @@ main(int argc, char **argv)
     if(smoke_screens || smoke_ide) {
         result = run_smoke(project_arg, smoke_screenshot_path, smoke_ide);
     } else {
-        while(!WindowShouldClose())
+        while(!WindowShouldClose()) {
+            UpdateUIKeyPlatformState();
             ide_app_frame();
+        }
     }
 
     ide_app_shutdown();
+    krait_shutdown_logical_keys();
     ClearUIFonts();
     CloseWindow();
     return result;
