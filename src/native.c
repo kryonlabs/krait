@@ -283,6 +283,19 @@ krait_recent_file(char *path, size_t path_size)
 }
 
 static void
+krait_layout_file(char *path, size_t path_size)
+{
+    const char *home = getenv("HOME");
+
+    if(path_size == 0)
+        return;
+    if(home == NULL || home[0] == '\0')
+        snprintf(path, path_size, ".kryon/krait_layout.txt");
+    else
+        snprintf(path, path_size, "%s/.kryon/krait_layout.txt", home);
+}
+
+static void
 krait_ensure_parent_dir(const char *path)
 {
     char dir[KRAIT_PATH_MAX];
@@ -296,6 +309,182 @@ krait_ensure_parent_dir(const char *path)
         return;
     *slash = '\0';
     (void)mkdir(dir, 0755);
+}
+
+static int
+krait_valid_pane_view(int view)
+{
+    return view >= IDE_PANE_VIEW_EXPLORER && view <= IDE_PANE_VIEW_SEARCH;
+}
+
+static void
+krait_layout_sanitize_group(PaneGroup *group)
+{
+    int out[8];
+    int count = 0;
+
+    if(group == NULL)
+        return;
+    for(int i = 0; i < group->tab_count && i < 8; i++) {
+        int view = group->tabs[i];
+        int seen = 0;
+
+        if(!krait_valid_pane_view(view))
+            continue;
+        for(int j = 0; j < count; j++) {
+            if(out[j] == view) {
+                seen = 1;
+                break;
+            }
+        }
+        if(!seen)
+            out[count++] = view;
+    }
+    memset(group->tabs, 0, sizeof(group->tabs));
+    for(int i = 0; i < count; i++)
+        group->tabs[i] = out[i];
+    group->tab_count = count;
+    if(group->tab_count <= 0) {
+        group->active = 0;
+        return;
+    }
+    if(group->active < 0)
+        group->active = 0;
+    if(group->active >= group->tab_count)
+        group->active = group->tab_count - 1;
+}
+
+static void
+krait_layout_sanitize(IdeState *st)
+{
+    int has_editor;
+
+    if(st == NULL)
+        return;
+    krait_layout_sanitize_group(&st->pane_left);
+    krait_layout_sanitize_group(&st->pane_center);
+    krait_layout_sanitize_group(&st->pane_right);
+    krait_layout_sanitize_group(&st->pane_bottom);
+    has_editor = 0;
+    for(int i = 0; i < st->pane_left.tab_count; i++)
+        has_editor |= st->pane_left.tabs[i] == IDE_PANE_VIEW_EDITOR;
+    for(int i = 0; i < st->pane_center.tab_count; i++)
+        has_editor |= st->pane_center.tabs[i] == IDE_PANE_VIEW_EDITOR;
+    for(int i = 0; i < st->pane_right.tab_count; i++)
+        has_editor |= st->pane_right.tabs[i] == IDE_PANE_VIEW_EDITOR;
+    for(int i = 0; i < st->pane_bottom.tab_count; i++)
+        has_editor |= st->pane_bottom.tabs[i] == IDE_PANE_VIEW_EDITOR;
+    if(!has_editor && st->pane_center.tab_count < 8) {
+        st->pane_center.tabs[st->pane_center.tab_count++] = IDE_PANE_VIEW_EDITOR;
+        st->pane_center.active = st->pane_center.tab_count - 1;
+    }
+    if(st->left_width < 120)
+        st->left_width = 260;
+    if(st->right_width < 120)
+        st->right_width = 380;
+    if(st->bottom_height < 100)
+        st->bottom_height = 210;
+    if(st->active_pane < IDE_PANE_LEFT || st->active_pane > IDE_PANE_BOTTOM)
+        st->active_pane = IDE_PANE_CENTER;
+}
+
+static int
+krait_layout_read_group(FILE *file, PaneGroup *group)
+{
+    char name[32];
+    int active;
+    int count;
+
+    if(file == NULL || group == NULL)
+        return 0;
+    if(fscanf(file, "%31s %d %d", name, &active, &count) != 3)
+        return 0;
+    memset(group, 0, sizeof(*group));
+    group->active = active;
+    if(count < 0)
+        count = 0;
+    if(count > 8)
+        count = 8;
+    group->tab_count = count;
+    for(int i = 0; i < count; i++) {
+        if(fscanf(file, "%d", &group->tabs[i]) != 1)
+            return 0;
+    }
+    return 1;
+}
+
+int
+krait_layout_load(IdeState *st)
+{
+    char path[KRAIT_PATH_MAX];
+    FILE *file;
+    char magic[32];
+
+    if(st == NULL)
+        return 0;
+    krait_layout_file(path, sizeof(path));
+    file = fopen(path, "r");
+    if(file == NULL)
+        return 0;
+    if(fscanf(file, "%31s", magic) != 1 ||
+       strcmp(magic, "krait-layout-v1") != 0) {
+        fclose(file);
+        return 0;
+    }
+    if(fscanf(file, " sizes %d %d %d active %d",
+              &st->left_width, &st->right_width, &st->bottom_height,
+              &st->active_pane) != 4) {
+        fclose(file);
+        return 0;
+    }
+    if(!krait_layout_read_group(file, &st->pane_left) ||
+       !krait_layout_read_group(file, &st->pane_center) ||
+       !krait_layout_read_group(file, &st->pane_right) ||
+       !krait_layout_read_group(file, &st->pane_bottom)) {
+        fclose(file);
+        return 0;
+    }
+    fclose(file);
+    krait_layout_sanitize(st);
+    st->layout_dirty = 0;
+    return 1;
+}
+
+static void
+krait_layout_write_group(FILE *file, const char *name, const PaneGroup *group)
+{
+    if(file == NULL || name == NULL || group == NULL)
+        return;
+    fprintf(file, "%s %d %d", name, group->active, group->tab_count);
+    for(int i = 0; i < group->tab_count && i < 8; i++)
+        fprintf(file, " %d", group->tabs[i]);
+    fprintf(file, "\n");
+}
+
+int
+krait_layout_save(IdeState *st)
+{
+    char path[KRAIT_PATH_MAX];
+    FILE *file;
+
+    if(st == NULL)
+        return 0;
+    krait_layout_sanitize(st);
+    krait_layout_file(path, sizeof(path));
+    krait_ensure_parent_dir(path);
+    file = fopen(path, "w");
+    if(file == NULL)
+        return 0;
+    fprintf(file, "krait-layout-v1\n");
+    fprintf(file, "sizes %d %d %d active %d\n",
+            st->left_width, st->right_width, st->bottom_height,
+            st->active_pane);
+    krait_layout_write_group(file, "left", &st->pane_left);
+    krait_layout_write_group(file, "center", &st->pane_center);
+    krait_layout_write_group(file, "right", &st->pane_right);
+    krait_layout_write_group(file, "bottom", &st->pane_bottom);
+    fclose(file);
+    return 1;
 }
 
 static int

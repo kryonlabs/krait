@@ -13,6 +13,8 @@ srch :: #import "ide/search"
 
 krait_load_ui_font :: () -> int #extern
 krait_scaffold_project :: (path: const char*, status: char*, status_size: int) -> int #extern
+krait_layout_load :: (st: state.IdeState*) -> int #extern
+krait_layout_save :: (st: state.IdeState*) -> int #extern
 
 istate :: state.IdeState #global
 project_dialog :: FileDialog #global
@@ -28,6 +30,7 @@ init :: () {
     istate.layout_mode = state.IDE_LAYOUT_SPLIT
     istate.bottom_panel = state.IDE_BOTTOM_NONE
     init_panes(&istate)
+    krait_layout_load(&istate)
     istate.preview_zoom = 1.0
     istate.preview_scale_mode = state.IDE_PREVIEW_SCALE_FIT
     snprintf(istate.status, sizeof(istate.status), "%s", "Ready")
@@ -35,6 +38,7 @@ init :: () {
 }
 
 shutdown :: () {
+    krait_layout_save(&istate)
     CloseFileDialog(&project_dialog)
 }
 
@@ -69,6 +73,7 @@ frame :: () {
         }
         prev.preview_maybe_reload(&istate)
         con.console_poll(&istate)
+        handle_pane_shortcuts(&istate)
         if ed.mod_key_down() &&
            (UIKeyDown(KEY_LEFT_SHIFT) || UIKeyDown(KEY_RIGHT_SHIFT)) &&
            UIKeyPressed(KEY_F) {
@@ -83,6 +88,10 @@ frame :: () {
         }
     }
     update_dialog(&istate)
+    if istate.layout_dirty != 0 {
+        krait_layout_save(&istate)
+        istate.layout_dirty = 0
+    }
     EndUIFocus()
     EndDrawing()
 }
@@ -121,6 +130,7 @@ draw_project_toolbar :: (view_w: int, top_h: int) {
         prev.preview_build_start(&istate)
         istate.bottom_visible = 1
         istate.bottom_tab = state.IDE_BOTTOM_OUTPUT
+        pane_move_view(&istate, state.IDE_PANE_VIEW_OUTPUT, state.IDE_PANE_BOTTOM)
     }
     x = x + ScaleUIPx(80)
     if DrawUIGenericButton(x, y, ScaleUIPx(70), btn_h, "Source",
@@ -128,6 +138,7 @@ draw_project_toolbar :: (view_w: int, top_h: int) {
         istate.layout_mode = state.IDE_LAYOUT_SOURCE
         pane_move_view(&istate, state.IDE_PANE_VIEW_EDITOR, state.IDE_PANE_CENTER)
         pane_remove_view(&istate.pane_right, state.IDE_PANE_VIEW_PREVIEW)
+        istate.layout_dirty = 1
     }
     x = x + ScaleUIPx(72)
     if DrawUIGenericButton(x, y, ScaleUIPx(54), btn_h, "Split",
@@ -135,6 +146,7 @@ draw_project_toolbar :: (view_w: int, top_h: int) {
         istate.layout_mode = state.IDE_LAYOUT_SPLIT
         pane_move_view(&istate, state.IDE_PANE_VIEW_EDITOR, state.IDE_PANE_CENTER)
         pane_move_view(&istate, state.IDE_PANE_VIEW_PREVIEW, state.IDE_PANE_RIGHT)
+        istate.layout_dirty = 1
     }
     x = x + ScaleUIPx(56)
     if DrawUIGenericButton(x, y, ScaleUIPx(76), btn_h, "Preview",
@@ -142,6 +154,7 @@ draw_project_toolbar :: (view_w: int, top_h: int) {
         istate.layout_mode = state.IDE_LAYOUT_PREVIEW
         pane_move_view(&istate, state.IDE_PANE_VIEW_PREVIEW, state.IDE_PANE_CENTER)
         pane_remove_view(&istate.pane_right, state.IDE_PANE_VIEW_PREVIEW)
+        istate.layout_dirty = 1
     }
     x = x + ScaleUIPx(86)
     if DrawUIGenericButton(x, y, ScaleUIPx(76), btn_h, "Console",
@@ -277,6 +290,7 @@ init_panes :: (st: state.IdeState*) {
     st->right_width = ScaleUIPx(380)
     st->bottom_height = ScaleUIPx(210)
     st->resizing_pane = -1
+    st->active_pane = state.IDE_PANE_CENTER
     pane_add(&st->pane_left, state.IDE_PANE_VIEW_EXPLORER)
     pane_add(&st->pane_center, state.IDE_PANE_VIEW_EDITOR)
     pane_add(&st->pane_right, state.IDE_PANE_VIEW_PREVIEW)
@@ -340,6 +354,8 @@ pane_move_view :: (st: state.IdeState*, view: int, slot: int) {
     pane_remove_view(&st->pane_right, view)
     pane_remove_view(&st->pane_bottom, view)
     pane_add(pane_for_slot(st, slot), view)
+    st->active_pane = slot
+    st->layout_dirty = 1
 }
 
 pane_view_label :: (view: int) -> const char* {
@@ -449,12 +465,17 @@ draw_resize_gutter :: (bounds: Rectangle, st: state.IdeState*, slot: int) {
     }
     if st->resizing_pane == slot && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
         st->resizing_pane = -1
+        st->layout_dirty = 1
     }
 }
 
 draw_pane_group :: (bounds: Rectangle, st: state.IdeState*,
                     group: state.PaneGroup*, slot: int) {
     DrawRectangleRec(bounds, DarkenUIColor(GetThemeBackground(), 5))
+    if CheckCollisionPointRec(GetMousePosition(), bounds) &&
+       IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
+        st->active_pane = slot
+    }
     if slot == state.IDE_PANE_CENTER {
         DrawRectangleLinesEx(bounds, 1.0, DarkenUIColor(GetThemeBackground(), 28))
     }
@@ -482,6 +503,8 @@ draw_pane_group :: (bounds: Rectangle, st: state.IdeState*,
                                UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB,
                                0, NULL) {
             group->active = i
+            st->active_pane = slot
+            st->layout_dirty = 1
         }
         x = x + tab_w + ScaleUIPx(4)
     }
@@ -514,11 +537,38 @@ draw_pane_group :: (bounds: Rectangle, st: state.IdeState*,
     if DrawUIGenericButton(move_x, (int)bounds.y + ScaleUIPx(4), ScaleUIPx(22),
                            ScaleUIPx(22), "x", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
         pane_remove_view(group, active_view)
+        st->layout_dirty = 1
         return
     }
     body := (Rectangle){bounds.x, bounds.y + (float)header_h,
                         bounds.width, bounds.height - (float)header_h}
     draw_pane_view(body, st, group->tabs[group->active])
+}
+
+handle_pane_shortcuts :: (st: state.IdeState*) {
+    if !ed.mod_key_down() {
+        return
+    }
+    if !(UIKeyDown(KEY_LEFT_ALT) || UIKeyDown(KEY_RIGHT_ALT)) {
+        return
+    }
+    group := pane_for_slot(st, st->active_pane)
+    if group == NULL || group->tab_count <= 0 {
+        return
+    }
+    if group->active < 0 || group->active >= group->tab_count {
+        group->active = 0
+    }
+    view := group->tabs[group->active]
+    if UIKeyPressed(KEY_LEFT) {
+        pane_move_view(st, view, state.IDE_PANE_LEFT)
+    } else if UIKeyPressed(KEY_RIGHT) {
+        pane_move_view(st, view, state.IDE_PANE_RIGHT)
+    } else if UIKeyPressed(KEY_DOWN) {
+        pane_move_view(st, view, state.IDE_PANE_BOTTOM)
+    } else if UIKeyPressed(KEY_UP) {
+        pane_move_view(st, view, state.IDE_PANE_CENTER)
+    }
 }
 
 draw_pane_view :: (bounds: Rectangle, st: state.IdeState*, view: int) {

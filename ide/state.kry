@@ -108,6 +108,8 @@ IdeState :: struct {
     right_width: int
     bottom_height: int
     resizing_pane: int
+    active_pane: int
+    layout_dirty: int
     status: [256] char
     project: Project
     dialog_mode: int
