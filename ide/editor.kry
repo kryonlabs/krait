@@ -148,6 +148,27 @@ editor_save_active :: (st: state.IdeState*) {
     state.project_set_status(st, "Saved")
 }
 
+file_syntax :: (name: const char*) -> UISyntaxMode {
+    len := strlen(name)
+    if len >= 4 && strcmp(name + len - 4, ".kry") == 0 {
+        return UI_SYNTAX_KRY
+    }
+    if len >= 2 && strcmp(name + len - 2, ".c") == 0 {
+        return UI_SYNTAX_C
+    }
+    if len >= 2 && strcmp(name + len - 2, ".h") == 0 {
+        return UI_SYNTAX_C
+    }
+    if strcmp(name, "Makefile") == 0 || strcmp(name, "makefile") == 0 ||
+       strcmp(name, "GNUmakefile") == 0 {
+        return UI_SYNTAX_MAKE
+    }
+    if len >= 3 && strcmp(name + len - 3, ".mk") == 0 {
+        return UI_SYNTAX_MAKE
+    }
+    return UI_SYNTAX_NONE
+}
+
 draw_tabs :: (bounds: Rectangle, st: state.IdeState*) {
     tab_h := ScaleUIPx(28)
     x := (int)bounds.x
@@ -203,6 +224,16 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
     if f == NULL {
         return
     }
+    editor_style := (UITextInputStyle){
+        DarkenUIColor(GetThemeBackground(), 6),
+        DarkenUIColor(GetThemeBackground(), 34),
+        GetThemeLink(),
+        GetThemeText(),
+        GetThemeLink(),
+        0,
+        ScaleUIPx(14),
+        ScaleUIPx(12)
+    }
     # Undo/redo before the textarea consumes the keypress.
     if f->focused != 0 && mod_key_down() {
         if UIKeyPressed(KEY_Z) {
@@ -223,8 +254,8 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
         body, f->source, sizeof(f->source),
         &f->cursor, &f->focused, &f->scroll,
         sizeof(f->source) - 1, ScaleUIPx(14), ScaleUIPx(6), 3001,
-        "Source", UI_SYNTAX_KRY,
-        (UITextInputStyle){0}, (UITextInputFilter){0}, NULL
+        "Source", file_syntax(f->name),
+        editor_style, (UITextInputFilter){0}, NULL
     })
     after_len := strlen(f->source)
     if after_len != before_len {

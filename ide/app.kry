@@ -18,7 +18,7 @@ istate :: state.IdeState #global
 project_dialog :: FileDialog #global
 
 apply_studio_theme :: () {
-    SetCurrentTheme(THEME_MONO, 0)
+    SetCurrentTheme(THEME_MONO, 1)
 }
 
 init :: () {

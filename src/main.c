@@ -147,8 +147,6 @@ main(int argc, char **argv)
     SetTargetFPS(60);
     InitUI(screen_w, screen_h, GetUIScale());
     SetCurrentTheme(THEME_MONO, 0);
-    SetUIInspectEnabled(1);
-    setenv("KRYON_INSPECT", "1", 1);
     ide_app_init();
     open_startup_project(project_arg);
 
