@@ -483,7 +483,14 @@ draw_workbench :: (content: Rectangle, st: state.IdeState*) {
 
 draw_resize_gutter :: (bounds: Rectangle, st: state.IdeState*, slot: int) {
     mouse := GetMousePosition()
-    hot := CheckCollisionPointRec(mouse, bounds)
+    hot := CheckCollisionPointRec(mouse, bounds) || st->resizing_pane == slot
+    if hot {
+        if slot == state.IDE_PANE_BOTTOM {
+            MarkUICursor(MOUSE_CURSOR_RESIZE_NS)
+        } else {
+            MarkUICursor(MOUSE_CURSOR_RESIZE_EW)
+        }
+    }
     DrawRectangleRec(bounds, hot ? GetThemeLink() : DarkenUIColor(GetThemeBackground(), 36))
     if hot && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
         st->resizing_pane = slot
@@ -508,6 +515,9 @@ draw_pane_group :: (bounds: Rectangle, st: state.IdeState*,
                     group: state.PaneGroup*, slot: int) {
     mouse := GetMousePosition()
     drop_hot := st->drag_active != 0 && CheckCollisionPointRec(mouse, bounds)
+    if st->drag_active != 0 {
+        MarkUICursor(MOUSE_CURSOR_RESIZE_ALL)
+    }
     DrawRectangleRec(bounds, DarkenUIColor(GetThemeBackground(), 5))
     if CheckCollisionPointRec(mouse, bounds) &&
        IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {

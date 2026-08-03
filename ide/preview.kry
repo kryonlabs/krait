@@ -256,6 +256,7 @@ draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
     }
     mouse := GetMousePosition()
     if CheckCollisionPointRec(mouse, content) {
+        MarkUICursor(MOUSE_CURSOR_RESIZE_ALL)
         wheel := GetMouseWheelMove()
         if wheel > 0.0 {
             preview_set_zoom(st, st->preview_zoom * 1.12)
