@@ -22,7 +22,7 @@ DestroyHostFn :: void (*)(AppHost*) #type
 
 build_command :: (dst: char*, dst_size: int) {
     snprintf(dst, dst_size, "%s",
-        "if [ -d ../kryon ]; then KRYON_DIR=../kryon make kryon-host; else make kryon-host; fi")
+        "if [ -d vendor/kryon ]; then KRYON_DIR=vendor/kryon make kryon-host; else make kryon-host; fi")
 }
 
 preview_unload_host :: (st: state.IdeState*) {

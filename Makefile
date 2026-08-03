@@ -3,7 +3,7 @@ BUILD_DIR ?= build
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 INSTALL ?= install
-KRYON_DIR ?= ../kryon
+KRYON_DIR ?= vendor/kryon
 KRYON_BUILD_DIR ?= $(KRYON_DIR)/build
 KRYON_PLATFORM ?= $(shell uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
 
@@ -93,8 +93,11 @@ $(KRAIT): $(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KRAIT_GEN)/.transpiled $(KRYON_LI
 		-Wl,-export-dynamic $(KRYON_PLATFORM_LDLIBS) \
 		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) -lz -lpthread -lm
 
-$(KC) $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A):
+$(KC) $(KRYON_LIB) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A):
 	$(MAKE) -C $(KRYON_DIR) all
+
+$(RAYLIB_A):
+	$(MAKE) -C $(KRYON_DIR) $(patsubst $(KRYON_DIR)/%,%,$@)
 
 $(BUILD_DIR)/bin:
 	mkdir -p $@

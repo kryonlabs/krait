@@ -603,7 +603,7 @@ krait_load_examples(void)
         return;
     g_examples_loaded = 1;
     if(kryon_dir == NULL || kryon_dir[0] == '\0')
-        kryon_dir = "../kryon";
+        kryon_dir = "vendor/kryon";
     krait_join(dir_path, sizeof(dir_path), kryon_dir, "examples");
     dir = opendir(dir_path);
     if(dir == NULL)
@@ -691,7 +691,7 @@ krait_load_ui_font(void)
         krait_join(path, sizeof(path), kryon_dir, "fonts/noto/NotoSans-Regular.ttf");
         (void)RegisterUIFontFileSource("noto", path, NULL, 0, 1);
     } else {
-        (void)RegisterUIFontFileSource("noto", "../kryon/fonts/noto/NotoSans-Regular.ttf",
+        (void)RegisterUIFontFileSource("noto", "vendor/kryon/fonts/noto/NotoSans-Regular.ttf",
                                        NULL, 0, 1);
     }
     return ok;
