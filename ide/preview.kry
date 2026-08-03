@@ -229,14 +229,15 @@ draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
         ph = 1
     }
     ensure_texture(st, pw, ph)
+    saved_frame := SaveUIFrameState()
     BeginTextureMode(st->preview_texture)
     ClearBackground(GetThemeBackground())
     BeginUIFrame(pw, ph, 1.0)
     DrawAppScreen(st->host, (Rectangle){0, 0, (float)pw, (float)ph})
     EndUIFocus()
     EndTextureMode()
+    RestoreUIFrameState(saved_frame)
     SetCurrentTheme(THEME_MONO, 0)
-    BeginUIFrame(GetScreenWidth(), GetScreenHeight(), GetUIScale())
     BeginUIInspectFrame(st->project.path)
     scale_x := content.width / (float)pw
     scale_y := content.height / (float)ph
