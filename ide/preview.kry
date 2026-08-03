@@ -2,6 +2,7 @@
 #import "kryon.h"
 #import <string.h>
 state :: #import "ide/state"
+ed :: #import "ide/editor"
 
 kry_dylib_load :: (path: const char*) -> void* #extern
 kry_dylib_sym :: (handle: void*, name: const char*) -> void* #extern
@@ -111,6 +112,20 @@ preview_build_poll :: (st: state.IdeState*) {
 preview_maybe_reload :: (st: state.IdeState*) {
     now := GetTime()
     if st->build_running {
+        return
+    }
+    if st->preview_dirty != 0 {
+        if now - st->last_edit_time < 0.8 {
+            return
+        }
+        saved := ed.editor_save_dirty_preview_files(st)
+        if saved < 0 {
+            st->preview_dirty = 0
+            return
+        }
+        st->preview_dirty = 0
+        st->source_mtime = krait_project_source_mtime(st->project.path)
+        preview_build_start(st)
         return
     }
     if now - st->last_reload_check < 1.0 {

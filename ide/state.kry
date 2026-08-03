@@ -148,6 +148,9 @@ IdeState :: struct {
     output: [65536] char
     source_mtime: long
     last_reload_check: float
+    preview_dirty: int
+    last_edit_time: float
+    preview_host_ready: int
     # console
     console_proc: KryProcess
     console_running: int

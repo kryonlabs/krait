@@ -56,6 +56,7 @@ frame :: () {
     if istate.view == state.IDE_VIEW_START {
         start.draw_start_page(content, &istate)
     } else {
+        sync_preview_pane(&istate)
         draw_project_view(content, &istate)
     }
     if istate.project.loaded {
@@ -72,6 +73,7 @@ frame :: () {
             }
         }
         prev.preview_maybe_reload(&istate)
+        sync_preview_pane(&istate)
         con.console_poll(&istate)
         handle_pane_shortcuts(&istate)
         if ed.mod_key_down() &&
@@ -145,15 +147,23 @@ draw_project_toolbar :: (view_w: int, top_h: int) {
                            layout_button_style(state.IDE_LAYOUT_SPLIT), 0, NULL) {
         istate.layout_mode = state.IDE_LAYOUT_SPLIT
         pane_move_view(&istate, state.IDE_PANE_VIEW_EDITOR, state.IDE_PANE_CENTER)
-        pane_move_view(&istate, state.IDE_PANE_VIEW_PREVIEW, state.IDE_PANE_RIGHT)
+        if istate.host != NULL {
+            pane_move_view(&istate, state.IDE_PANE_VIEW_PREVIEW, state.IDE_PANE_RIGHT)
+        } else {
+            prev.preview_build_start(&istate)
+        }
         istate.layout_dirty = 1
     }
     x = x + ScaleUIPx(56)
     if DrawUIGenericButton(x, y, ScaleUIPx(76), btn_h, "Preview",
                            layout_button_style(state.IDE_LAYOUT_PREVIEW), 0, NULL) {
         istate.layout_mode = state.IDE_LAYOUT_PREVIEW
-        pane_move_view(&istate, state.IDE_PANE_VIEW_PREVIEW, state.IDE_PANE_CENTER)
-        pane_remove_view(&istate.pane_right, state.IDE_PANE_VIEW_PREVIEW)
+        if istate.host != NULL {
+            pane_move_view(&istate, state.IDE_PANE_VIEW_PREVIEW, state.IDE_PANE_CENTER)
+            pane_remove_view(&istate.pane_right, state.IDE_PANE_VIEW_PREVIEW)
+        } else {
+            prev.preview_build_start(&istate)
+        }
         istate.layout_dirty = 1
     }
     x = x + ScaleUIPx(86)
@@ -295,7 +305,6 @@ init_panes :: (st: state.IdeState*) {
     st->drag_source_pane = -1
     pane_add(&st->pane_left, state.IDE_PANE_VIEW_EXPLORER)
     pane_add(&st->pane_center, state.IDE_PANE_VIEW_EDITOR)
-    pane_add(&st->pane_right, state.IDE_PANE_VIEW_PREVIEW)
 }
 
 pane_for_slot :: (st: state.IdeState*, slot: int) -> state.PaneGroup* {
@@ -380,6 +389,30 @@ pane_view_label :: (view: int) -> const char* {
         return "Console"
     }
     return "Search"
+}
+
+sync_preview_pane :: (st: state.IdeState*) {
+    has_preview := pane_has_view(&st->pane_left, state.IDE_PANE_VIEW_PREVIEW) ||
+                   pane_has_view(&st->pane_center, state.IDE_PANE_VIEW_PREVIEW) ||
+                   pane_has_view(&st->pane_right, state.IDE_PANE_VIEW_PREVIEW) ||
+                   pane_has_view(&st->pane_bottom, state.IDE_PANE_VIEW_PREVIEW)
+    if st->host == NULL {
+        if has_preview {
+            pane_remove_view(&st->pane_left, state.IDE_PANE_VIEW_PREVIEW)
+            pane_remove_view(&st->pane_center, state.IDE_PANE_VIEW_PREVIEW)
+            pane_remove_view(&st->pane_right, state.IDE_PANE_VIEW_PREVIEW)
+            pane_remove_view(&st->pane_bottom, state.IDE_PANE_VIEW_PREVIEW)
+            st->layout_dirty = 1
+        }
+        st->preview_host_ready = 0
+        return
+    }
+    if st->preview_host_ready == 0 {
+        if !has_preview {
+            pane_move_view(st, state.IDE_PANE_VIEW_PREVIEW, state.IDE_PANE_RIGHT)
+        }
+        st->preview_host_ready = 1
+    }
 }
 
 draw_workbench :: (content: Rectangle, st: state.IdeState*) {

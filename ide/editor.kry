@@ -176,6 +176,45 @@ editor_save_active :: (st: state.IdeState*) {
     state.project_set_status(st, "Saved")
 }
 
+file_affects_preview :: (name: const char*) -> int {
+    len := strlen(name)
+    if len >= 4 && strcmp(name + len - 4, ".kry") == 0 {
+        return 1
+    }
+    if len >= 2 && strcmp(name + len - 2, ".c") == 0 {
+        return 1
+    }
+    if len >= 2 && strcmp(name + len - 2, ".h") == 0 {
+        return 1
+    }
+    if len >= 3 && strcmp(name + len - 3, ".mk") == 0 {
+        return 1
+    }
+    if strcmp(name, "Makefile") == 0 || strcmp(name, "makefile") == 0 ||
+       strcmp(name, "project.kryon") == 0 {
+        return 1
+    }
+    return 0
+}
+
+editor_save_dirty_preview_files :: (st: state.IdeState*) -> int {
+    saved := 0
+    for int i = 0; i < st->open_count; i++ {
+        f := &st->open_files[i]
+        if f->dirty == 0 || file_affects_preview(f->name) == 0 {
+            continue
+        }
+        len := strlen(f->source)
+        if kry_fs_write_file(f->path, f->source, len) < 0 {
+            state.project_set_status(st, "Live preview save failed")
+            return -1
+        }
+        f->dirty = 0
+        saved = saved + 1
+    }
+    return saved
+}
+
 file_syntax :: (name: const char*) -> UISyntaxMode {
     len := strlen(name)
     if len >= 4 && strcmp(name + len - 4, ".kry") == 0 {
@@ -282,6 +321,10 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
     after_len := strlen(f->source)
     if text_changed != 0 || after_len != before_len {
         f->dirty = 1
+        if file_affects_preview(f->name) != 0 {
+            st->preview_dirty = 1
+            st->last_edit_time = GetTime()
+        }
         if edit_snapshot_valid != 0 {
             snapshot_push(undo_ring, &undo_count, edit_snapshot)
             # A new edit invalidates the redo stack.
