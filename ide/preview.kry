@@ -11,7 +11,7 @@ kry_process_read_poll :: (p: KryProcess*, buf: char*, cap: int) -> int #extern
 kry_process_wait_poll :: (p: KryProcess*) -> int #extern
 kry_process_kill :: (p: KryProcess*) #extern
 kry_process_close :: (p: KryProcess*) #extern
-kry_fs_mtime :: (path: const char*) -> long #extern
+krait_project_source_mtime :: (path: const char*) -> long #extern
 
 CreateHostFn :: AppHost* (*)(int, const char*) #type
 DestroyHostFn :: void (*)(AppHost*) #type
@@ -117,7 +117,7 @@ preview_maybe_reload :: (st: state.IdeState*) {
         return
     }
     st->last_reload_check = now
-    mtime := kry_fs_mtime(st->project.path)
+    mtime := krait_project_source_mtime(st->project.path)
     if mtime > st->source_mtime {
         st->source_mtime = mtime
         preview_build_start(st)

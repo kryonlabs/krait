@@ -13,6 +13,7 @@
 #define KRAIT_MAX_EXAMPLES 32
 #define KRAIT_SEARCH_DEPTH 8
 #define KRAIT_TREE_DEPTH 8
+#define KRAIT_MTIME_DEPTH 8
 
 typedef struct {
     char path[KRAIT_PATH_MAX];
@@ -101,6 +102,20 @@ krait_file_is_text(const char *path)
            krait_path_has_suffix(path, ".h") ||
            krait_path_has_suffix(path, ".md") ||
            krait_path_has_suffix(path, ".txt") ||
+           krait_path_has_suffix(path, ".mk") ||
+           strcmp(base, "Makefile") == 0 ||
+           strcmp(base, "makefile") == 0 ||
+           strcmp(base, "project.kryon") == 0;
+}
+
+static int
+krait_file_affects_preview(const char *path)
+{
+    const char *base = krait_basename(path);
+
+    return krait_path_has_suffix(path, ".kry") ||
+           krait_path_has_suffix(path, ".c") ||
+           krait_path_has_suffix(path, ".h") ||
            krait_path_has_suffix(path, ".mk") ||
            strcmp(base, "Makefile") == 0 ||
            strcmp(base, "makefile") == 0 ||
@@ -198,6 +213,60 @@ krait_build_tree(const char *root, FileTreeEntry *out, int cap)
     if(root == NULL || root[0] == '\0' || out == NULL || cap <= 0)
         return 0;
     return krait_build_tree_dir(root, "", out, 0, cap, 0);
+}
+
+static long
+krait_project_source_mtime_dir(const char *dir, int depth)
+{
+    DIR *handle;
+    struct dirent *entry;
+    long newest = 0;
+
+    if(dir == NULL || depth > KRAIT_MTIME_DEPTH)
+        return 0;
+    handle = opendir(dir);
+    if(handle == NULL)
+        return 0;
+
+    while((entry = readdir(handle)) != NULL) {
+        char path[KRAIT_PATH_MAX];
+        struct stat st;
+
+        if(strcmp(entry->d_name, ".") == 0 ||
+           strcmp(entry->d_name, "..") == 0)
+            continue;
+        krait_join(path, sizeof(path), dir, entry->d_name);
+        if(stat(path, &st) != 0)
+            continue;
+        if(S_ISDIR(st.st_mode)) {
+            long child_mtime;
+
+            if(krait_ignored_dir(entry->d_name))
+                continue;
+            child_mtime = krait_project_source_mtime_dir(path, depth + 1);
+            if(child_mtime > newest)
+                newest = child_mtime;
+        } else if(S_ISREG(st.st_mode) && krait_file_affects_preview(path)) {
+            if((long)st.st_mtime > newest)
+                newest = (long)st.st_mtime;
+        }
+    }
+    closedir(handle);
+    return newest;
+}
+
+long
+krait_project_source_mtime(const char *path)
+{
+    struct stat st;
+
+    if(path == NULL || path[0] == '\0' || stat(path, &st) != 0)
+        return 0;
+    if(S_ISDIR(st.st_mode))
+        return krait_project_source_mtime_dir(path, 0);
+    if(S_ISREG(st.st_mode) && krait_file_affects_preview(path))
+        return (long)st.st_mtime;
+    return 0;
 }
 
 static void
