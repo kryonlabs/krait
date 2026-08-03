@@ -27,6 +27,7 @@ init :: () {
     istate.view = state.IDE_VIEW_START
     istate.layout_mode = state.IDE_LAYOUT_SPLIT
     istate.bottom_panel = state.IDE_BOTTOM_NONE
+    init_panes(&istate)
     istate.preview_zoom = 1.0
     istate.preview_scale_mode = state.IDE_PREVIEW_SCALE_FIT
     snprintf(istate.status, sizeof(istate.status), "%s", "Ready")
@@ -62,6 +63,8 @@ frame :: () {
             if istate.diagnostic_count > 0 {
                 istate.bottom_visible = 1
                 istate.bottom_tab = state.IDE_BOTTOM_PROBLEMS
+                pane_move_view(&istate, state.IDE_PANE_VIEW_PROBLEMS,
+                               state.IDE_PANE_BOTTOM)
             }
         }
         prev.preview_maybe_reload(&istate)
@@ -70,9 +73,13 @@ frame :: () {
            (UIKeyDown(KEY_LEFT_SHIFT) || UIKeyDown(KEY_RIGHT_SHIFT)) &&
            UIKeyPressed(KEY_F) {
             srch.search_focus(&istate, 0)
+            pane_move_view(&istate, state.IDE_PANE_VIEW_SEARCH,
+                           state.IDE_PANE_BOTTOM)
         }
         if ed.mod_key_down() && UIKeyPressed(KEY_P) {
             srch.search_focus(&istate, 1)
+            pane_move_view(&istate, state.IDE_PANE_VIEW_SEARCH,
+                           state.IDE_PANE_BOTTOM)
         }
     }
     update_dialog(&istate)
@@ -105,7 +112,7 @@ draw_top_bar :: (view_w: int) {
 draw_project_toolbar :: (view_w: int, top_h: int) {
     btn_h := ScaleUIPx(24)
     y := (top_h - btn_h) / 2
-    x := view_w - ScaleUIPx(796)
+    x := view_w - ScaleUIPx(942)
     if x < ScaleUIPx(180) {
         x = ScaleUIPx(180)
     }
@@ -119,16 +126,22 @@ draw_project_toolbar :: (view_w: int, top_h: int) {
     if DrawUIGenericButton(x, y, ScaleUIPx(70), btn_h, "Source",
                            layout_button_style(state.IDE_LAYOUT_SOURCE), 0, NULL) {
         istate.layout_mode = state.IDE_LAYOUT_SOURCE
+        pane_move_view(&istate, state.IDE_PANE_VIEW_EDITOR, state.IDE_PANE_CENTER)
+        pane_remove_view(&istate.pane_right, state.IDE_PANE_VIEW_PREVIEW)
     }
     x = x + ScaleUIPx(72)
     if DrawUIGenericButton(x, y, ScaleUIPx(54), btn_h, "Split",
                            layout_button_style(state.IDE_LAYOUT_SPLIT), 0, NULL) {
         istate.layout_mode = state.IDE_LAYOUT_SPLIT
+        pane_move_view(&istate, state.IDE_PANE_VIEW_EDITOR, state.IDE_PANE_CENTER)
+        pane_move_view(&istate, state.IDE_PANE_VIEW_PREVIEW, state.IDE_PANE_RIGHT)
     }
     x = x + ScaleUIPx(56)
     if DrawUIGenericButton(x, y, ScaleUIPx(76), btn_h, "Preview",
                            layout_button_style(state.IDE_LAYOUT_PREVIEW), 0, NULL) {
         istate.layout_mode = state.IDE_LAYOUT_PREVIEW
+        pane_move_view(&istate, state.IDE_PANE_VIEW_PREVIEW, state.IDE_PANE_CENTER)
+        pane_remove_view(&istate.pane_right, state.IDE_PANE_VIEW_PREVIEW)
     }
     x = x + ScaleUIPx(86)
     if DrawUIGenericButton(x, y, ScaleUIPx(76), btn_h, "Console",
@@ -139,6 +152,8 @@ draw_project_toolbar :: (view_w: int, top_h: int) {
     if DrawUIGenericButton(x, y, ScaleUIPx(72), btn_h, "Search",
                            bottom_button_style(state.IDE_BOTTOM_SEARCH), 0, NULL) {
         srch.search_focus(&istate, 0)
+        pane_move_view(&istate, state.IDE_PANE_VIEW_SEARCH,
+                       state.IDE_PANE_BOTTOM)
     }
     x = x + ScaleUIPx(78)
     problems_label: [32] char
@@ -153,6 +168,13 @@ draw_project_toolbar :: (view_w: int, top_h: int) {
                            bottom_button_style(state.IDE_BOTTOM_OUTPUT), 0, NULL) {
         show_bottom_panel(&istate, state.IDE_BOTTOM_OUTPUT)
     }
+    x = x + ScaleUIPx(72)
+    if DrawUIGenericButton(x, y, ScaleUIPx(72), btn_h, "Explorer",
+                           pane_has_view(&istate.pane_left, state.IDE_PANE_VIEW_EXPLORER) ?
+                           UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB,
+                           0, NULL) {
+        pane_move_view(&istate, state.IDE_PANE_VIEW_EXPLORER, state.IDE_PANE_LEFT)
+    }
 }
 
 draw_status_bar :: (view_w: int, view_h: int) {
@@ -164,41 +186,8 @@ draw_status_bar :: (view_w: int, view_h: int) {
 }
 
 draw_project_view :: (content: Rectangle, st: state.IdeState*) {
-    sidebar_w := ScaleUIPx(260)
-    sidebar := (Rectangle){content.x, content.y, (float)sidebar_w, content.height}
-    rest := (Rectangle){content.x + (float)sidebar_w, content.y,
-                        content.width - (float)sidebar_w, content.height}
-    bottom_h := ScaleUIPx(180)
-    if st->bottom_visible == 0 {
-        bottom_h = 0
-    }
-    main_area := (Rectangle){rest.x, rest.y, rest.width, rest.height - (float)bottom_h}
-    bottom := (Rectangle){rest.x, rest.y + main_area.height,
-                          rest.width, (float)bottom_h}
-    preview_w := ScaleUIPx(360)
-    editor_bounds := (Rectangle){main_area.x, main_area.y,
-                                 main_area.width - preview_w, main_area.height}
-    preview_bounds := (Rectangle){main_area.x + main_area.width - preview_w,
-                                  main_area.y, preview_w, main_area.height}
-    DrawRectangleRec(sidebar, DarkenUIColor(GetThemeBackground(), 8))
-    DrawLine((int)sidebar.x + sidebar_w, (int)sidebar.y,
-             (int)sidebar.x + sidebar_w, (int)(sidebar.y + sidebar.height),
-             DarkenUIColor(GetThemeBackground(), 42))
-    tree.draw_tree(sidebar, st)
-    if st->layout_mode == state.IDE_LAYOUT_SOURCE {
-        ed.draw_editor(main_area, st)
-    } else if st->layout_mode == state.IDE_LAYOUT_PREVIEW {
-        prev.draw_preview(main_area, st)
-    } else {
-        DrawLine((int)preview_bounds.x, (int)preview_bounds.y,
-                 (int)preview_bounds.x, (int)(preview_bounds.y + preview_bounds.height),
-                 DarkenUIColor(GetThemeBackground(), 42))
-        ed.draw_editor(editor_bounds, st)
-        prev.draw_preview(preview_bounds, st)
-    }
-    if bottom_h > 0 {
-        draw_bottom_panel(bottom, st)
-    }
+    init_panes(st)
+    draw_workbench(content, st)
 }
 
 draw_bottom_panel :: (bounds: Rectangle, st: state.IdeState*) {
@@ -254,6 +243,15 @@ draw_bottom_panel :: (bounds: Rectangle, st: state.IdeState*) {
 show_bottom_panel :: (st: state.IdeState*, tab: int) {
     st->bottom_visible = 1
     st->bottom_tab = tab
+    if tab == state.IDE_BOTTOM_PROBLEMS {
+        pane_move_view(st, state.IDE_PANE_VIEW_PROBLEMS, state.IDE_PANE_BOTTOM)
+    } else if tab == state.IDE_BOTTOM_CONSOLE {
+        pane_move_view(st, state.IDE_PANE_VIEW_CONSOLE, state.IDE_PANE_BOTTOM)
+    } else if tab == state.IDE_BOTTOM_SEARCH {
+        pane_move_view(st, state.IDE_PANE_VIEW_SEARCH, state.IDE_PANE_BOTTOM)
+    } else {
+        pane_move_view(st, state.IDE_PANE_VIEW_OUTPUT, state.IDE_PANE_BOTTOM)
+    }
 }
 
 layout_button_style :: (mode: int) -> int {
@@ -268,6 +266,278 @@ bottom_button_style :: (tab: int) -> int {
         return UI_BUTTON_STYLE_TAB_SELECTED
     }
     return UI_BUTTON_STYLE_TAB
+}
+
+init_panes :: (st: state.IdeState*) {
+    if st->panes_initialized != 0 {
+        return
+    }
+    st->panes_initialized = 1
+    st->left_width = ScaleUIPx(260)
+    st->right_width = ScaleUIPx(380)
+    st->bottom_height = ScaleUIPx(210)
+    st->resizing_pane = -1
+    pane_add(&st->pane_left, state.IDE_PANE_VIEW_EXPLORER)
+    pane_add(&st->pane_center, state.IDE_PANE_VIEW_EDITOR)
+    pane_add(&st->pane_right, state.IDE_PANE_VIEW_PREVIEW)
+}
+
+pane_for_slot :: (st: state.IdeState*, slot: int) -> state.PaneGroup* {
+    if slot == state.IDE_PANE_LEFT {
+        return &st->pane_left
+    }
+    if slot == state.IDE_PANE_RIGHT {
+        return &st->pane_right
+    }
+    if slot == state.IDE_PANE_BOTTOM {
+        return &st->pane_bottom
+    }
+    return &st->pane_center
+}
+
+pane_add :: (group: state.PaneGroup*, view: int) {
+    if pane_has_view(group, view) {
+        return
+    }
+    if group->tab_count >= 8 {
+        return
+    }
+    group->tabs[group->tab_count] = view
+    group->active = group->tab_count
+    group->tab_count = group->tab_count + 1
+}
+
+pane_has_view :: (group: state.PaneGroup*, view: int) -> int {
+    for int i = 0; i < group->tab_count; i++ {
+        if group->tabs[i] == view {
+            return 1
+        }
+    }
+    return 0
+}
+
+pane_remove_view :: (group: state.PaneGroup*, view: int) {
+    for int i = 0; i < group->tab_count; i++ {
+        if group->tabs[i] == view {
+            for int j = i; j < group->tab_count - 1; j++ {
+                group->tabs[j] = group->tabs[j + 1]
+            }
+            group->tab_count = group->tab_count - 1
+            if group->active >= group->tab_count {
+                group->active = group->tab_count - 1
+            }
+            if group->active < 0 && group->tab_count > 0 {
+                group->active = 0
+            }
+            return
+        }
+    }
+}
+
+pane_move_view :: (st: state.IdeState*, view: int, slot: int) {
+    pane_remove_view(&st->pane_left, view)
+    pane_remove_view(&st->pane_center, view)
+    pane_remove_view(&st->pane_right, view)
+    pane_remove_view(&st->pane_bottom, view)
+    pane_add(pane_for_slot(st, slot), view)
+}
+
+pane_view_label :: (view: int) -> const char* {
+    if view == state.IDE_PANE_VIEW_EXPLORER {
+        return "Explorer"
+    }
+    if view == state.IDE_PANE_VIEW_EDITOR {
+        return "Editor"
+    }
+    if view == state.IDE_PANE_VIEW_PREVIEW {
+        return "Preview"
+    }
+    if view == state.IDE_PANE_VIEW_PROBLEMS {
+        return "Problems"
+    }
+    if view == state.IDE_PANE_VIEW_OUTPUT {
+        return "Output"
+    }
+    if view == state.IDE_PANE_VIEW_CONSOLE {
+        return "Console"
+    }
+    return "Search"
+}
+
+draw_workbench :: (content: Rectangle, st: state.IdeState*) {
+    gutter := ScaleUIPx(5)
+    min_w := ScaleUIPx(220)
+    min_h := ScaleUIPx(140)
+    left_w := st->pane_left.tab_count > 0 ? st->left_width : 0
+    right_w := st->pane_right.tab_count > 0 ? st->right_width : 0
+    bottom_h := st->pane_bottom.tab_count > 0 ? st->bottom_height : 0
+    if content.width < (float)(min_w * 3) {
+        right_w = 0
+    }
+    if left_w > 0 && left_w < min_w {
+        left_w = min_w
+    }
+    if right_w > 0 && right_w < min_w {
+        right_w = min_w
+    }
+    if bottom_h > 0 && bottom_h < min_h {
+        bottom_h = min_h
+    }
+    top_h := content.height - (float)bottom_h
+    if bottom_h > 0 {
+        top_h = top_h - (float)gutter
+    }
+    if top_h < (float)min_h {
+        top_h = (float)min_h
+    }
+    center_w := content.width - (float)(left_w + right_w)
+    if left_w > 0 {
+        center_w = center_w - (float)gutter
+    }
+    if right_w > 0 {
+        center_w = center_w - (float)gutter
+    }
+    if center_w < (float)min_w {
+        center_w = (float)min_w
+    }
+
+    x := content.x
+    if left_w > 0 {
+        left := (Rectangle){x, content.y, (float)left_w, top_h}
+        draw_pane_group(left, st, &st->pane_left, state.IDE_PANE_LEFT)
+        x = x + (float)left_w
+        draw_resize_gutter((Rectangle){x, content.y, (float)gutter, top_h}, st,
+                           state.IDE_PANE_LEFT)
+        x = x + (float)gutter
+    }
+    center := (Rectangle){x, content.y, center_w, top_h}
+    draw_pane_group(center, st, &st->pane_center, state.IDE_PANE_CENTER)
+    x = x + center_w
+    if right_w > 0 {
+        draw_resize_gutter((Rectangle){x, content.y, (float)gutter, top_h}, st,
+                           state.IDE_PANE_RIGHT)
+        x = x + (float)gutter
+        right := (Rectangle){x, content.y, (float)right_w, top_h}
+        draw_pane_group(right, st, &st->pane_right, state.IDE_PANE_RIGHT)
+    }
+    if bottom_h > 0 {
+        y := content.y + top_h
+        draw_resize_gutter((Rectangle){content.x, y, content.width, (float)gutter}, st,
+                           state.IDE_PANE_BOTTOM)
+        bottom := (Rectangle){content.x, y + (float)gutter,
+                              content.width, (float)bottom_h}
+        draw_pane_group(bottom, st, &st->pane_bottom, state.IDE_PANE_BOTTOM)
+    }
+}
+
+draw_resize_gutter :: (bounds: Rectangle, st: state.IdeState*, slot: int) {
+    mouse := GetMousePosition()
+    hot := CheckCollisionPointRec(mouse, bounds)
+    DrawRectangleRec(bounds, hot ? GetThemeLink() : DarkenUIColor(GetThemeBackground(), 36))
+    if hot && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
+        st->resizing_pane = slot
+    }
+    if st->resizing_pane == slot && IsMouseButtonDown(MOUSE_BUTTON_LEFT) {
+        delta := GetMouseDelta()
+        if slot == state.IDE_PANE_LEFT {
+            st->left_width = st->left_width + (int)delta.x
+        } else if slot == state.IDE_PANE_RIGHT {
+            st->right_width = st->right_width - (int)delta.x
+        } else if slot == state.IDE_PANE_BOTTOM {
+            st->bottom_height = st->bottom_height - (int)delta.y
+        }
+    }
+    if st->resizing_pane == slot && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
+        st->resizing_pane = -1
+    }
+}
+
+draw_pane_group :: (bounds: Rectangle, st: state.IdeState*,
+                    group: state.PaneGroup*, slot: int) {
+    DrawRectangleRec(bounds, DarkenUIColor(GetThemeBackground(), 5))
+    if slot == state.IDE_PANE_CENTER {
+        DrawRectangleLinesEx(bounds, 1.0, DarkenUIColor(GetThemeBackground(), 28))
+    }
+    if group->tab_count <= 0 {
+        return
+    }
+    if group->active < 0 || group->active >= group->tab_count {
+        group->active = 0
+    }
+    header_h := ScaleUIPx(30)
+    header := (Rectangle){bounds.x, bounds.y, bounds.width, (float)header_h}
+    DrawRectangleRec(header, DarkenUIColor(GetThemeBackground(), 12))
+    DrawLine((int)bounds.x, (int)(bounds.y + header.height),
+             (int)(bounds.x + bounds.width), (int)(bounds.y + header.height),
+             DarkenUIColor(GetThemeBackground(), 42))
+    x := (int)bounds.x + ScaleUIPx(6)
+    for int i = 0; i < group->tab_count; i++ {
+        tab_w := ScaleUIPx(86)
+        if group->tabs[i] == state.IDE_PANE_VIEW_PROBLEMS {
+            tab_w = ScaleUIPx(104)
+        }
+        if DrawUIGenericButton(x, (int)bounds.y + ScaleUIPx(4), tab_w,
+                               ScaleUIPx(22), pane_view_label(group->tabs[i]),
+                               i == group->active ?
+                               UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB,
+                               0, NULL) {
+            group->active = i
+        }
+        x = x + tab_w + ScaleUIPx(4)
+    }
+    move_x := (int)(bounds.x + bounds.width) - ScaleUIPx(136)
+    active_view := group->tabs[group->active]
+    if DrawUIGenericButton(move_x, (int)bounds.y + ScaleUIPx(4), ScaleUIPx(22),
+                           ScaleUIPx(22), "L", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        pane_move_view(st, active_view, state.IDE_PANE_LEFT)
+        return
+    }
+    move_x = move_x + ScaleUIPx(24)
+    if DrawUIGenericButton(move_x, (int)bounds.y + ScaleUIPx(4), ScaleUIPx(22),
+                           ScaleUIPx(22), "C", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        pane_move_view(st, active_view, state.IDE_PANE_CENTER)
+        return
+    }
+    move_x = move_x + ScaleUIPx(24)
+    if DrawUIGenericButton(move_x, (int)bounds.y + ScaleUIPx(4), ScaleUIPx(22),
+                           ScaleUIPx(22), "R", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        pane_move_view(st, active_view, state.IDE_PANE_RIGHT)
+        return
+    }
+    move_x = move_x + ScaleUIPx(24)
+    if DrawUIGenericButton(move_x, (int)bounds.y + ScaleUIPx(4), ScaleUIPx(22),
+                           ScaleUIPx(22), "B", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        pane_move_view(st, active_view, state.IDE_PANE_BOTTOM)
+        return
+    }
+    move_x = move_x + ScaleUIPx(24)
+    if DrawUIGenericButton(move_x, (int)bounds.y + ScaleUIPx(4), ScaleUIPx(22),
+                           ScaleUIPx(22), "x", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        pane_remove_view(group, active_view)
+        return
+    }
+    body := (Rectangle){bounds.x, bounds.y + (float)header_h,
+                        bounds.width, bounds.height - (float)header_h}
+    draw_pane_view(body, st, group->tabs[group->active])
+}
+
+draw_pane_view :: (bounds: Rectangle, st: state.IdeState*, view: int) {
+    if view == state.IDE_PANE_VIEW_EXPLORER {
+        tree.draw_tree(bounds, st)
+    } else if view == state.IDE_PANE_VIEW_EDITOR {
+        ed.draw_editor(bounds, st)
+    } else if view == state.IDE_PANE_VIEW_PREVIEW {
+        prev.draw_preview(bounds, st)
+    } else if view == state.IDE_PANE_VIEW_PROBLEMS {
+        prob.draw_problems(bounds, st)
+    } else if view == state.IDE_PANE_VIEW_CONSOLE {
+        con.draw_console(bounds, st)
+    } else if view == state.IDE_PANE_VIEW_SEARCH {
+        srch.draw_search(bounds, st)
+    } else {
+        DrawUIText(st->output, (int)bounds.x + ScaleUIPx(10),
+                   (int)bounds.y + ScaleUIPx(8), ScaleUIPx(13), GetThemeText())
+    }
 }
 
 update_dialog :: (st: state.IdeState*) {
