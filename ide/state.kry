@@ -110,6 +110,9 @@ IdeState :: struct {
     resizing_pane: int
     active_pane: int
     layout_dirty: int
+    drag_view: int
+    drag_source_pane: int
+    drag_active: int
     status: [256] char
     project: Project
     dialog_mode: int

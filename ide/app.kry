@@ -291,6 +291,8 @@ init_panes :: (st: state.IdeState*) {
     st->bottom_height = ScaleUIPx(210)
     st->resizing_pane = -1
     st->active_pane = state.IDE_PANE_CENTER
+    st->drag_view = -1
+    st->drag_source_pane = -1
     pane_add(&st->pane_left, state.IDE_PANE_VIEW_EXPLORER)
     pane_add(&st->pane_center, state.IDE_PANE_VIEW_EDITOR)
     pane_add(&st->pane_right, state.IDE_PANE_VIEW_PREVIEW)
@@ -471,8 +473,10 @@ draw_resize_gutter :: (bounds: Rectangle, st: state.IdeState*, slot: int) {
 
 draw_pane_group :: (bounds: Rectangle, st: state.IdeState*,
                     group: state.PaneGroup*, slot: int) {
+    mouse := GetMousePosition()
+    drop_hot := st->drag_active != 0 && CheckCollisionPointRec(mouse, bounds)
     DrawRectangleRec(bounds, DarkenUIColor(GetThemeBackground(), 5))
-    if CheckCollisionPointRec(GetMousePosition(), bounds) &&
+    if CheckCollisionPointRec(mouse, bounds) &&
        IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
         st->active_pane = slot
     }
@@ -497,8 +501,19 @@ draw_pane_group :: (bounds: Rectangle, st: state.IdeState*,
         if group->tabs[i] == state.IDE_PANE_VIEW_PROBLEMS {
             tab_w = ScaleUIPx(104)
         }
+        tab_bounds := (Rectangle){(float)x, bounds.y + (float)ScaleUIPx(4),
+                                  (float)tab_w, (float)ScaleUIPx(22)}
+        tab_view := group->tabs[i]
+        if CheckCollisionPointRec(mouse, tab_bounds) &&
+           IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
+            st->drag_active = 1
+            st->drag_view = tab_view
+            st->drag_source_pane = slot
+            st->active_pane = slot
+            group->active = i
+        }
         if DrawUIGenericButton(x, (int)bounds.y + ScaleUIPx(4), tab_w,
-                               ScaleUIPx(22), pane_view_label(group->tabs[i]),
+                               ScaleUIPx(22), pane_view_label(tab_view),
                                i == group->active ?
                                UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB,
                                0, NULL) {
@@ -507,6 +522,21 @@ draw_pane_group :: (bounds: Rectangle, st: state.IdeState*,
             st->layout_dirty = 1
         }
         x = x + tab_w + ScaleUIPx(4)
+    }
+    if drop_hot {
+        DrawRectangleLinesEx(bounds, 2.0, GetThemeLink())
+        if IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
+            if st->drag_view >= 0 && slot != st->drag_source_pane {
+                pane_move_view(st, st->drag_view, slot)
+                st->drag_active = 0
+                st->drag_view = -1
+                st->drag_source_pane = -1
+                return
+            }
+            st->drag_active = 0
+            st->drag_view = -1
+            st->drag_source_pane = -1
+        }
     }
     move_x := (int)(bounds.x + bounds.width) - ScaleUIPx(136)
     active_view := group->tabs[group->active]
@@ -543,6 +573,12 @@ draw_pane_group :: (bounds: Rectangle, st: state.IdeState*,
     body := (Rectangle){bounds.x, bounds.y + (float)header_h,
                         bounds.width, bounds.height - (float)header_h}
     draw_pane_view(body, st, group->tabs[group->active])
+    if st->drag_active != 0 && st->drag_view >= 0 &&
+       !IsMouseButtonDown(MOUSE_BUTTON_LEFT) {
+        st->drag_active = 0
+        st->drag_view = -1
+        st->drag_source_pane = -1
+    }
 }
 
 handle_pane_shortcuts :: (st: state.IdeState*) {
