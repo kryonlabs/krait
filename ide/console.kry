@@ -2,6 +2,7 @@
 #import "kryon.h"
 #import <string.h>
 state :: #import "ide/state"
+prob :: #import "ide/problems"
 
 kry_process_spawn :: (p: KryProcess*, command: const char*, cwd: const char*) -> int #extern
 kry_process_read_poll :: (p: KryProcess*, buf: char*, cap: int) -> int #extern
@@ -23,6 +24,28 @@ console_run :: (st: state.IdeState*) {
     } else {
         state.project_set_status(st, "Could not start console")
     }
+}
+
+console_run_command :: (st: state.IdeState*, command: const char*) {
+    if st->console_running {
+        state.project_set_status(st, "Console busy")
+        return
+    }
+    if kry_process_spawn(&st->console_proc, command, st->project.path) {
+        st->console_running = 1
+        st->console_output[0] = 0
+        state.project_set_status(st, "Running: %s")
+    } else {
+        state.project_set_status(st, "Could not start command")
+    }
+}
+
+console_run_build :: (st: state.IdeState*) {
+    console_run_command(st, "make")
+}
+
+console_run_app :: (st: state.IdeState*) {
+    console_run_command(st, "make run")
 }
 
 console_stop :: (st: state.IdeState*) {
@@ -55,6 +78,9 @@ console_poll :: (st: state.IdeState*) {
     }
     if kry_process_wait_poll(&st->console_proc) {
         st->console_running = 0
+        if st->console_proc.exit_status != 0 {
+            prob.problems_parse(st, st->console_output)
+        }
         kry_process_close(&st->console_proc)
         state.project_set_status(st, "Console finished")
     }
@@ -63,6 +89,7 @@ console_poll :: (st: state.IdeState*) {
 draw_console :: (bounds: Rectangle, st: state.IdeState*) {
     input_h := ScaleUIPx(28)
     action_w := ScaleUIPx(58)
+    btn_w := ScaleUIPx(52)
     gap := ScaleUIPx(6)
     box_style := (UITextInputStyle){
         GetThemeSurface(),
@@ -84,15 +111,28 @@ draw_console :: (bounds: Rectangle, st: state.IdeState*) {
         ScaleUIPx(10),
         ScaleUIPx(6)
     }
-    input_bounds := (Rectangle){bounds.x, bounds.y,
+    btn_y := (int)bounds.y
+    btn_x := (int)bounds.x
+    if DrawUIGenericButton(btn_x, btn_y, btn_w, input_h,
+                           "Build", UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+        console_run_build(st)
+    }
+    if DrawUIGenericButton(btn_x + btn_w + gap, btn_y, btn_w, input_h,
+                           "Run", UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+        console_run_app(st)
+    }
+    row2_y := btn_y + input_h + gap
+    input_bounds := (Rectangle){bounds.x, (float)row2_y,
                                 bounds.width - (float)(action_w * 2 + gap * 2),
                                 (float)input_h}
     stop_bounds := (Rectangle){input_bounds.x + input_bounds.width + (float)gap,
-                               bounds.y, (float)action_w, (float)input_h}
+                               (float)row2_y, (float)action_w, (float)input_h}
     clear_bounds := (Rectangle){stop_bounds.x + stop_bounds.width + (float)gap,
-                                bounds.y, (float)action_w, (float)input_h}
-    log_bounds := (Rectangle){bounds.x, bounds.y + (float)input_h + (float)gap,
-                              bounds.width, bounds.height - (float)input_h - (float)gap}
+                                (float)row2_y, (float)action_w, (float)input_h}
+    log_bounds := (Rectangle){bounds.x, (float)(row2_y + input_h + gap),
+                              bounds.width,
+                              bounds.height - (float)(row2_y - (int)bounds.y) -
+                                  (float)input_h - (float)gap}
     DrawUIReadonlyTextBox((ReadonlyTextBoxProps){
         log_bounds, st->console_output, ScaleUIPx(13),
         box_style, ScaleUIPx(4)

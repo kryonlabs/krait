@@ -5,11 +5,13 @@ state :: #import "ide/state"
 ed :: #import "ide/editor"
 mods :: #import "ide/modules"
 screens :: #import "ide/screens"
+prob :: #import "ide/problems"
 
 krait_live_draw_canvas :: (root: const char*, rel_path: const char*,
                            w: int, h: int,
                            status: char*, status_size: int) -> int #extern
 krait_preview_build :: (st: state.IdeState*, status: char*, status_size: int) -> int #extern
+krait_build_output :: () -> const char* #extern
 krait_preview_draw :: (st: state.IdeState*, rel_path: const char*,
                        viewport: Rectangle, status: char*, status_size: int) -> int #extern
 krait_preview_unload :: () #extern
@@ -87,6 +89,7 @@ preview_maybe_reload :: (st: state.IdeState*) {
             state.project_set_status(st, status)
             st->preview_host_ready = 0
             st->preview_dirty = 0
+            prob.problems_parse(st, krait_build_output())
             return
         }
         st->preview_dirty = 0

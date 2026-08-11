@@ -265,6 +265,12 @@ krait_preview_build_poll(char *status, int status_size)
     return 1;
 }
 
+const char *
+krait_build_output(void)
+{
+    return g_preview_build.output;
+}
+
 static int
 krait_preview_build_start(const char *project_path, const char *host_path,
                           const char *command, char *status, int status_size)
