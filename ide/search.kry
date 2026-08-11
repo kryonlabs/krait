@@ -29,8 +29,6 @@ search_run :: (st: state.IdeState*) {
 
 search_focus :: (st: state.IdeState*, quick: int) {
     st->quick_open_mode = quick
-    st->bottom_visible = 1
-    st->bottom_tab = state.IDE_BOTTOM_SEARCH
     st->find_visible = 1
     st->find_focused = 1
     SetUIFocus(5100)
@@ -51,7 +49,7 @@ draw_search :: (bounds: Rectangle, st: state.IdeState*) {
                            bounds.width - (float)(pad * 2),
                            bounds.height - (float)(pad * 3 + input_h)}
     old_len := strlen(st->find_text)
-    DrawUITextField((UITextField){
+    DrawUITextField((TextFieldProps){
         field, st->find_text, sizeof(st->find_text),
         &st->find_cursor, &st->find_focused,
         sizeof(st->find_text) - 1, ScaleUIPx(13), 5100,
@@ -67,7 +65,7 @@ draw_search :: (bounds: Rectangle, st: state.IdeState*) {
                            NULL) {
         search_run(st)
     }
-    if st->find_focused != 0 && UIKeyPressed(KEY_ENTER) {
+    if st->find_focused != 0 && IsKeyPressed(KEY_ENTER) {
         search_run(st)
         if st->quick_open_mode != 0 && st->search_count > 0 {
             ed.editor_open(st, st->search_results[0].path)

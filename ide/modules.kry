@@ -1,0 +1,155 @@
+#module "ide.modules"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+kryon :: #import "modules/kryon/module"
+
+register_builtins :: (st: state.IdeState*) {
+    if st == NULL {
+        return
+    }
+    st->module_count = 0
+    kryon.register(st)
+}
+
+find :: (st: state.IdeState*, id: const char*) -> int {
+    if st == NULL || id == NULL {
+        return -1
+    }
+    for int i = 0; i < st->module_count; i++ {
+        if strcmp(st->modules[i].id, id) == 0 {
+            return i
+        }
+    }
+    return -1
+}
+
+enabled :: (st: state.IdeState*, id: const char*) -> int {
+    i := find(st, id)
+    return i >= 0 && st->modules[i].enabled != 0
+}
+
+module_enabled :: (mod: state.ModuleState*) -> int {
+    return mod != NULL && mod->enabled != 0
+}
+
+set_enabled :: (st: state.IdeState*, id: const char*, value: int) {
+    i := find(st, id)
+    if i < 0 {
+        return
+    }
+    st->modules[i].enabled = value != 0 ? 1 : 0
+}
+
+has_preview_provider :: (st: state.IdeState*) -> int {
+    if st == NULL {
+        return 0
+    }
+    for int i = 0; i < st->module_count; i++ {
+        if st->modules[i].enabled != 0 && st->modules[i].has_preview != 0 {
+            return 1
+        }
+    }
+    return 0
+}
+
+has_project_templates :: (st: state.IdeState*) -> int {
+    if st == NULL {
+        return 0
+    }
+    for int i = 0; i < st->module_count; i++ {
+        mod := &st->modules[i]
+        if module_enabled(mod) != 0 && mod->has_project_templates != 0 {
+            return 1
+        }
+    }
+    return 0
+}
+
+file_syntax :: (st: state.IdeState*, name: const char*) -> UISyntaxMode {
+    if st != NULL {
+        for int i = 0; i < st->module_count; i++ {
+            mod := &st->modules[i]
+            if module_enabled(mod) == 0 || mod->file_syntax == NULL {
+                continue
+            }
+            syntax := mod->file_syntax(name)
+            if syntax != UI_SYNTAX_NONE {
+                return syntax
+            }
+        }
+    }
+    len := strlen(name)
+    if len >= 2 && strcmp(name + len - 2, ".c") == 0 {
+        return UI_SYNTAX_C
+    }
+    if len >= 2 && strcmp(name + len - 2, ".h") == 0 {
+        return UI_SYNTAX_C
+    }
+    if strcmp(name, "Makefile") == 0 || strcmp(name, "makefile") == 0 ||
+       strcmp(name, "GNUmakefile") == 0 {
+        return UI_SYNTAX_MAKE
+    }
+    if len >= 3 && strcmp(name + len - 3, ".mk") == 0 {
+        return UI_SYNTAX_MAKE
+    }
+    return UI_SYNTAX_NONE
+}
+
+file_affects_preview :: (st: state.IdeState*, name: const char*) -> int {
+    if st == NULL {
+        return 0
+    }
+    for int i = 0; i < st->module_count; i++ {
+        mod := &st->modules[i]
+        if module_enabled(mod) != 0 && mod->file_affects_preview != NULL &&
+           mod->file_affects_preview(name) != 0 {
+            return 1
+        }
+    }
+    return 0
+}
+
+preview_source_file :: (st: state.IdeState*, name: const char*) -> int {
+    if st == NULL {
+        return 0
+    }
+    for int i = 0; i < st->module_count; i++ {
+        mod := &st->modules[i]
+        if module_enabled(mod) != 0 && mod->preview_source_file != NULL &&
+           mod->preview_source_file(name) != 0 {
+            return 1
+        }
+    }
+    return 0
+}
+
+preferred_startup_file :: (st: state.IdeState*, dst: char*, dst_size: int) -> int {
+    best_index := -1
+    best_score := 0
+    if st == NULL || dst == NULL || dst_size <= 0 {
+        return 0
+    }
+    dst[0] = 0
+    for int i = 0; i < st->entry_count; i++ {
+        if st->entries[i].is_dir != 0 {
+            continue
+        }
+        for int j = 0; j < st->module_count; j++ {
+            mod := &st->modules[j]
+            if module_enabled(mod) == 0 || mod->startup_file_priority == NULL {
+                continue
+            }
+            score := mod->startup_file_priority(st->entries[i].path)
+            if score > best_score {
+                best_score = score
+                best_index = i
+            }
+        }
+    }
+    if best_index < 0 {
+        return 0
+    }
+    snprintf(dst, dst_size, "%s", st->entries[best_index].path)
+    return 1
+}

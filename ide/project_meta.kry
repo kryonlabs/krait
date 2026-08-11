@@ -1,0 +1,11 @@
+#module "ide.project_meta"
+#import "kryon.h"
+state :: #import "ide/state"
+
+krait_draw_project_metadata :: (bounds: Rectangle, st: state.IdeState*) #extern
+
+#global
+
+draw_project_metadata :: (bounds: Rectangle, st: state.IdeState*) {
+    krait_draw_project_metadata(bounds, st)
+}

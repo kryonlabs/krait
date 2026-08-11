@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Krait">
+  <title>Krait</title>
+  <!-- Placeholder favicon. Replace with the real Krait mark when artwork lands. -->
+  <rect width="32" height="32" rx="6" fill="#9a5b1f"/>
+  <rect x="0.5" y="0.5" width="31" height="31" rx="5.5" fill="none" stroke="#6e3f15" stroke-width="1"/>
+  <text x="16" y="22" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" font-weight="700" fill="#fdfcf8">K</text>
+</svg>

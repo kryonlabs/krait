@@ -1,0 +1,711 @@
+#module "ide.widgets"
+#import "kryon.h"
+#import <string.h>
+#import <stdlib.h>
+state :: #import "ide/state"
+ed :: #import "ide/editor"
+
+krait_scene_scan :: (root: const char*, rel_path: const char*) -> int #extern
+krait_scene_kind :: (index: int) -> int #extern
+krait_scene_depth :: (index: int) -> int #extern
+krait_scene_label :: (index: int) -> const char* #extern
+krait_scene_asset_path :: (index: int) -> const char* #extern
+krait_scene_bounds :: (index: int) -> Rectangle #extern
+krait_scene_source_line :: (index: int) -> int #extern
+krait_scene_editable :: (index: int) -> int #extern
+krait_scene_nudge :: (root: const char*, rel_path: const char*, index: int,
+                      dx: int, dy: int, dw: int, dh: int,
+                      status: char*, status_size: int) -> int #extern
+KryonNodeTypeCount :: () -> int #extern
+KryonNodeTypeName :: (index: int) -> const char* #extern
+KryonNodeTypeLabel :: (index: int) -> const char* #extern
+KryonNodeTypeGroup :: (index: int) -> const char* #extern
+KryonNodeTypeDetail :: (index: int) -> const char* #extern
+KryonNodeTypeInsertable :: (index: int) -> int #extern
+
+inspector_node :: int #global
+inspector_x :: [16] char #global
+inspector_y :: [16] char #global
+inspector_w :: [16] char #global
+inspector_h :: [16] char #global
+inspector_x_cursor :: int #global
+inspector_y_cursor :: int #global
+inspector_w_cursor :: int #global
+inspector_h_cursor :: int #global
+inspector_x_focused :: int #global
+inspector_y_focused :: int #global
+inspector_w_focused :: int #global
+inspector_h_focused :: int #global
+
+#private
+
+readable_on :: (bg: Color) -> Color {
+    luma := (int)bg.r * 299 + (int)bg.g * 587 + (int)bg.b * 114
+    if luma > 150000 {
+        return (Color){24, 24, 24, 255}
+    }
+    return (Color){246, 246, 246, 255}
+}
+
+muted_on :: (bg: Color) -> Color {
+    fg := readable_on(bg)
+    return Fade(fg, 0.72)
+}
+
+clamp_widget_scroll :: (st: state.IdeState*, max_scroll: int) {
+    if st->widget_scroll > max_scroll {
+        st->widget_scroll = max_scroll
+    }
+    if st->widget_scroll < 0 {
+        st->widget_scroll = 0
+    }
+}
+
+clamp_scene_scroll :: (st: state.IdeState*, max_scroll: int) {
+    if st->scene_scroll > max_scroll {
+        st->scene_scroll = max_scroll
+    }
+    if st->scene_scroll < 0 {
+        st->scene_scroll = 0
+    }
+}
+
+#enum {
+    SCENE_NODE_UNKNOWN,
+    SCENE_NODE_SCREEN,
+    SCENE_NODE_GROUP,
+    SCENE_NODE_TEXT,
+    SCENE_NODE_RECTANGLE,
+    SCENE_NODE_BUTTON,
+    SCENE_NODE_TEXT_FIELD,
+    SCENE_NODE_TOGGLE,
+    SCENE_NODE_SLIDER,
+    SCENE_NODE_SPRITE,
+    SCENE_NODE_GAME_OBJECT,
+}
+
+draw_item :: (bounds: Rectangle, st: state.IdeState*, index: int) {
+    mouse := GetMousePosition()
+    hot := CheckCollisionPointRec(mouse, bounds)
+    insertable := KryonNodeTypeInsertable(index)
+    bg := GetThemeSurface()
+    if hot && insertable != 0 {
+        MarkUIClickable()
+        bg = GetThemeButton()
+        DrawRectangleRec(bounds, bg)
+    } else if hot {
+        bg = GetThemeButtonHover()
+        DrawRectangleRec(bounds, bg)
+    }
+    DrawRectangleLinesEx(bounds, 1.0, GetThemeButton())
+    sample_x := (int)bounds.x + ScaleUIPx(10)
+    sample_y := (int)bounds.y + ScaleUIPx(8)
+    sample_w := (int)bounds.width - ScaleUIPx(20)
+    label := KryonNodeTypeLabel(index)
+    name := KryonNodeTypeName(index)
+    group := KryonNodeTypeGroup(index)
+    detail := KryonNodeTypeDetail(index)
+    color := readable_on(bg)
+    if insertable == 0 {
+        color = muted_on(bg)
+    }
+    if insertable != 0 && strcmp(name, "Background") == 0 {
+        DrawRectangle(sample_x, sample_y, sample_w, ScaleUIPx(34),
+                      GetThemeBackground())
+        DrawRectangleLines(sample_x, sample_y, sample_w, ScaleUIPx(34),
+                           GetThemeLink())
+    } else if insertable != 0 && strcmp(name, "Text") == 0 {
+        DrawUIText("Text", sample_x, sample_y + ScaleUIPx(10),
+                   UI_TEXT_16, color)
+    } else if insertable != 0 && strcmp(name, "Rect") == 0 {
+        DrawRectangle(sample_x, sample_y, ScaleUIPx(92), ScaleUIPx(34),
+                      GetThemeButton())
+        DrawRectangleLines(sample_x, sample_y, ScaleUIPx(92), ScaleUIPx(34),
+                           GetThemeButtonHover())
+    } else if insertable != 0 && strcmp(name, "Line") == 0 {
+        DrawLine(sample_x, sample_y + ScaleUIPx(28),
+                 sample_x + ScaleUIPx(118), sample_y + ScaleUIPx(8),
+                 GetThemeLink())
+    } else if insertable != 0 && strcmp(name, "Picture") == 0 {
+        DrawRectangle(sample_x, sample_y, ScaleUIPx(54), ScaleUIPx(34),
+                      GetThemeButton())
+        DrawRectangleLines(sample_x, sample_y, ScaleUIPx(54), ScaleUIPx(34),
+                           GetThemeLink())
+        DrawUIText("Picture", sample_x + ScaleUIPx(64),
+                   sample_y + ScaleUIPx(10), ScaleUIPx(13), color)
+    } else if insertable != 0 && strcmp(name, "Button") == 0 {
+        DrawUIGenericButton(sample_x, sample_y, ScaleUIPx(124), ScaleUIPx(34),
+                            "Button", UI_BUTTON_STYLE_PRIMARY, 0, NULL)
+    } else if insertable != 0 && strcmp(name, "TextField") == 0 {
+        field: [64] char
+        cursor := 0
+        focused := 0
+        snprintf(field, sizeof(field), "%s", "Text")
+        DrawUITextField((TextFieldProps){
+            .bounds = {sample_x, sample_y, ScaleUIPx(142), ScaleUIPx(34)},
+            .text = field,
+            .text_size = sizeof(field),
+            .cursor_position = &cursor,
+            .focused = &focused,
+            .max_codepoints = 64,
+            .font = UI_TEXT_16,
+            .focus_id = 9100 + index,
+            .style = (UITextInputStyle){GetThemeSurface(), GetThemeButton(),
+                                        GetThemeLink(), GetThemeText(),
+                                        GetThemeLink(), 0,
+                                        ScaleUIPx(8), ScaleUIPx(6)},
+        })
+    } else if insertable != 0 && strcmp(name, "Toggle") == 0 {
+        value := 1
+        DrawUIToggleSwitch(sample_x, sample_y + ScaleUIPx(3),
+                           ScaleUIPx(112), ScaleUIPx(28),
+                           &value, "Off", "On")
+    } else if insertable != 0 && strcmp(name, "Slider") == 0 {
+        value := 64
+        DrawUISlider(9200 + index, sample_x, sample_y + ScaleUIPx(8),
+                     ScaleUIPx(140), "Value", 0, 100, &value, "")
+    } else if insertable != 0 && strcmp(name, "Checkbox") == 0 {
+        checked := 1
+        DrawUICheckboxToggle(sample_x, sample_y + ScaleUIPx(8),
+                             "Checkbox", &checked)
+    } else if insertable != 0 && strcmp(name, "Dropdown") == 0 {
+        options: [3] const char* = {"One", "Two", "Three"}
+        selected := 0
+        DrawUIDropdown(9400 + index, sample_x, sample_y, ScaleUIPx(142),
+                       ScaleUIPx(34), options, 3, &selected)
+    } else if insertable != 0 && strcmp(name, "Group") == 0 {
+        DrawRectangle(sample_x, sample_y, ScaleUIPx(124), ScaleUIPx(34),
+                      Fade(GetThemeButton(), 0.45))
+        DrawRectangleLines(sample_x, sample_y, ScaleUIPx(124), ScaleUIPx(34),
+                           GetThemeButtonHover())
+        DrawUIText("Group", sample_x + ScaleUIPx(10),
+                   sample_y + ScaleUIPx(10), ScaleUIPx(13), color)
+    } else if widget_is_2d(index) != 0 {
+        cx := sample_x + ScaleUIPx(18)
+        cy := sample_y + ScaleUIPx(17)
+        if strcmp(name, "Camera2D") == 0 {
+            DrawRectangle(sample_x, sample_y + ScaleUIPx(8),
+                          ScaleUIPx(34), ScaleUIPx(20), GetThemeButton())
+            DrawCircle(sample_x + ScaleUIPx(25), cy, ScaleUIPx(5),
+                       GetThemeLink())
+        } else if strcmp(name, "Sprite2D") == 0 ||
+                  strcmp(name, "AnimatedSprite2D") == 0 {
+            DrawRectangle(sample_x, sample_y, ScaleUIPx(34), ScaleUIPx(34),
+                          GetThemeButton())
+            DrawTriangle((Vector2){sample_x + ScaleUIPx(8), sample_y + ScaleUIPx(26)},
+                         (Vector2){sample_x + ScaleUIPx(18), sample_y + ScaleUIPx(8)},
+                         (Vector2){sample_x + ScaleUIPx(28), sample_y + ScaleUIPx(26)},
+                         GetThemeLink())
+        } else if strcmp(name, "TileMap") == 0 ||
+                  strcmp(name, "TileLayer") == 0 {
+            for int gy = 0; gy < 2; gy++ {
+                for int gx = 0; gx < 2; gx++ {
+                    DrawRectangle(sample_x + gx * ScaleUIPx(17),
+                                  sample_y + gy * ScaleUIPx(17),
+                                  ScaleUIPx(15), ScaleUIPx(15),
+                                  GetThemeButton())
+                }
+            }
+        } else if strcmp(name, "CollisionShape2D") == 0 ||
+                  strcmp(name, "Area2D") == 0 ||
+                  strcmp(name, "Body2D") == 0 {
+            DrawCircleLines(cx, cy, ScaleUIPx(15), GetThemeLink())
+            DrawLine(cx - ScaleUIPx(11), cy + ScaleUIPx(11),
+                     cx + ScaleUIPx(11), cy - ScaleUIPx(11), GetThemeButtonHover())
+        } else if strcmp(name, "AudioSource") == 0 {
+            DrawCircle(cx - ScaleUIPx(4), cy, ScaleUIPx(8), GetThemeButton())
+            DrawTriangle((Vector2){cx, cy - ScaleUIPx(10)},
+                         (Vector2){cx + ScaleUIPx(14), cy},
+                         (Vector2){cx, cy + ScaleUIPx(10)},
+                         GetThemeLink())
+        } else {
+            DrawCircle(cx, cy, ScaleUIPx(13), GetThemeButton())
+            DrawCircleLines(cx, cy, ScaleUIPx(13), GetThemeLink())
+        }
+        DrawUIText(label, sample_x + ScaleUIPx(46),
+                   sample_y + ScaleUIPx(10), ScaleUIPx(13), color)
+    } else {
+        DrawUIText(label, sample_x, sample_y, ScaleUIPx(14), color)
+        DrawUIText(group, sample_x, sample_y + ScaleUIPx(18), ScaleUIPx(11),
+                   muted_on(bg))
+        DrawUIText(detail, sample_x, sample_y + ScaleUIPx(34), ScaleUIPx(11),
+                   muted_on(bg))
+    }
+    if hot && insertable != 0 && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
+        st->widget_drag_active = 1
+        st->widget_drag_type = index
+    }
+}
+
+widget_label :: (kind: int) -> const char* {
+    return KryonNodeTypeLabel(kind)
+}
+
+widget_has_preview :: (index: int) -> int {
+    name := KryonNodeTypeName(index)
+    if strcmp(name, "Background") == 0 ||
+       strcmp(name, "Text") == 0 ||
+       strcmp(name, "Rect") == 0 ||
+       strcmp(name, "Line") == 0 ||
+       strcmp(name, "Picture") == 0 ||
+       strcmp(name, "Button") == 0 ||
+       strcmp(name, "TextField") == 0 ||
+       strcmp(name, "Toggle") == 0 ||
+       strcmp(name, "Slider") == 0 ||
+       strcmp(name, "Checkbox") == 0 ||
+       strcmp(name, "Dropdown") == 0 ||
+       strcmp(name, "Group") == 0 {
+        return 1
+    }
+    if strncmp(KryonNodeTypeGroup(index), "Game2D/", 7) == 0 {
+        return 1
+    }
+    return 0
+}
+
+widget_is_ui :: (index: int) -> int {
+    return strncmp(KryonNodeTypeGroup(index), "UI/", 3) == 0
+}
+
+widget_is_2d :: (index: int) -> int {
+    return strncmp(KryonNodeTypeGroup(index), "Game2D/", 7) == 0
+}
+
+widget_section_count :: (ui: int) -> int {
+    count := KryonNodeTypeCount()
+    result := 0
+    for int i = 0; i < count; i++ {
+        if widget_has_preview(i) == 0 {
+            continue
+        }
+        if ui != 0 && widget_is_ui(i) != 0 {
+            result = result + 1
+        } else if ui == 0 && widget_is_2d(i) != 0 {
+            result = result + 1
+        }
+    }
+    return result
+}
+
+widget_section_height :: (item_count: int, cols: int,
+                          tile_h: int, gap: int, label_h: int) -> int {
+    if item_count <= 0 {
+        return 0
+    }
+    rows := (item_count + cols - 1) / cols
+    return label_h + rows * (tile_h + gap)
+}
+
+scene_kind_label :: (kind: int) -> const char* {
+    if kind == SCENE_NODE_SCREEN {
+        return "Screen"
+    }
+    if kind == SCENE_NODE_GROUP {
+        return "Group"
+    }
+    if kind == SCENE_NODE_TEXT {
+        return "Text"
+    }
+    if kind == SCENE_NODE_RECTANGLE {
+        return "Rect"
+    }
+    if kind == SCENE_NODE_BUTTON {
+        return "Button"
+    }
+    if kind == SCENE_NODE_TEXT_FIELD {
+        return "Text Field"
+    }
+    if kind == SCENE_NODE_TOGGLE {
+        return "Toggle"
+    }
+    if kind == SCENE_NODE_SLIDER {
+        return "Slider"
+    }
+    if kind == SCENE_NODE_SPRITE {
+        return "Picture"
+    }
+    if kind == SCENE_NODE_GAME_OBJECT {
+        return "Game Node"
+    }
+    return "Source"
+}
+
+apply_scene_nudge :: (st: state.IdeState*, dx: int, dy: int,
+                      dw: int, dh: int) {
+    if st->project.loaded == 0 ||
+       st->active_screen < 0 ||
+       st->active_screen >= st->screen_count {
+        state.project_set_status(st, "Select a scene first")
+        return
+    }
+    status: [256] char
+    scr := &st->screens[st->active_screen]
+    if krait_scene_nudge(st->project.path, scr->path, st->selected_scene_node,
+                         dx, dy, dw, dh, status, sizeof(status)) != 0 {
+        ed.editor_reload_if_open(st, scr->path)
+        st->preview_dirty = 1
+        st->last_edit_time = GetTime()
+        scan_scene(st)
+    }
+    state.project_set_status(st, status)
+}
+
+apply_scene_bounds :: (st: state.IdeState*, current: Rectangle) {
+    x := atoi(inspector_x)
+    y := atoi(inspector_y)
+    w := atoi(inspector_w)
+    h := atoi(inspector_h)
+    if w < 1 {
+        w = 1
+    }
+    if h < 1 {
+        h = 1
+    }
+    apply_scene_nudge(st, x - (int)current.x, y - (int)current.y,
+                      w - (int)current.width, h - (int)current.height)
+}
+
+inspector_fields_focused :: () -> int {
+    return inspector_x_focused != 0 ||
+           inspector_y_focused != 0 ||
+           inspector_w_focused != 0 ||
+           inspector_h_focused != 0
+}
+
+sync_inspector_fields :: (st: state.IdeState*, bounds_value: Rectangle) {
+    if inspector_node == st->selected_scene_node &&
+       inspector_fields_focused() != 0 {
+        return
+    }
+    inspector_node = st->selected_scene_node
+    snprintf(inspector_x, sizeof(inspector_x), "%d",
+             (int)bounds_value.x)
+    snprintf(inspector_y, sizeof(inspector_y), "%d",
+             (int)bounds_value.y)
+    snprintf(inspector_w, sizeof(inspector_w), "%d",
+             (int)bounds_value.width)
+    snprintf(inspector_h, sizeof(inspector_h), "%d",
+             (int)bounds_value.height)
+    inspector_x_cursor = strlen(inspector_x)
+    inspector_y_cursor = strlen(inspector_y)
+    inspector_w_cursor = strlen(inspector_w)
+    inspector_h_cursor = strlen(inspector_h)
+}
+
+draw_inspector_field :: (label: const char*, bounds: Rectangle,
+                         text: char*, text_size: int,
+                         cursor: int*, focused: int*,
+                         focus_id: int) {
+    DrawUIText(label, (int)bounds.x, (int)bounds.y,
+               ScaleUIPx(12), GetThemeIcon())
+    DrawUITextField((TextFieldProps){
+        (Rectangle){bounds.x, bounds.y + (float)ScaleUIPx(16),
+                    bounds.width, (float)ScaleUIPx(28)},
+        text, text_size, cursor, focused, text_size - 1,
+        ScaleUIPx(13), focus_id,
+        (UITextInputStyle){0}, (UITextInputFilter){0}, NULL, NULL
+    })
+}
+
+scan_scene :: (st: state.IdeState*) {
+    if st->project.loaded == 0 ||
+       st->active_screen < 0 ||
+       st->active_screen >= st->screen_count {
+        st->scene_node_count = 0
+        return
+    }
+    st->scene_node_count = krait_scene_scan(st->project.path,
+                                            st->screens[st->active_screen].path)
+    if st->selected_scene_node >= st->scene_node_count {
+        st->selected_scene_node = st->scene_node_count - 1
+    }
+    if st->selected_scene_node < 0 && st->scene_node_count > 0 {
+        st->selected_scene_node = 0
+    }
+}
+
+draw_hierarchy :: (bounds: Rectangle, st: state.IdeState*) {
+    scan_scene(st)
+    DrawRectangleRec(bounds, GetThemeSurface())
+    pad := ScaleUIPx(8)
+    DrawUIText("Hierarchy", (int)bounds.x + pad, (int)bounds.y + pad,
+               ScaleUIPx(15), GetThemeText())
+    list := (Rectangle){bounds.x, bounds.y + (float)ScaleUIPx(32),
+                        bounds.width, bounds.height - (float)ScaleUIPx(32)}
+    if st->scene_node_count <= 0 {
+        DrawUIText("Select a scene", (int)list.x + pad, (int)list.y + pad,
+                   ScaleUIPx(13), GetThemeIcon())
+        return
+    }
+    row_h := ScaleUIPx(28)
+    max_scroll := st->scene_node_count * row_h - (int)list.height
+    if max_scroll < 0 {
+        max_scroll = 0
+    }
+    clamp_scene_scroll(st, max_scroll)
+    mouse := GetMousePosition()
+    if CheckCollisionPointRec(mouse, list) {
+        wheel := GetMouseWheelMove()
+        if wheel > 0.0 {
+            st->scene_scroll = st->scene_scroll - row_h
+        } else if wheel < 0.0 {
+            st->scene_scroll = st->scene_scroll + row_h
+        }
+        clamp_scene_scroll(st, max_scroll)
+    }
+    BeginUIClip((int)list.x, (int)list.y, (int)list.width, (int)list.height)
+    for int i = 0; i < st->scene_node_count; i++ {
+        depth := krait_scene_depth(i)
+        kind := krait_scene_kind(i)
+        label := krait_scene_label(i)
+        y := (int)list.y + i * row_h - st->scene_scroll
+        if y + row_h < (int)list.y ||
+           y > (int)(list.y + list.height) {
+            continue
+        }
+        row := (Rectangle){list.x, (float)y, list.width, (float)row_h}
+        hot := CheckCollisionPointRec(mouse, row)
+        if i == st->selected_scene_node {
+            DrawRectangleRec(row, GetThemeButton())
+        } else if hot {
+            DrawRectangleRec(row, GetThemeButtonHover())
+        }
+        if hot {
+            MarkUIClickable()
+        }
+        x := (int)row.x + pad + depth * ScaleUIPx(14)
+        DrawUIText(scene_kind_label(kind), x, y + ScaleUIPx(6),
+                   ScaleUIPx(12), GetThemeIcon())
+        DrawUIText(label, x + ScaleUIPx(72), y + ScaleUIPx(6),
+                   ScaleUIPx(12), GetThemeText())
+        if hot && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
+            st->selected_scene_node = i
+        }
+    }
+    EndUIClip()
+}
+
+draw_inspector :: (bounds: Rectangle, st: state.IdeState*) {
+    scan_scene(st)
+    DrawRectangleRec(bounds, GetThemeSurface())
+    pad := ScaleUIPx(8)
+    DrawUIText("Inspector", (int)bounds.x + pad, (int)bounds.y + pad,
+               ScaleUIPx(15), GetThemeText())
+    if st->selected_scene_node < 0 ||
+       st->selected_scene_node >= st->scene_node_count {
+        DrawUIText("No node selected", (int)bounds.x + pad,
+                   (int)bounds.y + ScaleUIPx(34), ScaleUIPx(13),
+                   GetThemeIcon())
+        return
+    }
+    kind := krait_scene_kind(st->selected_scene_node)
+    editable := krait_scene_editable(st->selected_scene_node)
+    bounds_value := krait_scene_bounds(st->selected_scene_node)
+    asset_path := krait_scene_asset_path(st->selected_scene_node)
+    source_line := krait_scene_source_line(st->selected_scene_node)
+    sync_inspector_fields(st, bounds_value)
+    y := (int)bounds.y + ScaleUIPx(34)
+    line: [256] char
+    snprintf(line, sizeof(line), "%s  %s", scene_kind_label(kind),
+             editable != 0 ? "editable" : "read-only")
+    DrawUIText(line, (int)bounds.x + pad, y, ScaleUIPx(13), GetThemeText())
+    y = y + ScaleUIPx(22)
+    snprintf(line, sizeof(line), "x %.0f  y %.0f  w %.0f  h %.0f",
+             bounds_value.x, bounds_value.y, bounds_value.width,
+             bounds_value.height)
+    DrawUIText(line, (int)bounds.x + pad, y, ScaleUIPx(12), GetThemeIcon())
+    y = y + ScaleUIPx(22)
+    if asset_path[0] != 0 {
+        DrawUIText(asset_path, (int)bounds.x + pad, y,
+                   ScaleUIPx(12), GetThemeIcon())
+    } else {
+        snprintf(line, sizeof(line), "line %d", source_line)
+        DrawUIText(line, (int)bounds.x + pad, y, ScaleUIPx(12),
+                   GetThemeIcon())
+    }
+    if editable == 0 {
+        return
+    }
+    y = y + ScaleUIPx(24)
+    field_w := ((int)bounds.width - pad * 2 - ScaleUIPx(8)) / 2
+    field_h := ScaleUIPx(48)
+    x0 := (int)bounds.x + pad
+    x1 := x0 + field_w + ScaleUIPx(8)
+    draw_inspector_field("X", (Rectangle){(float)x0, (float)y,
+                                          (float)field_w, (float)field_h},
+                         inspector_x, sizeof(inspector_x),
+                         &inspector_x_cursor, &inspector_x_focused,
+                         6100)
+    draw_inspector_field("Y", (Rectangle){(float)x1, (float)y,
+                                          (float)field_w, (float)field_h},
+                         inspector_y, sizeof(inspector_y),
+                         &inspector_y_cursor, &inspector_y_focused,
+                         6101)
+    y = y + field_h + ScaleUIPx(6)
+    draw_inspector_field("W", (Rectangle){(float)x0, (float)y,
+                                          (float)field_w, (float)field_h},
+                         inspector_w, sizeof(inspector_w),
+                         &inspector_w_cursor, &inspector_w_focused,
+                         6102)
+    draw_inspector_field("H", (Rectangle){(float)x1, (float)y,
+                                          (float)field_w, (float)field_h},
+                         inspector_h, sizeof(inspector_h),
+                         &inspector_h_cursor, &inspector_h_focused,
+                         6103)
+    y = y + field_h + ScaleUIPx(8)
+    if DrawUIGenericButton((int)bounds.x + pad, y,
+       (int)bounds.width - pad * 2, ScaleUIPx(28),
+       "Apply Bounds", UI_BUTTON_STYLE_PRIMARY,
+       0, NULL) ||
+       (inspector_fields_focused() != 0 && IsKeyPressed(KEY_ENTER)) {
+        apply_scene_bounds(st, bounds_value)
+        return
+    }
+    y = y + ScaleUIPx(38)
+    btn_w := ScaleUIPx(32)
+    btn_h := ScaleUIPx(24)
+    gap := ScaleUIPx(4)
+    x := (int)bounds.x + pad
+    if DrawUIGenericButton(x + btn_w + gap, y, btn_w, btn_h, "Up",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        apply_scene_nudge(st, 0, -8, 0, 0)
+    }
+    y = y + btn_h + gap
+    if DrawUIGenericButton(x, y, btn_w, btn_h, "L",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        apply_scene_nudge(st, -8, 0, 0, 0)
+    }
+    if DrawUIGenericButton(x + btn_w + gap, y, btn_w, btn_h, "Dn",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        apply_scene_nudge(st, 0, 8, 0, 0)
+    }
+    if DrawUIGenericButton(x + (btn_w + gap) * 2, y, btn_w, btn_h, "R",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        apply_scene_nudge(st, 8, 0, 0, 0)
+    }
+    y = y + btn_h + gap
+    if kind != SCENE_NODE_TEXT {
+        if DrawUIGenericButton(x, y, btn_w, btn_h, "-W",
+                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            apply_scene_nudge(st, 0, 0, -8, 0)
+        }
+        if DrawUIGenericButton(x + btn_w + gap, y, btn_w, btn_h, "+W",
+                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            apply_scene_nudge(st, 0, 0, 8, 0)
+        }
+        if DrawUIGenericButton(x + (btn_w + gap) * 2, y, btn_w, btn_h, "-H",
+                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            apply_scene_nudge(st, 0, 0, 0, -8)
+        }
+        if DrawUIGenericButton(x + (btn_w + gap) * 3, y, btn_w, btn_h, "+H",
+                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            apply_scene_nudge(st, 0, 0, 0, 8)
+        }
+    }
+}
+
+#global
+
+draw_widgets :: (bounds: Rectangle, st: state.IdeState*) {
+    pad := ScaleUIPx(8)
+    gap := ScaleUIPx(8)
+    DrawRectangleRec(bounds, GetThemeSurface())
+    count := KryonNodeTypeCount()
+    palette_y := (int)bounds.y + pad
+    palette_h := (int)(bounds.y + bounds.height) - palette_y
+    if palette_h < 0 {
+        palette_h = 0
+    }
+    tile_w := ScaleUIPx(176)
+    tile_h := ScaleUIPx(58)
+    content_w := (int)bounds.width - pad * 2
+    cols := (content_w + gap) / (tile_w + gap)
+    if cols < 1 {
+        cols = 1
+    }
+    if cols > 3 {
+        cols = 3
+    }
+    if cols == 1 && tile_w > content_w {
+        tile_w = content_w
+    }
+    row_h := tile_h + gap
+    label_h := ScaleUIPx(26)
+    ui_count := widget_section_count(1)
+    game_count := widget_section_count(0)
+    content_h := widget_section_height(ui_count, cols, tile_h, gap, label_h) +
+                 widget_section_height(game_count, cols, tile_h, gap, label_h)
+    max_scroll := content_h - palette_h
+    if max_scroll < 0 {
+        max_scroll = 0
+    }
+    clamp_widget_scroll(st, max_scroll)
+    palette := (Rectangle){bounds.x, (float)palette_y, bounds.width,
+                           (float)palette_h}
+    mouse := GetMousePosition()
+    if CheckCollisionPointRec(mouse, palette) {
+        wheel := GetMouseWheelMove()
+        if wheel > 0.0 {
+            st->widget_scroll = st->widget_scroll - row_h
+        } else if wheel < 0.0 {
+            st->widget_scroll = st->widget_scroll + row_h
+        }
+        clamp_widget_scroll(st, max_scroll)
+    }
+    BeginUIClip((int)palette.x, (int)palette.y,
+                (int)palette.width, (int)palette.height)
+    section_y := palette_y - st->widget_scroll
+    DrawUIText("UI", (int)bounds.x + pad, section_y,
+               ScaleUIPx(15), readable_on(GetThemeSurface()))
+    section_y = section_y + label_h
+    display_index := 0
+    for int pass = 0; pass < 2; pass++ {
+        for int i = 0; i < count; i++ {
+            is_ui := widget_is_ui(i)
+            is_2d := widget_is_2d(i)
+            if widget_has_preview(i) == 0 ||
+               (pass == 0 && is_ui == 0) ||
+               (pass == 1 && is_2d == 0) {
+                continue
+            }
+            col := display_index % cols
+            row := display_index / cols
+            x := (int)bounds.x + pad + col * (tile_w + gap)
+            y := section_y + row * row_h
+            display_index = display_index + 1
+            if y + tile_h < palette_y ||
+               y > palette_y + palette_h {
+                continue
+            }
+            draw_item((Rectangle){(float)x, (float)y,
+                                  (float)tile_w, (float)tile_h}, st, i)
+        }
+        if pass == 0 {
+            ui_rows := (display_index + cols - 1) / cols
+            section_y = section_y + ui_rows * row_h
+            if game_count > 0 {
+                DrawUIText("2D", (int)bounds.x + pad, section_y,
+                           ScaleUIPx(15), readable_on(GetThemeSurface()))
+                section_y = section_y + label_h
+            }
+            display_index = 0
+        }
+    }
+    EndUIClip()
+}
+
+draw_drag_overlay :: (st: state.IdeState*) {
+    if st->widget_drag_active == 0 {
+        return
+    }
+    mouse := GetMousePosition()
+    label := widget_label(st->widget_drag_type)
+    w := MeasureUIText(label, ScaleUIPx(13)) + ScaleUIPx(24)
+    h := ScaleUIPx(28)
+    x := (int)mouse.x + ScaleUIPx(12)
+    y := (int)mouse.y + ScaleUIPx(12)
+    DrawRectangle(x, y, w, h, GetThemeButtonHover())
+    DrawRectangleLines(x, y, w, h, GetThemeLink())
+    DrawUIText(label, x + ScaleUIPx(10), y + ScaleUIPx(7),
+               ScaleUIPx(13), readable_on(GetThemeButtonHover()))
+}

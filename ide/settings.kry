@@ -1,0 +1,184 @@
+#module "ide.settings"
+#import "kryon.h"
+state :: #import "ide/state"
+
+#enum {
+    SETTINGS_TAB_APPEARANCE,
+    SETTINGS_TAB_EDITOR,
+    SETTINGS_TAB_PREVIEW,
+    SETTINGS_TAB_PANES,
+    SETTINGS_TAB_EXTENSIONS,
+}
+
+krait_settings_save :: (st: state.IdeState*) -> int #extern
+
+theme_settings_state :: UIThemeSettingsState #global
+
+draw_settings_tab :: (x: int, y: int, w: int, label: const char*,
+                      tab: int, st: state.IdeState*) -> int {
+    style := st->settings_tab == tab ? UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB
+    if DrawUIGenericButton(x, y, w, ScaleUIPx(28), label, style, 0, NULL) {
+        st->settings_tab = tab
+        st->settings_scroll = 0
+        krait_settings_save(st)
+        return 1
+    }
+    return 0
+}
+
+draw_settings_note :: (x: int, y: int, w: int, title: const char*,
+                       body: const char*) -> int {
+    font := GetUIFontSize()
+    small := GetUISmallFontSize()
+    DrawUIText(title, x, y, font, GetThemeText())
+    y = y + font + ScaleUIPx(8)
+    DrawUIText(body, x, y, small, GetThemeIcon())
+    y = y + small + ScaleUIPx(18)
+    DrawLine(x, y, x + w, y, GetThemeButton())
+    return y + ScaleUIPx(16)
+}
+
+apply_settings_theme :: (st: state.IdeState*) {
+    if st->theme_source != THEME_SOURCE_SYSTEM {
+        st->theme_source = THEME_SOURCE_APP
+    }
+    if st->theme_mode < THEME_MODE_SYSTEM || st->theme_mode > THEME_MODE_DARK {
+        st->theme_mode = THEME_MODE_DARK
+    }
+    if st->theme_id < 0 || st->theme_id >= THEME_COUNT {
+        st->theme_id = THEME_MONO
+    }
+    if st->theme_style < THEME_STYLE_SYSTEM || st->theme_style > THEME_STYLE_MATERIAL {
+        st->theme_style = THEME_STYLE_SYSTEM
+    }
+    SetThemeSource((ThemeSource)st->theme_source)
+    SetThemeMode((ThemeMode)st->theme_mode)
+    SetThemeStyle((ThemeStyle)st->theme_style)
+    SetCurrentTheme(st->theme_id, GetEffectiveThemeDarkMode() ? 1 : 0)
+    ApplyCurrentUITheme()
+}
+
+draw_appearance :: (body: Rectangle, st: state.IdeState*) {
+    x := (int)body.x + ScaleUIPx(24)
+    y := (int)body.y + ScaleUIPx(22)
+    w := (int)body.width - ScaleUIPx(48)
+    if w > ScaleUIPx(420) {
+        w = ScaleUIPx(420)
+    }
+    DrawUIText("Appearance", x, y, ScaleUIPx(20), GetThemeText())
+    y = y + ScaleUIPx(34)
+
+    system_label: [160] char
+    if IsSystemThemeAvailable() {
+        snprintf(system_label, sizeof(system_label), "System: %s",
+                 GetSystemThemeNameCached())
+    } else {
+        snprintf(system_label, sizeof(system_label), "%s",
+                 "System theme unavailable")
+    }
+
+    settings := (ThemeSettingsProps){
+        9000, x, y, w,
+        &st->theme_source, &st->theme_mode, &st->theme_id, &st->theme_style,
+        IsSystemThemeAvailable() ? 1 : 0, 1,
+        "Theme", "Krait", "System", "Mode",
+        "Follow system", "Light", "Dark", "Palette",
+        "Style", "System", "Retro", "Material", "Fluent", "Adwaita",
+        "Liquid Glass", "Aero", system_label
+    }
+    DrawUIThemeSettings(settings, &theme_settings_state)
+    result := DrawUIThemeSettingsMenus(settings, &theme_settings_state)
+    if result.changed {
+        apply_settings_theme(st)
+        if krait_settings_save(st) {
+            state.project_set_status(st, "Settings saved")
+        } else {
+            state.project_set_status(st, "Could not save settings")
+        }
+    }
+}
+
+draw_extensions :: (body: Rectangle, st: state.IdeState*) {
+    x := (int)body.x + ScaleUIPx(24)
+    y := (int)body.y + ScaleUIPx(22)
+    w := (int)body.width - ScaleUIPx(48)
+    if w < ScaleUIPx(220) {
+        w = ScaleUIPx(220)
+    }
+    DrawUIText("Extensions", x, y, ScaleUIPx(20), GetThemeText())
+    y = y + ScaleUIPx(38)
+
+    for int i = 0; i < st->module_count; i++ {
+        mod := &st->modules[i]
+        row_h := ScaleUIPx(96)
+        DrawRectangle(x, y, w, row_h, GetThemeSurface())
+        DrawRectangleLines(x, y, w, row_h, GetThemeButton())
+        DrawUIText(mod->name, x + ScaleUIPx(14), y + ScaleUIPx(12),
+                   ScaleUIPx(16), GetThemeText())
+        DrawUIText(mod->description, x + ScaleUIPx(14), y + ScaleUIPx(38),
+                   GetUISmallFontSize(), GetThemeIcon())
+        toggle_x := x + w - ScaleUIPx(150)
+        toggle_y := y + ScaleUIPx(56)
+        if DrawUIToggleSwitch(toggle_x, toggle_y, ScaleUIPx(128),
+                              ScaleUIPx(26), &mod->enabled,
+                              "Off", "On") {
+            mod->enabled = mod->enabled != 0 ? 1 : 0
+            st->preview_dirty = 0
+            st->preview_host_ready = 0
+            if krait_settings_save(st) {
+                state.project_set_status(st, "Extension setting saved")
+            } else {
+                state.project_set_status(st, "Could not save settings")
+            }
+        }
+        y = y + row_h + ScaleUIPx(12)
+    }
+}
+
+draw_settings :: (bounds: Rectangle, st: state.IdeState*) {
+    DrawRectangleRec(bounds, GetThemeBackground())
+    rail_w := ScaleUIPx(160)
+    if bounds.width < (float)ScaleUIPx(560) {
+        rail_w = ScaleUIPx(126)
+    }
+    rail := (Rectangle){bounds.x, bounds.y, (float)rail_w, bounds.height}
+    body := (Rectangle){bounds.x + (float)rail_w, bounds.y,
+                        bounds.width - (float)rail_w, bounds.height}
+    DrawRectangleRec(rail, GetThemeSurface())
+    DrawLine((int)(rail.x + rail.width), (int)rail.y,
+             (int)(rail.x + rail.width), (int)(rail.y + rail.height),
+             GetThemeButton())
+
+    x := (int)rail.x + ScaleUIPx(10)
+    y := (int)rail.y + ScaleUIPx(12)
+    tab_w := rail_w - ScaleUIPx(20)
+    draw_settings_tab(x, y, tab_w, "Appearance", SETTINGS_TAB_APPEARANCE, st)
+    y = y + ScaleUIPx(34)
+    draw_settings_tab(x, y, tab_w, "Editor", SETTINGS_TAB_EDITOR, st)
+    y = y + ScaleUIPx(34)
+    draw_settings_tab(x, y, tab_w, "Preview", SETTINGS_TAB_PREVIEW, st)
+    y = y + ScaleUIPx(34)
+    draw_settings_tab(x, y, tab_w, "Panes", SETTINGS_TAB_PANES, st)
+    y = y + ScaleUIPx(34)
+    draw_settings_tab(x, y, tab_w, "Extensions", SETTINGS_TAB_EXTENSIONS, st)
+
+    if st->settings_tab == SETTINGS_TAB_APPEARANCE {
+        draw_appearance(body, st)
+    } else if st->settings_tab == SETTINGS_TAB_EXTENSIONS {
+        draw_extensions(body, st)
+    } else {
+        bx := (int)body.x + ScaleUIPx(24)
+        by := (int)body.y + ScaleUIPx(22)
+        bw := (int)body.width - ScaleUIPx(48)
+        if st->settings_tab == SETTINGS_TAB_EDITOR {
+            draw_settings_note(bx, by, bw, "Editor",
+                               "Font size, tab width, autosave, and format behavior belong here.")
+        } else if st->settings_tab == SETTINGS_TAB_PREVIEW {
+            draw_settings_note(bx, by, bw, "Preview",
+                               "Live preview reload, build command, scaling, and diagnostics belong here.")
+        } else {
+            draw_settings_note(bx, by, bw, "Panes",
+                               "Default layout, pane visibility, and reset controls belong here.")
+        }
+    }
+}

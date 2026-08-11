@@ -1,0 +1,92 @@
+#module "modules.kryon.module"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+
+id :: () -> const char* {
+    return "kryon"
+}
+
+name :: () -> const char* {
+    return "Kryon"
+}
+
+description :: () -> const char* {
+    return "Kryon language support, live canvas, and diagnostics."
+}
+
+enabled_by_default :: () -> int {
+    return 1
+}
+
+has_preview :: () -> int {
+    return 1
+}
+
+has_project_templates :: () -> int {
+    return 1
+}
+
+is_kry_file :: (name: const char*) -> int {
+    len := strlen(name)
+    return len >= 4 && strcmp(name + len - 4, ".kry") == 0
+}
+
+file_affects_preview :: (name: const char*) -> int {
+    len := strlen(name)
+    if is_kry_file(name) != 0 {
+        return 1
+    }
+    if len >= 2 && strcmp(name + len - 2, ".c") == 0 {
+        return 1
+    }
+    if len >= 2 && strcmp(name + len - 2, ".h") == 0 {
+        return 1
+    }
+    if len >= 3 && strcmp(name + len - 3, ".mk") == 0 {
+        return 1
+    }
+    if strcmp(name, "Makefile") == 0 || strcmp(name, "makefile") == 0 ||
+       strcmp(name, "project.kryon") == 0 {
+        return 1
+    }
+    return 0
+}
+
+file_syntax :: (name: const char*) -> UISyntaxMode {
+    if is_kry_file(name) != 0 {
+        return UI_SYNTAX_KRY
+    }
+    return UI_SYNTAX_NONE
+}
+
+startup_file_priority :: (name: const char*) -> int {
+    if strcmp(name, "main.kry") == 0 {
+        return 100
+    }
+    if is_kry_file(name) != 0 {
+        return 50
+    }
+    return 0
+}
+
+register :: (st: state.IdeState*) -> int {
+    if st == NULL || st->module_count >= state.IDE_MAX_MODULES {
+        return -1
+    }
+    index := st->module_count
+    mod := &st->modules[index]
+    snprintf(mod->id, sizeof(mod->id), "%s", id())
+    snprintf(mod->name, sizeof(mod->name), "%s", name())
+    snprintf(mod->description, sizeof(mod->description), "%s", description())
+    mod->default_enabled = enabled_by_default()
+    mod->enabled = mod->default_enabled
+    mod->has_preview = has_preview()
+    mod->has_project_templates = has_project_templates()
+    mod->file_syntax = modules_kryon_module_file_syntax
+    mod->file_affects_preview = modules_kryon_module_file_affects_preview
+    mod->preview_source_file = modules_kryon_module_is_kry_file
+    mod->startup_file_priority = modules_kryon_module_startup_file_priority
+    st->module_count = st->module_count + 1
+    return index
+}

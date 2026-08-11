@@ -1,0 +1,170 @@
+#module "ide.screens"
+#import "kryon.h"
+state :: #import "ide/state"
+ed :: #import "ide/editor"
+tree :: #import "ide/tree"
+
+krait_scan_screens :: (root: const char*, out: state.ScreenEntry*, cap: int) -> int #extern
+
+#private
+
+refresh_screens :: (st: state.IdeState*) {
+    if st->project.loaded == 0 {
+        st->screen_count = 0
+        st->active_screen = -1
+        return
+    }
+    st->screen_count = krait_scan_screens(st->project.path, &st->screens[0],
+                                          state.IDE_MAX_SCREENS)
+    if st->active_screen >= st->screen_count {
+        st->active_screen = st->screen_count - 1
+    }
+    if st->active_screen < 0 && st->screen_count > 0 {
+        st->active_screen = 0
+    }
+}
+
+open_screen_mode :: (st: state.IdeState*, index: int, preview: int) {
+    if index < 0 || index >= st->screen_count {
+        return
+    }
+    st->active_screen = index
+    st->selected_screen = st->screens[index].id
+    if preview != 0 {
+        ed.editor_preview(st, st->screens[index].path)
+    } else {
+        ed.editor_open(st, st->screens[index].path)
+    }
+    state.project_set_status(st, st->screens[index].name)
+}
+
+open_screen :: (st: state.IdeState*, index: int) {
+    open_screen_mode(st, index, 0)
+}
+
+preview_or_open_screen :: (st: state.IdeState*, index: int) {
+    id: int
+    now: float
+
+    if index < 0 || index >= st->screen_count {
+        return
+    }
+    id = st->screens[index].id
+    now = GetTime()
+    if st->last_screen_click_id == id &&
+       now - st->last_screen_click_time < 0.45 {
+        open_screen_mode(st, index, 0)
+        st->last_screen_click_id = 0
+        st->last_screen_click_time = 0.0
+    } else {
+        open_screen_mode(st, index, 1)
+        st->last_screen_click_id = id
+        st->last_screen_click_time = now
+    }
+}
+
+draw_screen_list :: (bounds: Rectangle, st: state.IdeState*) {
+    DrawRectangleRec(bounds, GetThemeSurface())
+    if st->screen_count <= 0 {
+        DrawUIText("No scenes", (int)bounds.x + ScaleUIPx(12),
+                   (int)bounds.y + ScaleUIPx(12), ScaleUIPx(14),
+                   GetThemeText())
+        return
+    }
+    if st->selected_screen == 0 && st->active_screen >= 0 &&
+       st->active_screen < st->screen_count {
+        st->selected_screen = st->screens[st->active_screen].id
+    }
+    row_h := ScaleUIPx(42)
+    max_scroll := st->screen_count * row_h - (int)bounds.height
+    if max_scroll < 0 {
+        max_scroll = 0
+    }
+    if st->screens_scroll > max_scroll {
+        st->screens_scroll = max_scroll
+    }
+    if st->screens_scroll < 0 {
+        st->screens_scroll = 0
+    }
+    mouse := GetMousePosition()
+    if CheckCollisionPointRec(mouse, bounds) {
+        wheel := GetMouseWheelMove()
+        if wheel > 0.0 {
+            st->screens_scroll = st->screens_scroll - row_h
+        } else if wheel < 0.0 {
+            st->screens_scroll = st->screens_scroll + row_h
+        }
+        if st->screens_scroll < 0 {
+            st->screens_scroll = 0
+        }
+        if st->screens_scroll > max_scroll {
+            st->screens_scroll = max_scroll
+        }
+    }
+    BeginUIClip((int)bounds.x, (int)bounds.y,
+                (int)bounds.width, (int)bounds.height)
+    for int i = 0; i < st->screen_count; i++ {
+        y := (int)bounds.y + i * row_h - st->screens_scroll
+        if y + row_h < (int)bounds.y ||
+           y > (int)(bounds.y + bounds.height) {
+            continue
+        }
+        row := (Rectangle){bounds.x, (float)y, bounds.width, (float)row_h}
+        hot := CheckCollisionPointRec(mouse, row)
+        selected := st->selected_screen == st->screens[i].id
+        if selected {
+            DrawRectangleRec(row, GetThemeButton())
+        } else if hot {
+            DrawRectangleRec(row, GetThemeButtonHover())
+        }
+        if hot {
+            MarkUIClickable()
+        }
+        DrawUIText(st->screens[i].name, (int)row.x + ScaleUIPx(12),
+                   (int)row.y + ScaleUIPx(7), ScaleUIPx(14),
+                   GetThemeText())
+        DrawUIText(st->screens[i].path, (int)row.x + ScaleUIPx(12),
+                   (int)row.y + ScaleUIPx(25), ScaleUIPx(12),
+                   GetThemeText())
+        if hot && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
+            preview_or_open_screen(st, i)
+        }
+    }
+    EndUIClip()
+}
+
+#global
+
+refresh :: (st: state.IdeState*) {
+    refresh_screens(st)
+}
+
+draw_screens :: (bounds: Rectangle, st: state.IdeState*) {
+    draw_screen_list(bounds, st)
+}
+
+draw_navigator :: (bounds: Rectangle, st: state.IdeState*) {
+    tab_h := ScaleUIPx(30)
+    x := (int)bounds.x + ScaleUIPx(6)
+    y := (int)bounds.y + ScaleUIPx(4)
+    if DrawUIGenericButton(x, y, ScaleUIPx(64), ScaleUIPx(22), "Files",
+                           st->navigator_tab == state.IDE_NAV_FILES ?
+                           UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB,
+                           0, NULL) {
+        st->navigator_tab = state.IDE_NAV_FILES
+    }
+    x = x + ScaleUIPx(68)
+    if DrawUIGenericButton(x, y, ScaleUIPx(86), ScaleUIPx(22), "Scenes",
+                           st->navigator_tab == state.IDE_NAV_SCREENS ?
+                           UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB,
+                           0, NULL) {
+        st->navigator_tab = state.IDE_NAV_SCREENS
+    }
+    body := (Rectangle){bounds.x, bounds.y + (float)tab_h,
+                        bounds.width, bounds.height - (float)tab_h}
+    if st->navigator_tab == state.IDE_NAV_FILES {
+        tree.draw_tree(body, st)
+    } else {
+        draw_screen_list(body, st)
+    }
+}

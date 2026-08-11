@@ -80,10 +80,17 @@ problems_parse :: (st: state.IdeState*, output: const char*) {
 }
 
 draw_problems :: (bounds: Rectangle, st: state.IdeState*) {
-    DrawRectangleRec(bounds, DarkenUIColor(GetThemeBackground(), 4))
+    DrawRectangleRec(bounds, GetThemeSurface())
     y := (int)bounds.y + ScaleUIPx(6)
+    copy_w := ScaleUIPx(58)
+    gap := ScaleUIPx(8)
+    text_x := (int)bounds.x + ScaleUIPx(10)
+    text_w := (int)bounds.width - ScaleUIPx(20) - copy_w - gap
+    if text_w < ScaleUIPx(80) {
+        text_w = ScaleUIPx(80)
+    }
     if st->diagnostic_count == 0 {
-        DrawUIText("No problems", (int)bounds.x + ScaleUIPx(10), y,
+        DrawUIText("No problems", text_x, y,
                    ScaleUIPx(13), GetThemeText())
         return
     }
@@ -92,8 +99,20 @@ draw_problems :: (bounds: Rectangle, st: state.IdeState*) {
         label: [1100] char
         snprintf(label, sizeof(label), "%s:%d: %s",
                  diag->path, diag->line, diag->message)
-        DrawUIText(label, (int)bounds.x + ScaleUIPx(10), y,
-                   ScaleUIPx(13), GetThemeText())
+        row := (Rectangle){bounds.x, (float)y, bounds.width, (float)ScaleUIPx(18)}
+        if CheckCollisionPointRec(GetMousePosition(), row) {
+            DrawRectangle((int)bounds.x, y, (int)bounds.width, ScaleUIPx(18),
+                          GetThemeButtonHover())
+        }
+        BeginUIClip(text_x, y, text_w, ScaleUIPx(18))
+        DrawUIText(label, text_x, y, ScaleUIPx(13), GetThemeText())
+        EndUIClip()
+        if DrawUIGenericButton((int)(bounds.x + bounds.width) - ScaleUIPx(10) - copy_w,
+                               y - ScaleUIPx(2), copy_w, ScaleUIPx(20),
+                               "Copy", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            SetUIClipboardTextValue(label)
+            state.project_set_status(st, "Problem copied")
+        }
         y = y + ScaleUIPx(18)
         if y > (int)(bounds.y + bounds.height) {
             break

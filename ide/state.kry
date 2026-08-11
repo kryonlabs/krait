@@ -8,11 +8,18 @@
 }
 
 #enum {
-    IDE_BOTTOM_NONE,
-    IDE_BOTTOM_PROBLEMS,
-    IDE_BOTTOM_OUTPUT,
-    IDE_BOTTOM_CONSOLE,
-    IDE_BOTTOM_SEARCH,
+    IDE_PANE_VIEW_EXPLORER,
+    IDE_PANE_VIEW_EDITOR,
+    IDE_PANE_VIEW_PREVIEW,
+    IDE_PANE_VIEW_PROBLEMS,
+    IDE_PANE_VIEW_FILES,
+    IDE_PANE_VIEW_CONSOLE,
+    IDE_PANE_VIEW_SEARCH,
+    IDE_PANE_VIEW_WIDGETS,
+    IDE_PANE_VIEW_PROJECT_META,
+    IDE_PANE_VIEW_SETTINGS,
+    IDE_PANE_VIEW_HIERARCHY,
+    IDE_PANE_VIEW_INSPECTOR,
 }
 
 #enum {
@@ -23,18 +30,9 @@
 }
 
 #enum {
-    IDE_PANE_VIEW_EXPLORER,
-    IDE_PANE_VIEW_EDITOR,
-    IDE_PANE_VIEW_PREVIEW,
-    IDE_PANE_VIEW_PROBLEMS,
-    IDE_PANE_VIEW_OUTPUT,
-    IDE_PANE_VIEW_CONSOLE,
-    IDE_PANE_VIEW_SEARCH,
-}
-
-#enum {
     IDE_VIEW_START,
     IDE_VIEW_PROJECT,
+    IDE_VIEW_SETTINGS,
 }
 
 #enum {
@@ -46,6 +44,39 @@
 #enum {
     IDE_PREVIEW_SCALE_FIT,
     IDE_PREVIEW_SCALE_CUSTOM,
+}
+
+#enum {
+    IDE_PANE_NODE_EMPTY,
+    IDE_PANE_NODE_LEAF,
+    IDE_PANE_NODE_SPLIT,
+}
+
+#enum {
+    IDE_PANE_SPLIT_HORIZONTAL,
+    IDE_PANE_SPLIT_VERTICAL,
+}
+
+#enum {
+    IDE_PANE_DROP_NONE,
+    IDE_PANE_DROP_CENTER,
+    IDE_PANE_DROP_LEFT,
+    IDE_PANE_DROP_RIGHT,
+    IDE_PANE_DROP_TOP,
+    IDE_PANE_DROP_BOTTOM,
+}
+
+#enum {
+    IDE_MAX_PANE_NODES = 24
+    IDE_MAX_PANE_GROUPS = 12
+    IDE_MAX_PANE_TABS = 8
+    IDE_MAX_MODULES = 16
+    IDE_MAX_SCREENS = 128
+}
+
+#enum {
+    IDE_NAV_SCREENS,
+    IDE_NAV_FILES,
 }
 
 Diagnostic :: struct {
@@ -69,6 +100,14 @@ FileTreeEntry :: struct {
     id: int
 }
 
+ScreenEntry :: struct {
+    name: [128] char
+    path: [1024] char
+    line: int
+    insert_offset: int
+    id: int
+}
+
 Project :: struct {
     loaded: int
     path: [1024] char
@@ -76,9 +115,44 @@ Project :: struct {
 }
 
 PaneGroup :: struct {
-    tabs: [8] int
+    used: int
+    tabs: [IDE_MAX_PANE_TABS] int
     tab_count: int
     active: int
+}
+
+PaneNode :: struct {
+    kind: int
+    split_axis: int
+    first: int
+    second: int
+    group: int
+    ratio: float
+}
+
+ModuleFileSyntaxFn :: UISyntaxMode (*)(const char*) #type
+ModuleFilePredicateFn :: int (*)(const char*) #type
+ModuleFilePriorityFn :: int (*)(const char*) #type
+
+ModuleState :: struct {
+    id: [64] char
+    name: [128] char
+    description: [256] char
+    enabled: int
+    default_enabled: int
+    has_preview: int
+    has_project_templates: int
+    file_syntax: ModuleFileSyntaxFn
+    file_affects_preview: ModuleFilePredicateFn
+    preview_source_file: ModuleFilePredicateFn
+    startup_file_priority: ModuleFilePriorityFn
+}
+
+EditorHistoryEntry :: struct {
+    text: char*
+    cursor: int
+    scroll: int
+    revision: int
 }
 
 OpenFile :: struct {
@@ -90,29 +164,39 @@ OpenFile :: struct {
     focused: int
     scroll: int
     dirty: int
-    undo_head: int
+    preview: int
+    revision: int
+    saved_revision: int
+    snapshot_text: char*
+    snapshot_cursor: int
+    snapshot_scroll: int
+    snapshot_revision: int
+    snapshot_valid: int
+    undo: [64] EditorHistoryEntry
     undo_count: int
+    redo: [64] EditorHistoryEntry
     redo_count: int
 }
 
 IdeState :: struct {
     view: int
     layout_mode: int
-    bottom_panel: int
     panes_initialized: int
-    pane_left: PaneGroup
-    pane_center: PaneGroup
-    pane_right: PaneGroup
-    pane_bottom: PaneGroup
+    pane_nodes: [IDE_MAX_PANE_NODES] PaneNode
+    pane_groups: [IDE_MAX_PANE_GROUPS] PaneGroup
+    root_node: int
+    active_group: int
+    resizing_node: int
     left_width: int
     right_width: int
     bottom_height: int
     resizing_pane: int
-    active_pane: int
     layout_dirty: int
     drag_view: int
-    drag_source_pane: int
+    drag_source_group: int
     drag_active: int
+    drag_drop_group: int
+    drag_drop_zone: int
     status: [256] char
     project: Project
     dialog_mode: int
@@ -124,30 +208,47 @@ IdeState :: struct {
     expanded_entries: [256] int
     expanded_count: int
     tree_scroll: int
+    last_file_click_id: int
+    last_file_click_time: float
+    # screens / visual editor
+    navigator_tab: int
+    screens: [IDE_MAX_SCREENS] ScreenEntry
+    screen_count: int
+    selected_screen: int
+    activated_screen: int
+    active_screen: int
+    screens_scroll: int
+    last_screen_click_id: int
+    last_screen_click_time: float
+    widget_drag_active: int
+    widget_drag_type: int
+    widget_scroll: int
+    scene_node_count: int
+    selected_scene_node: int
+    scene_scroll: int
     # open files / tabs
     open_files: [12] OpenFile
     open_count: int
     active_open: int
+    source_tab_scroll: int
     # find bar
     find_visible: int
     find_text: [256] char
     find_cursor: int
     find_focused: int
     # preview / build
-    host_library: void*
-    host: AppHost*
-    build_proc: KryProcess
-    build_running: int
     preview_texture: RenderTexture2D
     preview_texture_w: int
     preview_texture_h: int
+    preview_canvas_w: int
+    preview_canvas_h: int
     preview_zoom: float
     preview_pan_x: float
     preview_pan_y: float
     preview_scale_mode: int
+    preview_selected_path: [1024] char
+    preview_has_selection: int
     output: [65536] char
-    source_mtime: long
-    last_reload_check: float
     preview_dirty: int
     last_edit_time: float
     preview_host_ready: int
@@ -169,9 +270,15 @@ IdeState :: struct {
     selected_search: int
     search_scroll: int
     quick_open_mode: int
-    # bottom panel
-    bottom_visible: int
-    bottom_tab: int
+    # settings
+    theme_source: int
+    theme_mode: int
+    theme_id: int
+    theme_style: int
+    settings_tab: int
+    settings_scroll: int
+    modules: [IDE_MAX_MODULES] ModuleState
+    module_count: int
 }
 
 project_set_status :: (st: IdeState*, msg: const char*) {

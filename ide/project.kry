@@ -3,6 +3,7 @@
 state :: #import "ide/state"
 ed :: #import "ide/editor"
 tree :: #import "ide/tree"
+screens :: #import "ide/screens"
 
 kry_fs_realpath :: (path: const char*, out: char*, cap: int) -> int #extern
 kry_fs_exists :: (path: const char*) -> int #extern
@@ -81,6 +82,12 @@ project_open :: (st: state.IdeState*, path: const char*) -> int {
     st->activated_entry = 0
     st->expanded_count = 0
     st->tree_scroll = 0
+    st->preview_selected_path[0] = 0
+    st->preview_has_selection = 0
+    st->active_screen = -1
+    st->selected_screen = 0
+    st->activated_screen = 0
+    screens.refresh(st)
     krait_recent_add(project_path)
     if selected_file[0] != 0 {
         ed.editor_open(st, selected_file)

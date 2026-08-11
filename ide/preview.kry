@@ -3,117 +3,77 @@
 #import <string.h>
 state :: #import "ide/state"
 ed :: #import "ide/editor"
+mods :: #import "ide/modules"
+screens :: #import "ide/screens"
 
-kry_dylib_load :: (path: const char*) -> void* #extern
-kry_dylib_sym :: (handle: void*, name: const char*) -> void* #extern
-kry_dylib_close :: (handle: void*) #extern
-kry_process_spawn :: (p: KryProcess*, command: const char*, cwd: const char*) -> int #extern
-kry_process_read_poll :: (p: KryProcess*, buf: char*, cap: int) -> int #extern
-kry_process_wait_poll :: (p: KryProcess*) -> int #extern
-kry_process_kill :: (p: KryProcess*) #extern
-kry_process_close :: (p: KryProcess*) #extern
-krait_project_source_mtime :: (path: const char*) -> long #extern
-
-CreateHostFn :: AppHost* (*)(int, const char*) #type
-DestroyHostFn :: void (*)(AppHost*) #type
+krait_live_draw_canvas :: (root: const char*, rel_path: const char*,
+                           w: int, h: int,
+                           status: char*, status_size: int) -> int #extern
+krait_preview_build :: (st: state.IdeState*, status: char*, status_size: int) -> int #extern
+krait_preview_draw :: (st: state.IdeState*, rel_path: const char*,
+                       viewport: Rectangle, status: char*, status_size: int) -> int #extern
+krait_preview_unload :: () #extern
+krait_insert_widget :: (root: const char*, rel_path: const char*, insert_offset: int,
+                        widget_type: int, x: int, y: int,
+                        status: char*, status_size: int) -> int #extern
+krait_scene_scan :: (root: const char*, rel_path: const char*) -> int #extern
+krait_scene_bounds :: (index: int) -> Rectangle #extern
+krait_scene_label :: (index: int) -> const char* #extern
+krait_project_preview_size :: (root: const char*, w: int*, h: int*) -> int #extern
 
 #global
 
 #private
 
-build_command :: (dst: char*, dst_size: int) {
-    snprintf(dst, dst_size, "%s", "make kryon-host")
-}
-
-preview_unload_host :: (st: state.IdeState*) {
-    if st->host != NULL {
-        lib := st->host_library
-        # destroy_host is resolved at load time; we can't easily re-resolve here,
-        # so call DrawAppScreen's sibling via the stored library. For simplicity,
-        # leak the host on unload (rebuild creates a fresh one).
-        st->host = NULL
-        if lib != NULL {
-            kry_dylib_close(lib)
-            st->host_library = NULL
-        }
-    }
-}
-
-preview_load_host :: (st: state.IdeState*) -> int {
-    path: [1024] char
-    snprintf(path, sizeof(path), "%s/build/kryon/app_host.so", st->project.path)
-    lib := kry_dylib_load(path)
-    if lib == NULL {
-        state.project_set_status(st, "No app host built")
-        return 0
-    }
-    create_raw := kry_dylib_sym(lib, "CreateAppHost")
-    destroy_raw := kry_dylib_sym(lib, "DestroyAppHost")
-    if create_raw == NULL || destroy_raw == NULL {
-        kry_dylib_close(lib)
-        state.project_set_status(st, "App host missing entry symbols")
-        return 0
-    }
-    create_host := (CreateHostFn)create_raw
-    preview_unload_host(st)
-    st->host_library = lib
-    st->host = create_host(APP_HOST_ABI_VERSION, st->project.path)
-    if st->host == NULL {
-        state.project_set_status(st, "CreateAppHost failed")
-        return 0
-    }
-    state.project_set_status(st, "Preview loaded")
-    return 1
-}
-
-preview_build_start :: (st: state.IdeState*) {
-    if st->build_running {
+preview_canvas_size :: (st: state.IdeState*, bounds: Rectangle, w: int*, h: int*) {
+    if st->project.loaded != 0 &&
+       krait_project_preview_size(st->project.path, w, h) != 0 {
         return
     }
-    cmd: [512] char
-    build_command(cmd, sizeof(cmd))
-    if kry_process_spawn(&st->build_proc, cmd, st->project.path) {
-        st->build_running = 1
-        st->output[0] = 0
-        state.project_set_status(st, "Building...")
+    out_w := (int)bounds.width
+    out_h := (int)bounds.height
+    if out_w <= 0 {
+        out_w = 390
     }
+    if out_h <= 0 {
+        out_h = 844
+    }
+    if out_w > 2048 {
+        out_w = 2048
+    }
+    if out_h > 2048 {
+        out_h = 2048
+    }
+    if out_w < 160 {
+        out_w = 160
+    }
+    if out_h < 120 {
+        out_h = 120
+    }
+    w[0] = out_w
+    h[0] = out_h
 }
 
-preview_build_poll :: (st: state.IdeState*) {
-    if !st->build_running {
+preview_ensure_canvas :: (st: state.IdeState*, content: Rectangle, w: int*, h: int*) {
+    preview_canvas_size(st, content, w, h)
+    if st->preview_canvas_w == w[0] && st->preview_canvas_h == h[0] {
         return
     }
-    buf: [4096] char
-    drained := 0
-    while drained == 0 {
-        n := kry_process_read_poll(&st->build_proc, buf, sizeof(buf))
-        if n <= 0 {
-            drained = 1
-        } else {
-            cur := strlen(st->output)
-            room := sizeof(st->output) - cur - 1
-            if room > 0 {
-                strncat(st->output, buf, room)
-            }
-        }
-    }
-    if kry_process_wait_poll(&st->build_proc) {
-        st->build_running = 0
-        kry_process_close(&st->build_proc)
-        if st->build_proc.exit_status == 0 {
-            preview_load_host(st)
-        } else {
-            state.project_set_status(st, "Build failed")
-        }
+    st->preview_canvas_w = w[0]
+    st->preview_canvas_h = h[0]
+    if st->preview_scale_mode == state.IDE_PREVIEW_SCALE_FIT {
+        st->preview_pan_x = 0.0
+        st->preview_pan_y = 0.0
     }
 }
 
 preview_maybe_reload :: (st: state.IdeState*) {
-    now := GetTime()
-    if st->build_running {
+    if mods.has_preview_provider(st) == 0 {
+        st->preview_dirty = 0
         return
     }
     if st->preview_dirty != 0 {
+        now := GetTime()
         if now - st->last_edit_time < 0.8 {
             return
         }
@@ -122,19 +82,17 @@ preview_maybe_reload :: (st: state.IdeState*) {
             st->preview_dirty = 0
             return
         }
+        status: [512] char
+        if krait_preview_build(st, status, sizeof(status)) == 0 {
+            state.project_set_status(st, status)
+            st->preview_host_ready = 0
+            st->preview_dirty = 0
+            return
+        }
         st->preview_dirty = 0
-        st->source_mtime = krait_project_source_mtime(st->project.path)
-        preview_build_start(st)
+        st->preview_host_ready = 1
+        state.project_set_status(st, status)
         return
-    }
-    if now - st->last_reload_check < 1.0 {
-        return
-    }
-    st->last_reload_check = now
-    mtime := krait_project_source_mtime(st->project.path)
-    if mtime > st->source_mtime {
-        st->source_mtime = mtime
-        preview_build_start(st)
     }
 }
 
@@ -169,6 +127,86 @@ preview_set_zoom :: (st: state.IdeState*, zoom: float) {
     st->preview_scale_mode = state.IDE_PREVIEW_SCALE_CUSTOM
     st->preview_zoom = zoom
     state.project_set_status(st, "Preview zoom")
+}
+
+canvas_insert_widget :: (st: state.IdeState*, dst: Rectangle, scale: float) {
+    if st->widget_drag_active == 0 {
+        return
+    }
+    mouse := GetMousePosition()
+    if CheckCollisionPointRec(mouse, dst) {
+        MarkUICursor(MOUSE_CURSOR_CROSSHAIR)
+        DrawRectangleLinesEx(dst, 2.0, GetThemeLink())
+    }
+    if IsMouseButtonDown(MOUSE_BUTTON_LEFT) {
+        return
+    }
+    if !CheckCollisionPointRec(mouse, dst) {
+        return
+    }
+    screens.refresh(st)
+    if st->active_screen < 0 || st->active_screen >= st->screen_count {
+        state.project_set_status(st, "Select a scene first")
+        return
+    }
+    if scale <= 0.0 {
+        scale = 1.0
+    }
+    cx := (int)((mouse.x - dst.x) / scale)
+    cy := (int)((mouse.y - dst.y) / scale)
+    if cx < 0 {
+        cx = 0
+    }
+    if cy < 0 {
+        cy = 0
+    }
+    scr := &st->screens[st->active_screen]
+    status: [256] char
+    if krait_insert_widget(st->project.path, scr->path, scr->insert_offset,
+                           st->widget_drag_type, cx, cy,
+                           status, sizeof(status)) != 0 {
+        ed.editor_reload_if_open(st, scr->path)
+        st->preview_dirty = 1
+        st->last_edit_time = GetTime()
+        screens.refresh(st)
+    }
+    state.project_set_status(st, status)
+}
+
+canvas_select_node :: (st: state.IdeState*, rel_path: const char*,
+                       dst: Rectangle, scale: float) {
+    if st->widget_drag_active != 0 {
+        return
+    }
+    if scale <= 0.0 {
+        return
+    }
+    mouse := GetMousePosition()
+    if !CheckCollisionPointRec(mouse, dst) {
+        return
+    }
+    if !IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
+        return
+    }
+    cx := (mouse.x - dst.x) / scale
+    cy := (mouse.y - dst.y) / scale
+    count := krait_scene_scan(st->project.path, rel_path)
+    selected := -1
+    for int i = count - 1; i >= 0; i-- {
+        node_bounds := krait_scene_bounds(i)
+        if node_bounds.width <= 0.0 || node_bounds.height <= 0.0 {
+            continue
+        }
+        if CheckCollisionPointRec((Vector2){cx, cy}, node_bounds) {
+            selected = i
+            break
+        }
+    }
+    st->scene_node_count = count
+    if selected >= 0 {
+        st->selected_scene_node = selected
+        state.project_set_status(st, krait_scene_label(selected))
+    }
 }
 
 draw_preview_toolbar :: (bounds: Rectangle, st: state.IdeState*) {
@@ -206,39 +244,86 @@ draw_preview_toolbar :: (bounds: Rectangle, st: state.IdeState*) {
                            UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
         preview_set_zoom(st, st->preview_zoom * 1.18)
     }
+    x = x + ScaleUIPx(36)
+    if DrawUIGenericButton(x, y, ScaleUIPx(58), h, "Reload",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        st->preview_dirty = 1
+        st->last_edit_time = GetTime() - 1.0
+    }
+}
+
+draw_canvas_message :: (bounds: Rectangle, title: const char*, detail: const char*) {
+    DrawRectangleRec(bounds, GetThemeSurface())
+    x := (int)bounds.x + ScaleUIPx(16)
+    y := (int)bounds.y + ScaleUIPx(18)
+    DrawUIText(title, x, y, ScaleUIPx(16), GetThemeText())
+    if detail != NULL && detail[0] != 0 {
+        DrawUIText(detail, x, y + ScaleUIPx(26), ScaleUIPx(13), GetThemeIcon())
+    }
 }
 
 draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
+    if mods.has_preview_provider(st) == 0 {
+        draw_canvas_message(bounds, "Canvas unavailable",
+                            "Enable a preview-capable module for this project.")
+        return
+    }
     toolbar_h := ScaleUIPx(30)
     draw_preview_toolbar((Rectangle){bounds.x, bounds.y, bounds.width,
                                      (float)toolbar_h}, st)
     content := (Rectangle){bounds.x, bounds.y + (float)toolbar_h,
                            bounds.width, bounds.height - (float)toolbar_h}
-    if st->host == NULL {
-        DrawUIText("No preview",
-                   (int)content.x + ScaleUIPx(16), (int)content.y + ScaleUIPx(16),
-                   ScaleUIPx(15), GetThemeText())
+    source_path: const char* = NULL
+    source_is_screen := 0
+    f := state.active_file(st)
+    if f != NULL && mods.preview_source_file(st, f->name) != 0 {
+        source_path = f->name
+        for int i = 0; i < st->screen_count; i++ {
+            if strcmp(st->screens[i].path, f->name) == 0 {
+                st->active_screen = i
+                st->selected_screen = st->screens[i].id
+                source_is_screen = 1
+                break
+            }
+        }
+    }
+    if source_path == NULL {
+        if st->active_screen >= 0 && st->active_screen < st->screen_count {
+            source_path = st->screens[st->active_screen].path
+            source_is_screen = 1
+        }
+    }
+    if source_path == NULL {
+        draw_canvas_message(content, "Select Kry source",
+                            "Choose a scene, .kry source, or frame file to show it here.")
         return
     }
-    pw := ScaleUIPx(320)
-    ph := ScaleUIPx(240)
+    selection_changed := 0
+    if st->preview_has_selection == 0 ||
+       strcmp(st->preview_selected_path, source_path) != 0 {
+        if st->preview_texture_w != 0 {
+            UnloadRenderTexture(st->preview_texture)
+            st->preview_texture_w = 0
+            st->preview_texture_h = 0
+        }
+        snprintf(st->preview_selected_path, sizeof(st->preview_selected_path),
+                 "%s", source_path)
+        st->preview_has_selection = 1
+        st->preview_host_ready = 0
+        selection_changed = 1
+    }
+    status: [512] char
+    pw: int = 0
+    ph: int = 0
+    old_texture_w := st->preview_texture_w
+    old_texture_h := st->preview_texture_h
+    preview_ensure_canvas(st, content, &pw, &ph)
     if pw < 1 {
         pw = 1
     }
     if ph < 1 {
         ph = 1
     }
-    ensure_texture(st, pw, ph)
-    saved_frame := SaveUIFrameState()
-    BeginTextureMode(st->preview_texture)
-    ClearBackground(GetThemeBackground())
-    BeginUIFrame(pw, ph, 1.0)
-    DrawAppScreen(st->host, (Rectangle){0, 0, (float)pw, (float)ph})
-    EndUIFocus()
-    EndTextureMode()
-    RestoreUIFrameState(saved_frame)
-    SetCurrentTheme(THEME_MONO, 0)
-    BeginUIInspectFrame(st->project.path)
     scale_x := content.width / (float)pw
     scale_y := content.height / (float)ph
     scale := scale_x
@@ -275,10 +360,43 @@ draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
     dst := (Rectangle){content.x + (content.width - draw_w) * 0.5 + st->preview_pan_x,
                        content.y + (content.height - draw_h) * 0.5 + st->preview_pan_y,
                        draw_w, draw_h}
+    if source_is_screen != 0 &&
+       st->active_screen >= 0 && st->active_screen < st->screen_count {
+        canvas_insert_widget(st, dst, scale)
+        canvas_select_node(st, source_path, dst, scale)
+    }
     BeginScissorMode((int)content.x, (int)content.y,
                      (int)content.width, (int)content.height)
+    ensure_texture(st, pw, ph)
+    ok := st->preview_host_ready
+    if selection_changed != 0 ||
+       old_texture_w != pw || old_texture_h != ph ||
+       st->preview_dirty != 0 || st->preview_host_ready == 0 {
+        saved_frame := SaveUIFrameState()
+        BeginTextureMode(st->preview_texture)
+        ClearBackground(GetThemeBackground())
+        BeginUIFrame(pw, ph, 1.0)
+        ok = krait_preview_draw(st, source_path,
+                                (Rectangle){0, 0, (float)pw, (float)ph},
+                                status, sizeof(status))
+        EndUIFocus()
+        EndTextureMode()
+        RestoreUIFrameState(saved_frame)
+        st->preview_host_ready = ok != 0 ? 1 : 0
+        if ok != 0 {
+            st->preview_dirty = 0
+        }
+    }
+    BeginUIInspectFrame(st->project.path)
     DrawTexturePro(st->preview_texture.texture,
                    (Rectangle){0, 0, (float)pw, -(float)ph},
                    dst, (Vector2){0, 0}, 0.0, WHITE)
+    if ok == 0 {
+        DrawRectangleRec(dst, GetThemeBackground())
+        DrawUIText("Live canvas error", (int)dst.x + ScaleUIPx(16),
+                   (int)dst.y + ScaleUIPx(16), ScaleUIPx(14), GetThemeText())
+        DrawUIText(status, (int)dst.x + ScaleUIPx(16),
+                   (int)dst.y + ScaleUIPx(40), ScaleUIPx(12), GetThemeIcon())
+    }
     EndScissorMode()
 }

@@ -1,0 +1,109 @@
+name: Netlify
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netlify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Site
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Packages
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Build Site
+        run: |
+          set -euo pipefail
+          make docs-site
+          test -f build/site/index.html
+
+      - name: Upload Site Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: krait-site
+          path: build/site
+          if-no-files-found: error
+
+  deploy-preview:
+    name: Deploy Preview
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Download Site Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: krait-site
+          path: build/site
+
+      - name: Install Netlify CLI
+        run: npm install --global netlify-cli
+
+      - name: Deploy Preview To Netlify
+        run: |
+          set -euo pipefail
+          auth_token="$(printf '%s' "$NETLIFY_AUTH_TOKEN" | tr -d '\r\n')"
+          site_id="$(printf '%s' "$NETLIFY_SITE_ID" | tr -d '\r\n')"
+          test -n "$auth_token" || { echo "::error::NETLIFY_AUTH_TOKEN is empty or missing"; exit 1; }
+          test -n "$site_id" || { echo "::error::NETLIFY_SITE_ID is empty or missing; use the Netlify Site ID, not the site URL"; exit 1; }
+          netlify deploy \
+            --dir build/site \
+            --alias "pr-${{ github.event.pull_request.number }}" \
+            --message "Preview ${{ github.event.pull_request.number }}" \
+            --auth "$auth_token" \
+            --site "$site_id"
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+
+  deploy-production:
+    name: Deploy Production
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Download Site Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: krait-site
+          path: build/site
+
+      - name: Install Netlify CLI
+        run: npm install --global netlify-cli
+
+      - name: Deploy Production To Netlify
+        run: |
+          set -euo pipefail
+          auth_token="$(printf '%s' "$NETLIFY_AUTH_TOKEN" | tr -d '\r\n')"
+          site_id="$(printf '%s' "$NETLIFY_SITE_ID" | tr -d '\r\n')"
+          test -n "$auth_token" || { echo "::error::NETLIFY_AUTH_TOKEN is empty or missing"; exit 1; }
+          test -n "$site_id" || { echo "::error::NETLIFY_SITE_ID is empty or missing; use the Netlify Site ID, not the site URL"; exit 1; }
+          netlify deploy \
+            --dir build/site \
+            --prod \
+            --message "Production ${{ github.sha }}" \
+            --auth "$auth_token" \
+            --site "$site_id"
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}

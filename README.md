@@ -21,9 +21,8 @@ Run `git submodule update --init --recursive` after cloning. Set
 `--kryon-dir /path/to/kryon` so runtime tools such as live preview builds use the
 same Kryon checkout.
 
-The build produces `build/bin/krait`. `make install` installs `krait` and its
-bundled UI font under `PREFIX`. See `THIRD_PARTY_NOTICES.md` for bundled asset
-notices.
+The build produces `build/bin/krait`. `make install` installs the `krait`
+binary under `PREFIX`. Krait uses the Noto Sans font bundled with Kryon.
 
 Krait owns the Kry-written IDE app code. Kryon must not take a dependency on
 this repository.

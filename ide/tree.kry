@@ -39,7 +39,17 @@ handle_activation :: (st: state.IdeState*) {
     for int i = 0; i < st->entry_count; i++ {
         if st->entries[i].id == activated {
             if st->entries[i].is_dir == 0 {
-                ed.editor_open(st, st->entries[i].path)
+                now := GetTime()
+                if st->last_file_click_id == activated &&
+                   now - st->last_file_click_time < 0.45 {
+                    ed.editor_open(st, st->entries[i].path)
+                    st->last_file_click_id = 0
+                    st->last_file_click_time = 0.0
+                } else {
+                    ed.editor_preview(st, st->entries[i].path)
+                    st->last_file_click_id = activated
+                    st->last_file_click_time = now
+                }
                 if st->layout_mode == state.IDE_LAYOUT_PREVIEW {
                     st->layout_mode = state.IDE_LAYOUT_SOURCE
                 }
@@ -50,12 +60,11 @@ handle_activation :: (st: state.IdeState*) {
 }
 
 draw_tree :: (bounds: Rectangle, st: state.IdeState*) {
-    refresh_tree(st)
     if st->entry_count <= 0 {
         return
     }
     build_items(st)
-    DrawUICascadingTreeView((UICascadingTreeView){
+    DrawUICascadingTreeView((CascadingTreeViewProps){
         bounds, 2000, entries, st->entry_count,
         &st->selected_entry, &st->activated_entry,
         (UICascadingTreeExpansion){

@@ -1,0 +1,10 @@
+id = "kryon"
+name = "Kryon"
+enabled_by_default = true
+description = "Kryon language support, live preview, build reload, and diagnostics."
+
+[capabilities]
+syntax = true
+preview = true
+diagnostics = true
+project_templates = true

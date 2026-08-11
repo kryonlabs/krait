@@ -1,5 +1,6 @@
 #include "ide/app.h"
 #include "ide/editor.h"
+#include "ide/modules.h"
 #include "ide/preview.h"
 #include "ide/project.h"
 #include "ui_icons.h"
@@ -11,6 +12,10 @@
 #include <string.h>
 
 extern IdeState istate;
+extern int krait_live_draw_canvas(const char *root, const char *rel_path,
+                                  int w, int h,
+                                  char *status, int status_size);
+extern void krait_preview_unload(void);
 
 #define KRAIT_KEY_COUNT 512
 
@@ -96,49 +101,12 @@ krait_logical_key_down(int key)
     return krait_key_down_now[key];
 }
 
-static int
-path_has_suffix(const char *path, const char *suffix)
-{
-    size_t path_len;
-    size_t suffix_len;
-
-    if(path == NULL || suffix == NULL)
-        return 0;
-    path_len = strlen(path);
-    suffix_len = strlen(suffix);
-    if(path_len < suffix_len)
-        return 0;
-    return strcmp(path + path_len - suffix_len, suffix) == 0;
-}
-
-static void
-open_first_kry_file(IdeState *st)
-{
-    if(st == NULL || !st->project.loaded || st->open_count > 0)
-        return;
-    for(int i = 0; i < st->entry_count; i++) {
-        if(!st->entries[i].is_dir &&
-           strcmp(st->entries[i].path, "main.kry") == 0) {
-            ide_editor_editor_open(st, st->entries[i].path);
-            return;
-        }
-    }
-    for(int i = 0; i < st->entry_count; i++) {
-        if(!st->entries[i].is_dir &&
-           path_has_suffix(st->entries[i].path, ".kry")) {
-            ide_editor_editor_open(st, st->entries[i].path);
-            return;
-        }
-    }
-}
-
 static void
 open_startup_project(const char *path)
 {
     if(path == NULL || path[0] == '\0')
         return;
     ide_project_project_open(&istate, path);
-    open_first_kry_file(&istate);
 }
 
 static int
@@ -162,29 +130,43 @@ save_screen_image(const char *path)
 static int
 run_smoke(const char *project_path, const char *screenshot_path, int build_preview)
 {
-    double start;
-
     if(project_path != NULL)
         open_startup_project(project_path);
-    if(!istate.project.loaded)
-        return 1;
-    if(build_preview) {
-        ide_preview_preview_build_start(&istate);
-        start = GetTime();
-        while(istate.build_running && GetTime() - start < 30.0) {
-            ide_preview_preview_build_poll(&istate);
-        }
-        if(istate.build_running)
-            return 1;
-        if(istate.host == NULL)
-            return 1;
-    }
+    (void)build_preview;
     for(int i = 0; i < 4; i++) {
-        UpdateUIKeyPlatformState();
+        UpdateKeyPlatformState();
         ide_app_frame();
     }
     if(!save_screen_image(screenshot_path))
         return 1;
+    return 0;
+}
+
+static int
+run_live_smoke(const char *project_path, const char *rel_path)
+{
+    char status[512];
+
+    if(project_path == NULL || rel_path == NULL)
+        return 1;
+    if(!krait_live_draw_canvas(project_path, rel_path, 640, 480,
+                               status, sizeof(status))) {
+        fprintf(stderr, "krait live smoke failed: %s\n", status);
+        return 1;
+    }
+    if(status[0] != '\0')
+        fprintf(stderr, "krait live smoke: %s\n", status);
+    return 0;
+}
+
+static int
+run_live_reload_smoke(const char *project_path, const char *rel_path)
+{
+    for(int i = 0; i < 2; i++) {
+        if(run_live_smoke(project_path, rel_path) != 0)
+            return 1;
+        krait_preview_unload();
+    }
     return 0;
 }
 
@@ -198,7 +180,10 @@ main(int argc, char **argv)
     int argi = 1;
     int smoke_screens = 0;
     int smoke_ide = 0;
+    int smoke_live = 0;
+    int smoke_live_reload = 0;
     const char *project_arg = NULL;
+    const char *live_rel_path = NULL;
     const char *smoke_screenshot_path = "/tmp/krait-ide-smoke.png";
     int result = 0;
 
@@ -230,10 +215,30 @@ main(int argc, char **argv)
         }
         if(strcmp(argv[argi], "--smoke-ide") == 0) {
             smoke_ide = 1;
+            if(argc > argi + 1) {
+                if(strstr(argv[argi + 1], ".png") != NULL)
+                    smoke_screenshot_path = argv[argi + 1];
+                else
+                    project_arg = argv[argi + 1];
+            }
+            if(argc > argi + 2)
+                smoke_screenshot_path = argv[argi + 2];
+            break;
+        }
+        if(strcmp(argv[argi], "--smoke-live") == 0) {
+            smoke_live = 1;
             if(argc > argi + 1)
                 project_arg = argv[argi + 1];
             if(argc > argi + 2)
-                smoke_screenshot_path = argv[argi + 2];
+                live_rel_path = argv[argi + 2];
+            break;
+        }
+        if(strcmp(argv[argi], "--smoke-live-reload") == 0) {
+            smoke_live_reload = 1;
+            if(argc > argi + 1)
+                project_arg = argv[argi + 1];
+            if(argc > argi + 2)
+                live_rel_path = argv[argi + 2];
             break;
         }
         project_arg = argv[argi];
@@ -254,18 +259,22 @@ main(int argc, char **argv)
     SetTargetFPS(60);
     InitUI(screen_w, screen_h, GetUIScale());
     krait_init_logical_keys();
-    SetUIKeyPlatformCallbacks(krait_update_logical_keys,
+    SetKeyPlatformCallbacks(krait_update_logical_keys,
                               krait_logical_key_pressed,
                               krait_logical_key_down);
     SetCurrentTheme(THEME_MONO, 0);
     ide_app_init();
     open_startup_project(project_arg);
 
-    if(smoke_screens || smoke_ide) {
+    if(smoke_live_reload) {
+        result = run_live_reload_smoke(project_arg, live_rel_path);
+    } else if(smoke_live) {
+        result = run_live_smoke(project_arg, live_rel_path);
+    } else if(smoke_screens || smoke_ide) {
         result = run_smoke(project_arg, smoke_screenshot_path, smoke_ide);
     } else {
         while(!WindowShouldClose()) {
-            UpdateUIKeyPlatformState();
+            UpdateKeyPlatformState();
             ide_app_frame();
         }
     }

@@ -64,6 +64,26 @@ draw_console :: (bounds: Rectangle, st: state.IdeState*) {
     input_h := ScaleUIPx(28)
     action_w := ScaleUIPx(58)
     gap := ScaleUIPx(6)
+    box_style := (UITextInputStyle){
+        GetThemeSurface(),
+        GetThemeButton(),
+        GetThemeLink(),
+        GetThemeText(),
+        GetThemeLink(),
+        0,
+        ScaleUIPx(10),
+        ScaleUIPx(8)
+    }
+    input_style := (UITextInputStyle){
+        GetThemeSurface(),
+        GetThemeButton(),
+        GetThemeLink(),
+        GetThemeText(),
+        GetThemeLink(),
+        0,
+        ScaleUIPx(10),
+        ScaleUIPx(6)
+    }
     input_bounds := (Rectangle){bounds.x, bounds.y,
                                 bounds.width - (float)(action_w * 2 + gap * 2),
                                 (float)input_h}
@@ -73,15 +93,15 @@ draw_console :: (bounds: Rectangle, st: state.IdeState*) {
                                 bounds.y, (float)action_w, (float)input_h}
     log_bounds := (Rectangle){bounds.x, bounds.y + (float)input_h + (float)gap,
                               bounds.width, bounds.height - (float)input_h - (float)gap}
-    DrawUIReadonlyTextBox((UIReadonlyTextBox){
+    DrawUIReadonlyTextBox((ReadonlyTextBoxProps){
         log_bounds, st->console_output, ScaleUIPx(13),
-        (UITextInputStyle){0}, ScaleUIPx(4)
+        box_style, ScaleUIPx(4)
     })
-    DrawUITextField((UITextField){
+    DrawUITextField((TextFieldProps){
         input_bounds, st->console_input, sizeof(st->console_input),
         &st->console_cursor, &st->console_focused,
         sizeof(st->console_input) - 1, ScaleUIPx(13), 4002,
-        (UITextInputStyle){0}, (UITextInputFilter){0}, NULL, NULL
+        input_style, (UITextInputFilter){0}, NULL, NULL
     })
     if DrawUIGenericButton((int)stop_bounds.x, (int)stop_bounds.y,
                            (int)stop_bounds.width, (int)stop_bounds.height,
@@ -94,7 +114,7 @@ draw_console :: (bounds: Rectangle, st: state.IdeState*) {
         st->console_output[0] = 0
         state.project_set_status(st, "Console cleared")
     }
-    if st->console_focused != 0 && UIKeyPressed(KEY_ENTER) {
+    if st->console_focused != 0 && IsKeyPressed(KEY_ENTER) {
         if st->console_input[0] != 0 {
             console_run(st)
             st->console_input[0] = 0

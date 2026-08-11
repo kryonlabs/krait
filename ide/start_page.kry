@@ -2,6 +2,7 @@
 #import "kryon.h"
 state :: #import "ide/state"
 proj :: #import "ide/project"
+mods :: #import "ide/modules"
 
 krait_recent_count :: () -> int #extern
 krait_recent_path :: (index: int, out: char*, cap: int) -> int #extern
@@ -35,8 +36,8 @@ draw_project_card :: (x: int, y: int, w: int, h: int,
                    (float)block_w, (float)block_h
                })
 
-    DrawRectangle(x, y, w, h, DarkenUIColor(GetThemeBackground(), 6))
-    DrawRectangleLines(x, y, w, h, DarkenUIColor(GetThemeBackground(), 42))
+    DrawRectangle(x, y, w, h, GetThemeSurface())
+    DrawRectangleLines(x, y, w, h, GetThemeButton())
     DrawUIText(title, x + ScaleUIPx(12), y + ScaleUIPx(10),
                ScaleUIPx(15), GetThemeText())
     DrawUIText(path, x + ScaleUIPx(12), y + ScaleUIPx(34),
@@ -138,10 +139,12 @@ draw_start_page :: (content: Rectangle, st: state.IdeState*) {
                            "Open Project", UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
         st->dialog_mode = state.IDE_DIALOG_OPEN_PROJECT
     }
-    if DrawUIGenericButton(x0 + ScaleUIPx(194), y,
-                           ScaleUIPx(180), ScaleUIPx(42), "New Project",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-        st->dialog_mode = state.IDE_DIALOG_NEW_PROJECT
+    if mods.has_project_templates(st) != 0 {
+        if DrawUIGenericButton(x0 + ScaleUIPx(194), y,
+                               ScaleUIPx(180), ScaleUIPx(42), "New Project",
+                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            st->dialog_mode = state.IDE_DIALOG_NEW_PROJECT
+        }
     }
     y = y + ScaleUIPx(70)
 
@@ -149,5 +152,7 @@ draw_start_page :: (content: Rectangle, st: state.IdeState*) {
     if y < 0 {
         return
     }
-    draw_examples(x0, y, card_w, card_h, gap, bottom, st)
+    if mods.has_project_templates(st) != 0 {
+        draw_examples(x0, y, card_w, card_h, gap, bottom, st)
+    }
 }
