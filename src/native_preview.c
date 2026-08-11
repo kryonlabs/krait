@@ -35,6 +35,11 @@ static KraitPreviewHost g_preview_host;
 static KraitPreviewBuild g_preview_build;
 static unsigned long g_preview_host_generation;
 
+/* Used by krait_preview_build_poll before its own definition later in this file. */
+static int krait_preview_load_host(const char *project_path,
+                                   const char *host_path,
+                                   char *status, int status_size);
+
 static int
 krait_preview_env_begin(char *old_value, size_t old_value_size)
 {
@@ -54,6 +59,74 @@ krait_preview_env_end(int had, const char *old_value)
         setenv("KRYON_INSPECT", old_value != NULL ? old_value : "", 1);
     else
         unsetenv("KRYON_INSPECT");
+}
+
+static int
+krait_shell_quote(char *dst, size_t dst_size, const char *src)
+{
+    size_t n = 0;
+
+    if(dst == NULL || dst_size == 0)
+        return 0;
+    if(src == NULL)
+        src = "";
+    if(n + 1 >= dst_size)
+        return 0;
+    dst[n++] = '\'';
+    for(const char *p = src; *p != '\0'; p++) {
+        if(*p == '\'') {
+            const char *q = "'\\''";
+            for(int i = 0; q[i] != '\0'; i++) {
+                if(n + 1 >= dst_size)
+                    return 0;
+                dst[n++] = q[i];
+            }
+        } else {
+            if(n + 1 >= dst_size)
+                return 0;
+            dst[n++] = *p;
+        }
+    }
+    if(n + 1 >= dst_size)
+        return 0;
+    dst[n++] = '\'';
+    dst[n] = '\0';
+    return 1;
+}
+
+static int
+krait_copy_file(const char *src, const char *dst)
+{
+    FILE *in;
+    FILE *out;
+    char buf[16384];
+    size_t n;
+
+    if(src == NULL || dst == NULL)
+        return 0;
+    in = fopen(src, "rb");
+    if(in == NULL)
+        return 0;
+    out = fopen(dst, "wb");
+    if(out == NULL) {
+        fclose(in);
+        return 0;
+    }
+    while((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if(fwrite(buf, 1, n, out) != n) {
+            fclose(out);
+            fclose(in);
+            return 0;
+        }
+    }
+    if(ferror(in)) {
+        fclose(out);
+        fclose(in);
+        return 0;
+    }
+    fclose(out);
+    fclose(in);
+    return 1;
 }
 
 static int

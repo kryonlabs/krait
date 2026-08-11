@@ -14,6 +14,63 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/* KraitLiveVar + the live var table live here (shared with native_live.c). */
+static KraitLiveVar g_krait_live_vars[128];
+static int g_krait_live_var_count;
+
+void
+krait_live_vars_clear(void)
+{
+    memset(g_krait_live_vars, 0, sizeof(g_krait_live_vars));
+    g_krait_live_var_count = 0;
+}
+
+int
+krait_live_var_get(const char *name, int *out)
+{
+    if(name == NULL || out == NULL)
+        return 0;
+    for(int i = g_krait_live_var_count - 1; i >= 0; i--) {
+        if(strcmp(g_krait_live_vars[i].name, name) == 0) {
+            *out = g_krait_live_vars[i].value;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void
+krait_live_var_set(const char *name, int value)
+{
+    if(name == NULL || name[0] == '\0')
+        return;
+    for(int i = 0; i < g_krait_live_var_count; i++) {
+        if(strcmp(g_krait_live_vars[i].name, name) == 0) {
+            g_krait_live_vars[i].value = value;
+            return;
+        }
+    }
+    if(g_krait_live_var_count >= (int)(sizeof(g_krait_live_vars) / sizeof(g_krait_live_vars[0])))
+        return;
+    snprintf(g_krait_live_vars[g_krait_live_var_count].name,
+             sizeof(g_krait_live_vars[g_krait_live_var_count].name), "%s", name);
+    g_krait_live_vars[g_krait_live_var_count].value = value;
+    g_krait_live_var_count++;
+}
+
+void
+krait_live_status(KraitLive *live, const char *fmt, ...)
+{
+    va_list ap;
+
+    if(live == NULL || live->status[0] != '\0')
+        return;
+    va_start(ap, fmt);
+    vsnprintf(live->status, sizeof(live->status), fmt, ap);
+    va_end(ap);
+    live->ok = 0;
+}
+
 const char *
 krait_live_skip_space(const char *p)
 {
@@ -384,7 +441,7 @@ krait_live_eval_color(const char *expr, Color *out)
     return 0;
 }
 
-static UIButtonStyle
+UIButtonStyle
 krait_live_eval_button_style(const char *expr)
 {
     if(expr != NULL && strstr(expr, "SECONDARY") != NULL)
@@ -538,6 +595,4 @@ krait_live_find_frame_name(const char *text, char *dst, size_t dst_size)
     }
     return 0;
 }
-
-static int krait_live_exec_body(KraitLive *live);
 

@@ -15,6 +15,7 @@ sett :: #import "ide/settings"
 mods :: #import "ide/modules"
 widgets :: #import "ide/widgets"
 meta :: #import "ide/project_meta"
+assets :: #import "ide/assets"
 
 krait_load_ui_font :: () -> int #extern
 krait_scaffold_project :: (path: const char*, status: char*, status_size: int) -> int #extern
@@ -689,6 +690,7 @@ pane_layout_default :: (st: state.IdeState*) {
     pane_add(&st->pane_groups[state.IDE_PANE_LEFT], state.IDE_PANE_VIEW_EXPLORER)
     pane_add(&st->pane_groups[state.IDE_PANE_LEFT], state.IDE_PANE_VIEW_HIERARCHY)
     pane_add(&st->pane_groups[state.IDE_PANE_LEFT], state.IDE_PANE_VIEW_WIDGETS)
+    pane_add(&st->pane_groups[state.IDE_PANE_LEFT], state.IDE_PANE_VIEW_ASSETS)
     st->pane_groups[state.IDE_PANE_LEFT].active = 2
     pane_add(&st->pane_groups[state.IDE_PANE_CENTER], state.IDE_PANE_VIEW_EDITOR)
     pane_add(&st->pane_groups[state.IDE_PANE_CENTER], state.IDE_PANE_VIEW_PREVIEW)
@@ -748,6 +750,9 @@ pane_view_label :: (view: int) -> const char* {
     }
     if view == state.IDE_PANE_VIEW_INSPECTOR {
         return "Inspector"
+    }
+    if view == state.IDE_PANE_VIEW_ASSETS {
+        return "Assets"
     }
     if view == state.IDE_PANE_VIEW_PROJECT_META {
         return "Metadata"
@@ -1062,6 +1067,8 @@ draw_pane_view :: (bounds: Rectangle, st: state.IdeState*, view: int) {
         widgets.draw_hierarchy(bounds, st)
     } else if view == state.IDE_PANE_VIEW_INSPECTOR {
         widgets.draw_inspector(bounds, st)
+    } else if view == state.IDE_PANE_VIEW_ASSETS {
+        assets.draw_assets(bounds, st)
     } else if view == state.IDE_PANE_VIEW_PROJECT_META {
         meta.draw_project_metadata(bounds, st)
     } else if view == state.IDE_PANE_VIEW_PROBLEMS {

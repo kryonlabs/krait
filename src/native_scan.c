@@ -226,25 +226,3 @@ krait_scan_screens(const char *root, ScreenEntry *out, int cap)
     return krait_scan_screens_dir(root, root, out, 0, cap, 0);
 }
 
-typedef struct {
-    const char *root;
-    const char *rel_path;
-    const char *text;
-    const char *body;
-    const char *body_end;
-    int ok;
-    int line_no;
-    int render_count;
-    int delegate_count;
-    int call_depth;
-    char status[512];
-} KraitLive;
-
-typedef struct {
-    char name[64];
-    int value;
-} KraitLiveVar;
-
-static KraitLiveVar g_krait_live_vars[128];
-static int g_krait_live_var_count = 0;
-

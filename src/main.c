@@ -3,6 +3,7 @@
 #include "ide/modules.h"
 #include "ide/preview.h"
 #include "ide/project.h"
+#include "native_internal.h"
 #include "ui_icons.h"
 #include "ui_inspect.h"
 
@@ -12,10 +13,6 @@
 #include <string.h>
 
 extern IdeState istate;
-extern int krait_live_draw_canvas(const char *root, const char *rel_path,
-                                  int w, int h,
-                                  char *status, int status_size);
-extern void krait_preview_unload(void);
 
 #define KRAIT_KEY_COUNT 512
 

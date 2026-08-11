@@ -241,6 +241,27 @@ krait_project_preview_size(const char *root, int *out_w, int *out_h)
     return found;
 }
 
+static void
+krait_trim_line(char *text)
+{
+    char *start;
+    char *end;
+
+    if(text == NULL)
+        return;
+    start = text;
+    while(*start == ' ' || *start == '\t')
+        start++;
+    if(start != text)
+        memmove(text, start, strlen(start) + 1);
+    end = text + strlen(text);
+    while(end > text && (end[-1] == ' ' || end[-1] == '\t' ||
+                         end[-1] == '\r' || end[-1] == '\n')) {
+        end--;
+    }
+    *end = '\0';
+}
+
 static int
 krait_add_search_result(SearchResult *results, int count, int cap,
                         const char *path, int line, const char *excerpt)

@@ -16,6 +16,17 @@ krait_scene_editable :: (index: int) -> int #extern
 krait_scene_nudge :: (root: const char*, rel_path: const char*, index: int,
                       dx: int, dy: int, dw: int, dh: int,
                       status: char*, status_size: int) -> int #extern
+krait_scene_property_count :: (index: int) -> int #extern
+krait_scene_property_spec :: (index: int, prop_index: int,
+                              id: char*, id_size: int,
+                              label: char*, label_size: int,
+                              out_kind: int*) -> int #extern
+krait_scene_property_get :: (index: int, property_id: const char*,
+                             buf: char*, buf_size: int) -> int #extern
+krait_scene_property_set :: (index: int, property_id: const char*,
+                             value: const char*,
+                             root: const char*, rel_path: const char*,
+                             status: char*, status_size: int) -> int #extern
 KryonNodeTypeCount :: () -> int #extern
 KryonNodeTypeName :: (index: int) -> const char* #extern
 KryonNodeTypeLabel :: (index: int) -> const char* #extern
@@ -23,19 +34,19 @@ KryonNodeTypeGroup :: (index: int) -> const char* #extern
 KryonNodeTypeDetail :: (index: int) -> const char* #extern
 KryonNodeTypeInsertable :: (index: int) -> int #extern
 
-inspector_node :: int #global
-inspector_x :: [16] char #global
-inspector_y :: [16] char #global
-inspector_w :: [16] char #global
-inspector_h :: [16] char #global
-inspector_x_cursor :: int #global
-inspector_y_cursor :: int #global
-inspector_w_cursor :: int #global
-inspector_h_cursor :: int #global
-inspector_x_focused :: int #global
-inspector_y_focused :: int #global
-inspector_w_focused :: int #global
-inspector_h_focused :: int #global
+#enum {
+    INSPECTOR_PROP_MAX = 6,
+    INSPECTOR_PROP_BUF = 256,
+}
+
+inspector_prop_id :: [INSPECTOR_PROP_MAX][32] char #global
+inspector_prop_label :: [INSPECTOR_PROP_MAX][48] char #global
+inspector_prop_kind :: [INSPECTOR_PROP_MAX] int #global
+inspector_prop_buf :: [INSPECTOR_PROP_MAX][INSPECTOR_PROP_BUF] char #global
+inspector_prop_cursor :: [INSPECTOR_PROP_MAX] int #global
+inspector_prop_focused :: [INSPECTOR_PROP_MAX] int #global
+inspector_prop_count :: int #global
+inspector_prop_synced_node :: int #global
 
 #private
 
@@ -163,7 +174,7 @@ draw_item :: (bounds: Rectangle, st: state.IdeState*, index: int) {
     } else if insertable != 0 && strcmp(name, "Slider") == 0 {
         value := 64
         DrawUISlider(9200 + index, sample_x, sample_y + ScaleUIPx(8),
-                     ScaleUIPx(140), "Value", 0, 100, &value, "")
+                     ScaleUIPx(140), "Value", 0, 100, &value, "", NULL)
     } else if insertable != 0 && strcmp(name, "Checkbox") == 0 {
         checked := 1
         DrawUICheckboxToggle(sample_x, sample_y + ScaleUIPx(8),
@@ -350,48 +361,6 @@ apply_scene_nudge :: (st: state.IdeState*, dx: int, dy: int,
     state.project_set_status(st, status)
 }
 
-apply_scene_bounds :: (st: state.IdeState*, current: Rectangle) {
-    x := atoi(inspector_x)
-    y := atoi(inspector_y)
-    w := atoi(inspector_w)
-    h := atoi(inspector_h)
-    if w < 1 {
-        w = 1
-    }
-    if h < 1 {
-        h = 1
-    }
-    apply_scene_nudge(st, x - (int)current.x, y - (int)current.y,
-                      w - (int)current.width, h - (int)current.height)
-}
-
-inspector_fields_focused :: () -> int {
-    return inspector_x_focused != 0 ||
-           inspector_y_focused != 0 ||
-           inspector_w_focused != 0 ||
-           inspector_h_focused != 0
-}
-
-sync_inspector_fields :: (st: state.IdeState*, bounds_value: Rectangle) {
-    if inspector_node == st->selected_scene_node &&
-       inspector_fields_focused() != 0 {
-        return
-    }
-    inspector_node = st->selected_scene_node
-    snprintf(inspector_x, sizeof(inspector_x), "%d",
-             (int)bounds_value.x)
-    snprintf(inspector_y, sizeof(inspector_y), "%d",
-             (int)bounds_value.y)
-    snprintf(inspector_w, sizeof(inspector_w), "%d",
-             (int)bounds_value.width)
-    snprintf(inspector_h, sizeof(inspector_h), "%d",
-             (int)bounds_value.height)
-    inspector_x_cursor = strlen(inspector_x)
-    inspector_y_cursor = strlen(inspector_y)
-    inspector_w_cursor = strlen(inspector_w)
-    inspector_h_cursor = strlen(inspector_h)
-}
-
 draw_inspector_field :: (label: const char*, bounds: Rectangle,
                          text: char*, text_size: int,
                          cursor: int*, focused: int*,
@@ -405,6 +374,67 @@ draw_inspector_field :: (label: const char*, bounds: Rectangle,
         ScaleUIPx(13), focus_id,
         (UITextInputStyle){0}, (UITextInputFilter){0}, NULL, NULL
     })
+}
+
+inspector_prop_focused :: () -> int {
+    i := 0
+    while i < INSPECTOR_PROP_MAX {
+        if inspector_prop_focused[i] != 0 {
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+sync_inspector_props :: (st: state.IdeState*) {
+    node := st->selected_scene_node
+    if node < 0 || node >= st->scene_node_count {
+        inspector_prop_count = 0
+        inspector_prop_synced_node = -1
+        return
+    }
+    if node == inspector_prop_synced_node && inspector_prop_focused() != 0 {
+        return
+    }
+    inspector_prop_synced_node = node
+    count := krait_scene_property_count(node)
+    if count > INSPECTOR_PROP_MAX {
+        count = INSPECTOR_PROP_MAX
+    }
+    inspector_prop_count = count
+    i := 0
+    while i < count {
+        krait_scene_property_spec(node, i,
+            inspector_prop_id[i], sizeof(inspector_prop_id[i]),
+            inspector_prop_label[i], sizeof(inspector_prop_label[i]),
+            &inspector_prop_kind[i])
+        krait_scene_property_get(node, inspector_prop_id[i],
+            inspector_prop_buf[i], sizeof(inspector_prop_buf[i]))
+        inspector_prop_cursor[i] = strlen(inspector_prop_buf[i])
+        i = i + 1
+    }
+}
+
+apply_inspector_prop :: (st: state.IdeState*, prop_index: int) {
+    if st->active_screen < 0 || st->active_screen >= st->screen_count {
+        state.project_set_status(st, "Select a scene first")
+        return
+    }
+    status: [256] char
+    scr := &st->screens[st->active_screen]
+    node := st->selected_scene_node
+    if krait_scene_property_set(node, inspector_prop_id[prop_index],
+            inspector_prop_buf[prop_index],
+            st->project.path, scr->path,
+            status, sizeof(status)) != 0 {
+        ed.editor_reload_if_open(st, scr->path)
+        st->preview_dirty = 1
+        st->last_edit_time = GetTime()
+        scan_scene(st)
+        inspector_prop_synced_node = -1
+    }
+    state.project_set_status(st, status)
 }
 
 scan_scene :: (st: state.IdeState*) {
@@ -501,67 +531,48 @@ draw_inspector :: (bounds: Rectangle, st: state.IdeState*) {
     kind := krait_scene_kind(st->selected_scene_node)
     editable := krait_scene_editable(st->selected_scene_node)
     bounds_value := krait_scene_bounds(st->selected_scene_node)
-    asset_path := krait_scene_asset_path(st->selected_scene_node)
     source_line := krait_scene_source_line(st->selected_scene_node)
-    sync_inspector_fields(st, bounds_value)
+    sync_inspector_props(st)
     y := (int)bounds.y + ScaleUIPx(34)
     line: [256] char
     snprintf(line, sizeof(line), "%s  %s", scene_kind_label(kind),
              editable != 0 ? "editable" : "read-only")
     DrawUIText(line, (int)bounds.x + pad, y, ScaleUIPx(13), GetThemeText())
+    y = y + ScaleUIPx(20)
+    snprintf(line, sizeof(line), "line %d", source_line)
+    DrawUIText(line, (int)bounds.x + pad, y, ScaleUIPx(11),
+               GetThemeIcon())
     y = y + ScaleUIPx(22)
-    snprintf(line, sizeof(line), "x %.0f  y %.0f  w %.0f  h %.0f",
-             bounds_value.x, bounds_value.y, bounds_value.width,
-             bounds_value.height)
-    DrawUIText(line, (int)bounds.x + pad, y, ScaleUIPx(12), GetThemeIcon())
-    y = y + ScaleUIPx(22)
-    if asset_path[0] != 0 {
-        DrawUIText(asset_path, (int)bounds.x + pad, y,
-                   ScaleUIPx(12), GetThemeIcon())
-    } else {
-        snprintf(line, sizeof(line), "line %d", source_line)
-        DrawUIText(line, (int)bounds.x + pad, y, ScaleUIPx(12),
-                   GetThemeIcon())
-    }
     if editable == 0 {
         return
     }
-    y = y + ScaleUIPx(24)
-    field_w := ((int)bounds.width - pad * 2 - ScaleUIPx(8)) / 2
+    field_w := (int)bounds.width - pad * 2
     field_h := ScaleUIPx(48)
-    x0 := (int)bounds.x + pad
-    x1 := x0 + field_w + ScaleUIPx(8)
-    draw_inspector_field("X", (Rectangle){(float)x0, (float)y,
-                                          (float)field_w, (float)field_h},
-                         inspector_x, sizeof(inspector_x),
-                         &inspector_x_cursor, &inspector_x_focused,
-                         6100)
-    draw_inspector_field("Y", (Rectangle){(float)x1, (float)y,
-                                          (float)field_w, (float)field_h},
-                         inspector_y, sizeof(inspector_y),
-                         &inspector_y_cursor, &inspector_y_focused,
-                         6101)
-    y = y + field_h + ScaleUIPx(6)
-    draw_inspector_field("W", (Rectangle){(float)x0, (float)y,
-                                          (float)field_w, (float)field_h},
-                         inspector_w, sizeof(inspector_w),
-                         &inspector_w_cursor, &inspector_w_focused,
-                         6102)
-    draw_inspector_field("H", (Rectangle){(float)x1, (float)y,
-                                          (float)field_w, (float)field_h},
-                         inspector_h, sizeof(inspector_h),
-                         &inspector_h_cursor, &inspector_h_focused,
-                         6103)
-    y = y + field_h + ScaleUIPx(8)
-    if DrawUIGenericButton((int)bounds.x + pad, y,
-       (int)bounds.width - pad * 2, ScaleUIPx(28),
-       "Apply Bounds", UI_BUTTON_STYLE_PRIMARY,
-       0, NULL) ||
-       (inspector_fields_focused() != 0 && IsKeyPressed(KEY_ENTER)) {
-        apply_scene_bounds(st, bounds_value)
-        return
+    i := 0
+    while i < inspector_prop_count {
+        draw_inspector_field(inspector_prop_label[i],
+            (Rectangle){(float)((int)bounds.x + pad), (float)y,
+                        (float)field_w, (float)field_h},
+            inspector_prop_buf[i], sizeof(inspector_prop_buf[i]),
+            &inspector_prop_cursor[i], &inspector_prop_focused[i],
+            6200 + i)
+        y = y + field_h + ScaleUIPx(6)
+        i = i + 1
     }
-    y = y + ScaleUIPx(38)
+    if inspector_prop_count > 0 {
+        if DrawUIGenericButton((int)bounds.x + pad, y,
+           (int)bounds.width - pad * 2, ScaleUIPx(28),
+           "Apply", UI_BUTTON_STYLE_PRIMARY, 0, NULL) ||
+           (inspector_prop_focused() != 0 && IsKeyPressed(KEY_ENTER)) {
+            i = 0
+            while i < inspector_prop_count {
+                apply_inspector_prop(st, i)
+                i = i + 1
+            }
+            return
+        }
+        y = y + ScaleUIPx(38)
+    }
     btn_w := ScaleUIPx(32)
     btn_h := ScaleUIPx(24)
     gap := ScaleUIPx(4)

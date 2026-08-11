@@ -27,39 +27,6 @@ krait_join(char *dst, size_t dst_size, const char *a, const char *b)
         snprintf(dst, dst_size, "%s/%s", a, b);
 }
 
-static int
-krait_shell_quote(char *dst, size_t dst_size, const char *src)
-{
-    size_t n = 0;
-
-    if(dst == NULL || dst_size == 0)
-        return 0;
-    if(src == NULL)
-        src = "";
-    if(n + 1 >= dst_size)
-        return 0;
-    dst[n++] = '\'';
-    for(const char *p = src; *p != '\0'; p++) {
-        if(*p == '\'') {
-            const char *q = "'\\''";
-            for(int i = 0; q[i] != '\0'; i++) {
-                if(n + 1 >= dst_size)
-                    return 0;
-                dst[n++] = q[i];
-            }
-        } else {
-            if(n + 1 >= dst_size)
-                return 0;
-            dst[n++] = *p;
-        }
-    }
-    if(n + 1 >= dst_size)
-        return 0;
-    dst[n++] = '\'';
-    dst[n] = '\0';
-    return 1;
-}
-
 const char *
 krait_basename(const char *path)
 {
@@ -98,41 +65,6 @@ krait_path_exists(const char *path)
 {
     struct stat st;
     return path != NULL && stat(path, &st) == 0;
-}
-
-static int
-krait_copy_file(const char *src, const char *dst)
-{
-    FILE *in;
-    FILE *out;
-    char buf[16384];
-    size_t n;
-
-    if(src == NULL || dst == NULL)
-        return 0;
-    in = fopen(src, "rb");
-    if(in == NULL)
-        return 0;
-    out = fopen(dst, "wb");
-    if(out == NULL) {
-        fclose(in);
-        return 0;
-    }
-    while((n = fread(buf, 1, sizeof(buf), in)) > 0) {
-        if(fwrite(buf, 1, n, out) != n) {
-            fclose(out);
-            fclose(in);
-            return 0;
-        }
-    }
-    if(ferror(in)) {
-        fclose(out);
-        fclose(in);
-        return 0;
-    }
-    fclose(out);
-    fclose(in);
-    return 1;
 }
 
 int
@@ -211,31 +143,6 @@ krait_ensure_parent_dir(const char *path)
     (void)mkdir(dir, 0755);
 }
 
-static int
-krait_mkdir_p(const char *dir)
-{
-    char tmp[KRAIT_PATH_MAX];
-    size_t len;
-
-    if(dir == NULL || dir[0] == '\0')
-        return 0;
-    snprintf(tmp, sizeof(tmp), "%s", dir);
-    len = strlen(tmp);
-    if(len > 0 && tmp[len - 1] == '/')
-        tmp[len - 1] = '\0';
-    for(char *p = tmp + 1; *p != '\0'; p++) {
-        if(*p == '/') {
-            *p = '\0';
-            if(mkdir(tmp, 0755) != 0 && errno != EEXIST)
-                return 0;
-            *p = '/';
-        }
-    }
-    if(mkdir(tmp, 0755) != 0 && errno != EEXIST)
-        return 0;
-    return 1;
-}
-
 int
 krait_write_text_file(const char *path, const char *text)
 {
@@ -254,27 +161,6 @@ krait_write_text_file(const char *path, const char *text)
     }
     fclose(file);
     return 1;
-}
-
-static void
-krait_trim_line(char *text)
-{
-    char *start;
-    char *end;
-
-    if(text == NULL)
-        return;
-    start = text;
-    while(*start == ' ' || *start == '\t')
-        start++;
-    if(start != text)
-        memmove(text, start, strlen(start) + 1);
-    end = text + strlen(text);
-    while(end > text && (end[-1] == ' ' || end[-1] == '\t' ||
-                         end[-1] == '\r' || end[-1] == '\n')) {
-        end--;
-    }
-    *end = '\0';
 }
 
 int
@@ -335,7 +221,7 @@ krait_read_file_alloc(const char *path, char **out, long *out_len)
     return 1;
 }
 
-static char *
+char *
 krait_trim(char *s)
 {
     char *end;

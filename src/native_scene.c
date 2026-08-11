@@ -560,3 +560,254 @@ krait_scene_nudge(const char *root, const char *rel_path, int index,
     return 1;
 }
 
+/* ---- property model: per-kind spec tables + typed source rewriter ----
+ *
+ * The Inspector renders these specs instead of the fixed X/Y/W/H grid. Each
+ * kind publishes its editable properties (label/asset_path/position/size); the
+ * getter reads the parsed SceneNode fields, the setter rewrites the matching
+ * token in the .kry source span. Bounds keep using the ScaleUIPx delta path;
+ * strings rewrite the first "..." literal in the span.
+ */
+
+#define KRAIT_PROP_MAX 6
+
+typedef struct KraitPropSpec {
+    char id[32];
+    char label[48];
+    int kind; /* KRYON_PROPERTY_* */
+} KraitPropSpec;
+
+static const KraitPropSpec kry_props_text[] = {
+    {"label", "Label", KRYON_PROPERTY_STRING},
+    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+};
+
+static const KraitPropSpec kry_props_rect[] = {
+    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+};
+
+static const KraitPropSpec kry_props_button[] = {
+    {"label", "Label", KRYON_PROPERTY_STRING},
+    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+};
+
+static const KraitPropSpec kry_props_sprite[] = {
+    {"asset_path", "Asset", KRYON_PROPERTY_ASSET_PATH},
+    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+};
+
+static const KraitPropSpec kry_props_group[] = {
+    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+};
+
+static const KraitPropSpec kry_props_game[] = {
+    {"label", "Label", KRYON_PROPERTY_STRING},
+    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+};
+
+static const KraitPropSpec *
+krait_prop_specs(int kind, int *out_count)
+{
+    switch(kind) {
+    case KRAIT_SCENE_NODE_TEXT:
+        *out_count = 2; return kry_props_text;
+    case KRAIT_SCENE_NODE_RECTANGLE:
+        *out_count = 1; return kry_props_rect;
+    case KRAIT_SCENE_NODE_BUTTON:
+        *out_count = 2; return kry_props_button;
+    case KRAIT_SCENE_NODE_SPRITE:
+        *out_count = 2; return kry_props_sprite;
+    case KRAIT_SCENE_NODE_GROUP:
+        *out_count = 1; return kry_props_group;
+    case KRAIT_SCENE_NODE_GAME_OBJECT:
+        *out_count = 2; return kry_props_game;
+    default:
+        *out_count = 0; return NULL;
+    }
+}
+
+int
+krait_scene_property_count(int index)
+{
+    SceneNode *node = krait_scene_node(index);
+    int count;
+    if(node == NULL)
+        return 0;
+    krait_prop_specs(node->kind, &count);
+    return count;
+}
+
+int
+krait_scene_property_spec(int index, int prop_index, char *id, int id_size,
+                          char *label, int label_size, int *out_kind)
+{
+    SceneNode *node = krait_scene_node(index);
+    const KraitPropSpec *specs;
+    int count;
+    if(node == NULL)
+        return 0;
+    specs = krait_prop_specs(node->kind, &count);
+    if(specs == NULL || prop_index < 0 || prop_index >= count)
+        return 0;
+    snprintf(id, (size_t)id_size, "%s", specs[prop_index].id);
+    snprintf(label, (size_t)label_size, "%s", specs[prop_index].label);
+    if(out_kind != NULL)
+        *out_kind = specs[prop_index].kind;
+    return 1;
+}
+
+/* Read a property into the provided buffer. For strings/asset_path the buffer
+ * receives the value; for rectangle kinds it receives "x y w h" integers. */
+int
+krait_scene_property_get(int index, const char *property_id, char *buf,
+                         int buf_size)
+{
+    SceneNode *node = krait_scene_node(index);
+    if(node == NULL || property_id == NULL || buf == NULL || buf_size <= 0)
+        return 0;
+    buf[0] = '\0';
+    if(strcmp(property_id, "label") == 0) {
+        snprintf(buf, (size_t)buf_size, "%s", node->label);
+        return 1;
+    }
+    if(strcmp(property_id, "asset_path") == 0) {
+        snprintf(buf, (size_t)buf_size, "%s", node->asset_path);
+        return 1;
+    }
+    if(strcmp(property_id, "position") == 0) {
+        if(node->kind == KRAIT_SCENE_NODE_TEXT)
+            snprintf(buf, (size_t)buf_size, "%d %d",
+                     (int)node->bounds.x, (int)node->bounds.y);
+        else
+            snprintf(buf, (size_t)buf_size, "%d %d %d %d",
+                     (int)node->bounds.x, (int)node->bounds.y,
+                     (int)node->bounds.width, (int)node->bounds.height);
+        return 1;
+    }
+    return 0;
+}
+
+/* Rewrite the first "..." string literal within [slice]. Returns 1 on
+ * success. The caller must ensure buf_size is large enough for the new span. */
+static int
+krait_scene_replace_string_literal(char *slice, size_t slice_size,
+                                   const char *new_value)
+{
+    char *open = strchr(slice, '"');
+    char *close;
+    size_t old_len;
+    size_t new_len;
+    size_t tail_len;
+    char literal[768];
+
+    if(open == NULL)
+        return 0;
+    close = strchr(open + 1, '"');
+    if(close == NULL)
+        return 0;
+    /* escape nothing for now; asset paths and labels are plain */
+    snprintf(literal, sizeof(literal), "\"%s\"", new_value);
+    new_len = strlen(literal);
+    old_len = (size_t)(close + 1 - open);
+    tail_len = strlen(close + 1);
+    if(strlen(slice) - old_len + new_len + 1 > slice_size)
+        return 0;
+    memmove(open + new_len, close + 1, tail_len + 1);
+    memcpy(open, literal, new_len);
+    return 1;
+}
+
+/* Parse "x y [w h]" integers from buf into deltas relative to current bounds,
+ * then reuse the ScaleUIPx delta path to rewrite the source. */
+static int
+krait_scene_apply_position(const char *root, const char *rel_path,
+                           SceneNode *node, const char *buf,
+                           char *status, int status_size)
+{
+    int nx, ny, nw, nh;
+    int fields;
+    int dx, dy, dw, dh;
+
+    fields = sscanf(buf, "%d %d %d %d", &nx, &ny, &nw, &nh);
+    if(fields < 2)
+        return 0;
+    dx = nx - (int)node->bounds.x;
+    dy = ny - (int)node->bounds.y;
+    dw = fields >= 4 ? nw - (int)node->bounds.width : 0;
+    dh = fields >= 4 ? nh - (int)node->bounds.height : 0;
+    return krait_scene_nudge(root, rel_path, node->id, dx, dy, dw, dh,
+                             status, status_size);
+}
+
+int
+krait_scene_property_set(int index, const char *property_id, const char *value,
+                         const char *root, const char *rel_path,
+                         char *status, int status_size)
+{
+    SceneNode *node = krait_scene_node(index);
+    char path[KRAIT_PATH_MAX];
+    char *text = NULL;
+    char *slice = NULL;
+    long len = 0;
+    long span;
+    FILE *file;
+
+    if(status != NULL && status_size > 0)
+        snprintf(status, (size_t)status_size, "Property not set");
+    if(node == NULL || property_id == NULL || value == NULL)
+        return 0;
+    if(!node->editable)
+        return 0;
+
+    /* position delegates to the existing ScaleUIPx delta rewriter */
+    if(strcmp(property_id, "position") == 0)
+        return krait_scene_apply_position(root, rel_path, node, value,
+                                          status, status_size);
+
+    /* label / asset_path rewrite the first string literal in the source span */
+    if(strcmp(property_id, "label") != 0 && strcmp(property_id, "asset_path") != 0)
+        return 0;
+
+    krait_join(path, sizeof(path), root, rel_path);
+    if(!krait_read_file_alloc(path, &text, &len))
+        return 0;
+    if(node->source_start < 0 || node->source_end < node->source_start ||
+       node->source_end > len) {
+        free(text);
+        return 0;
+    }
+    span = node->source_end - node->source_start;
+    slice = malloc((size_t)span + 1024);
+    if(slice == NULL) {
+        free(text);
+        return 0;
+    }
+    memcpy(slice, text + node->source_start, (size_t)span);
+    slice[span] = '\0';
+    if(!krait_scene_replace_string_literal(slice, (size_t)span + 1024, value)) {
+        free(slice);
+        free(text);
+        if(status != NULL && status_size > 0)
+            snprintf(status, (size_t)status_size,
+                     "Property uses unsupported expression");
+        return 0;
+    }
+    file = fopen(path, "wb");
+    if(file == NULL) {
+        free(slice);
+        free(text);
+        return 0;
+    }
+    if(node->source_start > 0)
+        fwrite(text, 1, (size_t)node->source_start, file);
+    fwrite(slice, 1, strlen(slice), file);
+    fwrite(text + node->source_end, 1, (size_t)(len - node->source_end), file);
+    fclose(file);
+    free(slice);
+    free(text);
+    if(status != NULL && status_size > 0)
+        snprintf(status, (size_t)status_size, "Property updated");
+    return 1;
+}
+
+

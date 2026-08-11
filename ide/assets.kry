@@ -1,0 +1,74 @@
+#module "ide.assets"
+#import "kryon.h"
+#import <string.h>
+#import <stdlib.h>
+state :: #import "ide/state"
+
+krait_asset_scan :: (root: const char*) -> int #extern
+krait_asset_count :: () -> int #extern
+krait_asset_path :: (index: int) -> const char* #extern
+krait_asset_is_image :: (index: int) -> int #extern
+
+assets_scroll :: int #global
+assets_scanned_path :: [1024] char #global
+
+scan_assets :: (st: state.IdeState*) {
+    if st->project.loaded == 0 {
+        return
+    }
+    if strcmp(assets_scanned_path, st->project.path) != 0 {
+        krait_asset_scan(st->project.path)
+        snprintf(assets_scanned_path, sizeof(assets_scanned_path), "%s",
+                 st->project.path)
+        assets_scroll = 0
+    }
+}
+
+draw_assets :: (bounds: Rectangle, st: state.IdeState*) {
+    scan_assets(st)
+    DrawRectangleRec(bounds, GetThemeSurface())
+    pad := ScaleUIPx(8)
+    DrawUIText("Assets", (int)bounds.x + pad, (int)bounds.y + pad,
+               ScaleUIPx(15), GetThemeText())
+    count := krait_asset_count()
+    snprintf_temp: [64] char
+    snprintf(snprintf_temp, sizeof(snprintf_temp), "%d files", count)
+    DrawUIText(snprintf_temp,
+               (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(24),
+               ScaleUIPx(11), GetThemeIcon())
+    if count == 0 {
+        DrawUIText("No image or audio assets found",
+                   (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(44),
+                   ScaleUIPx(12), GetThemeIcon())
+        return
+    }
+    list_y := (int)bounds.y + ScaleUIPx(44) - assets_scroll
+    row_h := ScaleUIPx(34)
+    i := 0
+    while i < count {
+        row := (Rectangle){bounds.x + pad, (float)list_y,
+                           bounds.width - pad * 2, (float)row_h}
+        path := krait_asset_path(i)
+        is_img := krait_asset_is_image(i)
+        if list_y > (int)bounds.y + (int)bounds.height {
+            break
+        }
+        if list_y + row_h > (int)bounds.y {
+            icon_color := is_img != 0 ? GetThemeLink() : GetThemeIcon()
+            icon := is_img != 0 ? "IMG" : "AUD"
+            DrawUIText(icon, (int)row.x, (int)row.y + ScaleUIPx(10),
+                       ScaleUIPx(11), icon_color)
+            DrawUIText(path, (int)row.x + ScaleUIPx(40),
+                       (int)row.y + ScaleUIPx(10), ScaleUIPx(12),
+                       GetThemeText())
+            if CheckCollisionPointRec(GetMousePosition(), row) {
+                DrawRectangleLinesEx(row, 1, GetThemeButtonHover())
+                if IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
+                    state.project_set_status(st, path)
+                }
+            }
+        }
+        list_y = list_y + row_h + ScaleUIPx(2)
+        i = i + 1
+    }
+}

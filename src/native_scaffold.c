@@ -14,6 +14,31 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+static int
+krait_mkdir_p(const char *dir)
+{
+    char tmp[KRAIT_PATH_MAX];
+    size_t len;
+
+    if(dir == NULL || dir[0] == '\0')
+        return 0;
+    snprintf(tmp, sizeof(tmp), "%s", dir);
+    len = strlen(tmp);
+    if(len > 0 && tmp[len - 1] == '/')
+        tmp[len - 1] = '\0';
+    for(char *p = tmp + 1; *p != '\0'; p++) {
+        if(*p == '/') {
+            *p = '\0';
+            if(mkdir(tmp, 0755) != 0 && errno != EEXIST)
+                return 0;
+            *p = '/';
+        }
+    }
+    if(mkdir(tmp, 0755) != 0 && errno != EEXIST)
+        return 0;
+    return 1;
+}
+
 int
 krait_scaffold_project(const char *dir, char *status, int status_size)
 {

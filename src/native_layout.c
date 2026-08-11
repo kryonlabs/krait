@@ -30,7 +30,7 @@ krait_layout_file(char *path, size_t path_size)
 static int
 krait_valid_pane_view(int view)
 {
-    return view >= IDE_PANE_VIEW_EXPLORER && view <= IDE_PANE_VIEW_WIDGETS;
+    return view >= IDE_PANE_VIEW_EXPLORER && view <= IDE_PANE_VIEW_ASSETS;
 }
 
 static void

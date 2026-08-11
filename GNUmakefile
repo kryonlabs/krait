@@ -14,7 +14,7 @@ KRAIT = $(BUILD_DIR)/bin/krait
 KRAIT_GEN = $(BUILD_DIR)/gen
 KRAIT_SRCS := $(wildcard ide/*.kry) $(wildcard modules/*/*.kry)
 KRAIT_OBJS := $(patsubst %.kry,$(KRAIT_GEN)/%.o,$(KRAIT_SRCS))
-KRAIT_NATIVE_SRCS := src/main.c src/native.c
+KRAIT_NATIVE_SRCS := src/main.c $(wildcard src/native_*.c)
 KRAIT_NATIVE_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/src/%.o,$(KRAIT_NATIVE_SRCS))
 
 KC = $(KRYON_BUILD_DIR)/bin/kc
