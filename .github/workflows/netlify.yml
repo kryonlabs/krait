@@ -63,8 +63,8 @@ jobs:
           set -euo pipefail
           auth_token="$(printf '%s' "$NETLIFY_AUTH_TOKEN" | tr -d '\r\n')"
           site_id="$(printf '%s' "$NETLIFY_SITE_ID" | tr -d '\r\n')"
-          test -n "$auth_token" || { echo "::error::NETLIFY_AUTH_TOKEN is empty or missing"; exit 1; }
-          test -n "$site_id" || { echo "::error::NETLIFY_SITE_ID is empty or missing; use the Netlify Site ID, not the site URL"; exit 1; }
+          test -n "$auth_token" || { echo "::notice::NETLIFY_AUTH_TOKEN is empty or missing; skipping Netlify deploy"; exit 0; }
+          test -n "$site_id" || { echo "::notice::NETLIFY_SITE_ID is empty or missing; skipping Netlify deploy"; exit 0; }
           netlify deploy \
             --dir build/site \
             --alias "pr-${{ github.event.pull_request.number }}" \
@@ -96,8 +96,8 @@ jobs:
           set -euo pipefail
           auth_token="$(printf '%s' "$NETLIFY_AUTH_TOKEN" | tr -d '\r\n')"
           site_id="$(printf '%s' "$NETLIFY_SITE_ID" | tr -d '\r\n')"
-          test -n "$auth_token" || { echo "::error::NETLIFY_AUTH_TOKEN is empty or missing"; exit 1; }
-          test -n "$site_id" || { echo "::error::NETLIFY_SITE_ID is empty or missing; use the Netlify Site ID, not the site URL"; exit 1; }
+          test -n "$auth_token" || { echo "::notice::NETLIFY_AUTH_TOKEN is empty or missing; skipping Netlify deploy"; exit 0; }
+          test -n "$site_id" || { echo "::notice::NETLIFY_SITE_ID is empty or missing; skipping Netlify deploy"; exit 0; }
           netlify deploy \
             --dir build/site \
             --prod \
