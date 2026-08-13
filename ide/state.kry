@@ -81,6 +81,13 @@
     IDE_NAV_FILES,
 }
 
+#enum {
+    IDE_ARTIFACT_KRY,
+    IDE_ARTIFACT_KIR,
+    IDE_ARTIFACT_KRB,
+    IDE_ARTIFACT_C,
+}
+
 Diagnostic :: struct {
     path: [512] char
     line: int
@@ -178,6 +185,16 @@ OpenFile :: struct {
     undo_count: int
     redo: [64] EditorHistoryEntry
     redo_count: int
+    artifact_tab: int
+    artifact_source: [131072] char
+    artifact_name: [256] char
+    artifact_path: [1024] char
+    artifact_cursor: int
+    artifact_focused: int
+    artifact_scroll: int
+    artifact_dirty: int
+    artifact_loaded: int
+    artifact_kind: int
 }
 
 IdeState :: struct {

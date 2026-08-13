@@ -36,8 +36,9 @@ KC = $(KRYON_BUILD_DIR)/bin/kc
 # Detect a kc built for the wrong platform (e.g. a FreeBSD binary on Linux):
 # the kernel refuses to exec it, so the shell returns 126/127. When that
 # happens, delete the stale binary so make's rule rebuilds it for the host.
-KC_RUNNABLE := $(shell [ -x "$(KC)" ] && "$(KC)" >/dev/null 2>&1; \
-    case $$? in 126|127) echo no;; *) echo yes;; esac)
+KC_RUNNABLE := $(shell if [ ! -x "$(KC)" ]; then echo yes; \
+    elif "$(KC)" >/dev/null 2>&1; then echo yes; \
+    else rc=$$?; if [ $$rc -eq 126 ] || [ $$rc -eq 127 ]; then echo no; else echo yes; fi; fi)
 KRYON_LIB = $(KRYON_DIR)/libkryon.a
 RAYLIB_A = $(KRYON_BUILD_DIR)/raylib/libraylib.a
 KRYON_LIBOQS_A = $(KRYON_BUILD_DIR)/vendor/liboqs/lib/liboqs.a

@@ -110,6 +110,12 @@ int krait_preview_build(IdeState *st, char *status, int status_size);
 int krait_preview_draw(IdeState *st, const char *rel_path, Rectangle viewport,
                        char *status, int status_size);
 void krait_preview_unload(void);
+int krait_artifact_generate(const char *root, const char *rel_source, int kind,
+                            char *out, int out_size, char *artifact_path,
+                            int artifact_path_size, char *status,
+                            int status_size);
+int krait_artifact_save_binary(const char *generated_path,
+                               const char *dest_path);
 int krait_live_draw_canvas(const char *root, const char *rel_path, int w, int h,
                            char *status, int status_size);
 int krait_game_node_args(const char *q, char args[8][256], char *type,

@@ -7,11 +7,19 @@ mods :: #import "ide/modules"
 
 kry_fs_read_file :: (path: const char*, buf: char*, cap: int) -> int #extern
 kry_fs_write_file :: (path: const char*, text: const char*, len: int) -> int #extern
+krait_artifact_generate :: (root: const char*, rel_source: const char*,
+                            kind: int, out: char*, out_size: int,
+                            artifact_path: char*, artifact_path_size: int,
+                            status: char*, status_size: int) -> int #extern
+krait_artifact_save_binary :: (generated_path: const char*,
+                               dest_path: const char*) -> int #extern
 
 #private
 
 source_tabs :: [12] UITab #global
 source_tab_labels :: [12][300] char #global
+artifact_tabs :: [4] UITab #global
+artifact_tab_labels :: [4][16] char #global
 
 mod_key_down :: () -> int {
     return IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL) ||
@@ -55,6 +63,16 @@ editor_file_history_clear :: (f: state.OpenFile*) {
     f->snapshot_cursor = 0
     f->snapshot_scroll = 0
     f->snapshot_revision = 0
+    f->artifact_tab = state.IDE_ARTIFACT_KRY
+    f->artifact_source[0] = 0
+    f->artifact_name[0] = 0
+    f->artifact_path[0] = 0
+    f->artifact_cursor = 0
+    f->artifact_focused = 0
+    f->artifact_scroll = 0
+    f->artifact_dirty = 0
+    f->artifact_loaded = 0
+    f->artifact_kind = state.IDE_ARTIFACT_KRY
 }
 
 editor_history_clear_redo :: (f: state.OpenFile*) {
@@ -247,6 +265,16 @@ editor_load_into_slot :: (st: state.IdeState*, slot: state.OpenFile*,
     slot->dirty = 0
     slot->revision = 0
     slot->saved_revision = 0
+    slot->artifact_tab = state.IDE_ARTIFACT_KRY
+    slot->artifact_source[0] = 0
+    slot->artifact_name[0] = 0
+    slot->artifact_path[0] = 0
+    slot->artifact_cursor = 0
+    slot->artifact_focused = 0
+    slot->artifact_scroll = 0
+    slot->artifact_dirty = 0
+    slot->artifact_loaded = 0
+    slot->artifact_kind = state.IDE_ARTIFACT_KRY
     state.project_set_status(st, full)
     editor_snapshot_capture(slot)
     return 1
@@ -326,6 +354,10 @@ editor_save_active :: (st: state.IdeState*) {
     if f == NULL {
         return
     }
+    if f->artifact_tab != state.IDE_ARTIFACT_KRY {
+        editor_save_artifact(st, f)
+        return
+    }
     len := strlen(f->source)
     if kry_fs_write_file(f->path, f->source, len) < 0 {
         state.project_set_status(st, "Save failed")
@@ -373,6 +405,145 @@ editor_save_dirty_preview_files :: (st: state.IdeState*) -> int {
         saved = saved + 1
     }
     return saved
+}
+
+is_kry_file :: (name: const char*) -> int {
+    len := strlen(name)
+    return len >= 4 && strcmp(name + len - 4, ".kry") == 0
+}
+
+artifact_ext :: (kind: int) -> const char* {
+    if kind == state.IDE_ARTIFACT_KIR {
+        return ".kir"
+    }
+    if kind == state.IDE_ARTIFACT_KRB {
+        return ".krb"
+    }
+    if kind == state.IDE_ARTIFACT_C {
+        return ".c"
+    }
+    return ".kry"
+}
+
+artifact_label :: (kind: int) -> const char* {
+    if kind == state.IDE_ARTIFACT_KIR {
+        return "kir"
+    }
+    if kind == state.IDE_ARTIFACT_KRB {
+        return "krb"
+    }
+    if kind == state.IDE_ARTIFACT_C {
+        return "c"
+    }
+    return "kry"
+}
+
+artifact_dest_path :: (st: state.IdeState*, f: state.OpenFile*, kind: int,
+                       out: char*, out_size: int) {
+    snprintf(out, out_size, "%s/%s", st->project.path, f->name)
+    len := strlen(out)
+    if len >= 4 && strcmp(out + len - 4, ".kry") == 0 {
+        out[len - 4] = 0
+    }
+    snprintf(out + strlen(out), out_size - strlen(out), "%s", artifact_ext(kind))
+}
+
+artifact_generate :: (st: state.IdeState*, f: state.OpenFile*, kind: int) -> int {
+    status: [256] char
+
+    if f == NULL || kind == state.IDE_ARTIFACT_KRY {
+        return 1
+    }
+    if f->artifact_loaded != 0 && f->artifact_kind == kind &&
+       f->artifact_dirty == 0 {
+        return 1
+    }
+    f->artifact_source[0] = 0
+    f->artifact_name[0] = 0
+    f->artifact_path[0] = 0
+    f->artifact_cursor = 0
+    f->artifact_scroll = 0
+    f->artifact_focused = 0
+    if krait_artifact_generate(st->project.path, f->name, kind,
+                               f->artifact_source, sizeof(f->artifact_source),
+                               f->artifact_path, sizeof(f->artifact_path),
+                               status, sizeof(status)) == 0 {
+        snprintf(f->artifact_source, sizeof(f->artifact_source),
+                 "Could not generate %s artifact.\n%s\n",
+                 artifact_label(kind), status)
+        f->artifact_loaded = 1
+        f->artifact_dirty = 0
+        f->artifact_kind = kind
+        state.project_set_status(st, "Artifact generation failed")
+        return 0
+    }
+    snprintf(f->artifact_name, sizeof(f->artifact_name), "%s%s",
+             f->name, artifact_ext(kind))
+    f->artifact_loaded = 1
+    f->artifact_dirty = 0
+    f->artifact_kind = kind
+    state.project_set_status(st, status)
+    return 1
+}
+
+editor_save_artifact :: (st: state.IdeState*, f: state.OpenFile*) {
+    dest: [1024] char
+    kind := f->artifact_tab
+
+    artifact_generate(st, f, kind)
+    artifact_dest_path(st, f, kind, dest, sizeof(dest))
+    if kind == state.IDE_ARTIFACT_KRB {
+        if krait_artifact_save_binary(f->artifact_path, dest) == 0 {
+            state.project_set_status(st, "KRB save failed")
+            return
+        }
+    } else {
+        len := strlen(f->artifact_source)
+        if kry_fs_write_file(dest, f->artifact_source, len) < 0 {
+            state.project_set_status(st, "Artifact save failed")
+            return
+        }
+    }
+    f->artifact_dirty = 0
+    state.project_set_status(st, "Artifact saved")
+}
+
+draw_artifact_tabs :: (bounds: Rectangle, st: state.IdeState*,
+                       f: state.OpenFile*) {
+    if f == NULL || is_kry_file(f->name) == 0 {
+        return
+    }
+    for int i = 0; i < 4; i++ {
+        kind := i
+        if kind == f->artifact_tab && f->artifact_dirty != 0 {
+            snprintf(artifact_tab_labels[i], sizeof(artifact_tab_labels[i]),
+                     "%s *", artifact_label(kind))
+        } else {
+            snprintf(artifact_tab_labels[i], sizeof(artifact_tab_labels[i]),
+                     "%s", artifact_label(kind))
+        }
+        artifact_tabs[i].label = artifact_tab_labels[i]
+        artifact_tabs[i].icon = (Texture2D){0}
+        artifact_tabs[i].icon_size = 0
+        artifact_tabs[i].disabled = 0
+        artifact_tabs[i].accent = kind == state.IDE_ARTIFACT_KRY ?
+            (Color){0} : (Color){244, 137, 61, 255}
+        artifact_tabs[i].italic = kind == state.IDE_ARTIFACT_KRY ? 0 : 1
+        artifact_tabs[i].closeable = 0
+    }
+    clicked := DrawUITabBar((TabBarProps){
+        bounds, artifact_tabs, 4, f->artifact_tab,
+        ScaleUIPx(12), ScaleUIPx(56), ScaleUIPx(92),
+        NULL, 0, NULL
+    })
+    if clicked >= 0 {
+        f->artifact_tab = clicked
+        f->focused = clicked == state.IDE_ARTIFACT_KRY ? 1 : 0
+        f->artifact_focused = clicked == state.IDE_ARTIFACT_KRY ? 0 : 1
+        if clicked != state.IDE_ARTIFACT_KRY {
+            artifact_generate(st, f, clicked)
+        }
+    }
 }
 
 draw_tabs :: (bounds: Rectangle, st: state.IdeState*) {
@@ -430,6 +601,14 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
     if f == NULL {
         return
     }
+    if is_kry_file(f->name) != 0 {
+        artifact_bounds := (Rectangle){body.x, body.y, body.width, (float)tab_h}
+        draw_artifact_tabs(artifact_bounds, st, f)
+        body.y = body.y + (float)tab_h
+        body.height = body.height - (float)tab_h
+    } else {
+        f->artifact_tab = state.IDE_ARTIFACT_KRY
+    }
     editor_style := (UITextInputStyle){
         GetThemeSurface(),
         GetThemeButton(),
@@ -439,6 +618,47 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
         0,
         ScaleUIPx(14),
         ScaleUIPx(12)
+    }
+    artifact_style := (UITextInputStyle){
+        GetThemeSurface(),
+        GetThemeButton(),
+        (Color){244, 137, 61, 255},
+        (Color){244, 137, 61, 255},
+        (Color){244, 137, 61, 255},
+        0,
+        ScaleUIPx(14),
+        ScaleUIPx(12)
+    }
+    if f->artifact_tab != state.IDE_ARTIFACT_KRY {
+        artifact_generate(st, f, f->artifact_tab)
+        before_artifact_len := strlen(f->artifact_source)
+        if f->artifact_tab == state.IDE_ARTIFACT_KRB {
+            DrawUIReadonlyTextBox((ReadonlyTextBoxProps){
+                body, f->artifact_source, ScaleUIPx(14), artifact_style,
+                ScaleUIPx(6)
+            })
+            f->artifact_focused = 0
+        } else {
+            changed := DrawUITextArea((TextAreaProps){
+                body, f->artifact_source, sizeof(f->artifact_source),
+                &f->artifact_cursor, &f->artifact_focused, &f->artifact_scroll,
+                sizeof(f->artifact_source) - 1, ScaleUIPx(14), ScaleUIPx(6),
+                3002, "Generated", f->artifact_tab == state.IDE_ARTIFACT_C ?
+                UI_SYNTAX_C : UI_SYNTAX_KRY,
+                artifact_style, (UITextInputFilter){0}, NULL
+            })
+            after_artifact_len := strlen(f->artifact_source)
+            if changed != 0 || after_artifact_len != before_artifact_len {
+                f->artifact_dirty = 1
+            }
+        }
+        if f->artifact_focused != 0 {
+            st->console_focused = 0
+        }
+        if mod_key_down() && IsKeyPressed(KEY_S) {
+            editor_save_artifact(st, f)
+        }
+        return
     }
     # Undo/redo before the textarea consumes the keypress.
     if f->focused != 0 && mod_key_down() {
@@ -475,6 +695,8 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
         f->revision = f->revision + 1
         f->dirty = f->revision != f->saved_revision ? 1 : 0
         f->preview = 0
+        f->artifact_loaded = 0
+        f->artifact_dirty = 0
         if mods.file_affects_preview(st, f->name) != 0 {
             st->preview_dirty = 1
             st->last_edit_time = GetTime()
