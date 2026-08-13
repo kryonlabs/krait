@@ -1,7 +1,7 @@
 CC ?= cc
-BUILD_DIR ?= build
+BUILD_DIR ?= build/$(KRYON_PLATFORM)-$(KRYON_ARCH)
 SITE_DIR ?= docs/site
-SITE_BUILD_DIR ?= $(BUILD_DIR)/site
+SITE_BUILD_DIR ?= build/site
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 INSTALL ?= install
@@ -39,7 +39,7 @@ KC = $(KRYON_BUILD_DIR)/bin/kc
 KC_RUNNABLE := $(shell if [ ! -x "$(KC)" ]; then echo yes; \
     elif "$(KC)" >/dev/null 2>&1; then echo yes; \
     else rc=$$?; if [ $$rc -eq 126 ] || [ $$rc -eq 127 ]; then echo no; else echo yes; fi; fi)
-KRYON_LIB = $(KRYON_DIR)/libkryon.a
+KRYON_LIB = $(KRYON_BUILD_DIR)/libkryon.a
 RAYLIB_A = $(KRYON_BUILD_DIR)/raylib/libraylib.a
 KRYON_LIBOQS_A = $(KRYON_BUILD_DIR)/vendor/liboqs/lib/liboqs.a
 KRYON_CURL_A = $(KRYON_BUILD_DIR)/vendor/curl/lib/libcurl.a

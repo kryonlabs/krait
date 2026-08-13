@@ -12,7 +12,7 @@ GMAKE_ARGS += ARGS='${ARGS}'
 
 all krait run dev test smoke clean install uninstall kryon-deps boundary-check:
 	@command -v $(GMAKE) >/dev/null 2>&1 || { \
-		echo "Krait uses GNU make; install gmake or run build/bin/krait directly."; \
+		echo "Krait uses GNU make; install gmake or run build/<platform>-<arch>/bin/krait directly."; \
 		exit 1; \
 	}
 	@$(GMAKE) -f GNUmakefile ${.TARGET} $(GMAKE_ARGS)

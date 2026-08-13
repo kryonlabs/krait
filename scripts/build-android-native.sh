@@ -85,14 +85,14 @@ $AR rcs $KRYON_OUT/libkryon.a $objs
 
 # --- 3. krait sources (arm64) ---------------------------------------------
 echo "==> krait (arm64)"
-KRAIT_INC="-I$KRYON/include -I$KRYON/src/ui -I$KRYON/vendor/clay -Ibuild/gen -Isrc"
+KRAIT_INC="-I$KRYON/include -I$KRYON/src/ui -I$KRYON/vendor/clay -Ibuild/linux-x86_64/gen -Isrc"
 kobjs=""
 for f in src/*.c; do
     o=$KRAIT_OUT/obj/$(basename "$f" .c).o
     $CC -c -std=c99 -O1 -fPIC -w $DEFS $KRAIT_INC "$f" -o "$o"
     kobjs="$kobjs $o"
 done
-for f in build/gen/ide/*.c build/gen/modules/*/*.c; do
+for f in build/linux-x86_64/gen/ide/*.c build/linux-x86_64/gen/modules/*/*.c; do
     [ -f "$f" ] || continue
     o=$KRAIT_OUT/obj/gen_$(echo "$f" | tr '/' '_').o
     extra=""
