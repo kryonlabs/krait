@@ -113,7 +113,7 @@ krait_load_ui_font(void)
 
     for(int i = 0; i < source_count; i++) {
         if(RegisterUIFontFileSource("default", sources[i], codepoints,
-                                     codepoint_count, 1)) {
+                                     codepoint_count)) {
             UseUIFont("default");
             return 1;
         }
