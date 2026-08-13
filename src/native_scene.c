@@ -23,6 +23,10 @@ typedef struct SceneNode {
     char label[128];
     char asset_path[512];
     Rectangle bounds;
+    int font_size;
+    int layout_parent;
+    int offset_x;
+    int offset_y;
     int source_line;
     int source_start;
     int source_end;
@@ -145,6 +149,15 @@ krait_scene_add(SceneNode *out, int count, int cap, int parent, int depth,
     if(asset_path != NULL)
         snprintf(node->asset_path, sizeof(node->asset_path), "%s", asset_path);
     node->bounds = bounds;
+    node->layout_parent = -1;
+    node->offset_x = 0;
+    node->offset_y = 0;
+    /* If inside a GROUP container, compute offset from parent origin */
+    if(parent >= 0 && parent < count && out[parent].kind == KRAIT_SCENE_NODE_GROUP) {
+        node->layout_parent = parent;
+        node->offset_x = (int)bounds.x - (int)out[parent].bounds.x;
+        node->offset_y = (int)bounds.y - (int)out[parent].bounds.y;
+    }
     node->source_line = line;
     node->source_start = source_start;
     node->source_end = source_end;
@@ -219,6 +232,7 @@ krait_scene_scan_line(const char *line, SceneNode *out, int count, int cap,
     argc = krait_live_call_args(q, "Text", args, 8);
     if(argc == 5) {
         int text_w;
+        int font_size = 0;
 
         s = args[0];
         label[0] = '\0';
@@ -227,13 +241,41 @@ krait_scene_scan_line(const char *line, SceneNode *out, int count, int cap,
             x = 0;
         if(!krait_live_eval_int(args[2], &y))
             y = 0;
+        (void)krait_live_eval_int(args[3], &font_size);
         text_w = (int)strlen(label) * ScaleUIPx(8);
         if(text_w < ScaleUIPx(24))
             text_w = ScaleUIPx(24);
         bounds = (Rectangle){x, y, text_w, ScaleUIPx(18)};
-        return krait_scene_add(out, count, cap, parent, depth,
+        count = krait_scene_add(out, count, cap, parent, depth,
                                KRAIT_SCENE_NODE_TEXT, label, NULL, bounds,
                                source_line, source_start, source_end);
+        if(count > 0)
+            out[count - 1].font_size = font_size;
+        return count;
+    }
+    argc = krait_live_call_args(q, "DrawText", args, 8);
+    if(argc == 5) {
+        int text_w;
+        int font_size = 0;
+
+        s = args[0];
+        label[0] = '\0';
+        (void)krait_live_parse_string(&s, label, sizeof(label));
+        if(!krait_live_eval_int(args[1], &x))
+            x = 0;
+        if(!krait_live_eval_int(args[2], &y))
+            y = 0;
+        (void)krait_live_eval_int(args[3], &font_size);
+        text_w = (int)strlen(label) * ScaleUIPx(8);
+        if(text_w < ScaleUIPx(24))
+            text_w = ScaleUIPx(24);
+        bounds = (Rectangle){x, y, text_w, ScaleUIPx(18)};
+        count = krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_TEXT, label, NULL, bounds,
+                               source_line, source_start, source_end);
+        if(count > 0)
+            out[count - 1].font_size = font_size;
+        return count;
     }
     argc = krait_live_call_args(q, "Rect", args, 8);
     if(argc == 6) {
@@ -291,6 +333,275 @@ krait_scene_scan_line(const char *line, SceneNode *out, int count, int cap,
                                asset[0] != '\0' ? asset : "Picture", asset,
                                bounds, source_line, source_start, source_end);
     }
+    argc = krait_live_call_args(q, "TextField", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        if(!krait_live_next_scale_arg(&scan, &x))
+            x = 0;
+        if(!krait_live_next_scale_arg(&scan, &y))
+            y = 0;
+        if(!krait_live_next_scale_arg(&scan, &w))
+            w = 0;
+        if(!krait_live_next_scale_arg(&scan, &h))
+            h = 0;
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_TEXT_FIELD,
+                               "Text Field", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "Toggle", args, 8);
+    if(argc >= 4) {
+        if(!krait_live_eval_int(args[0], &x))
+            x = 0;
+        if(!krait_live_eval_int(args[1], &y))
+            y = 0;
+        if(!krait_live_eval_int(args[2], &w))
+            w = 0;
+        if(!krait_live_eval_int(args[3], &h))
+            h = 0;
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_TOGGLE,
+                               "Toggle", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "Slider", args, 8);
+    if(argc >= 4) {
+        if(!krait_live_eval_int(args[1], &x))
+            x = 0;
+        if(!krait_live_eval_int(args[2], &y))
+            y = 0;
+        if(!krait_live_eval_int(args[3], &w))
+            w = 0;
+        h = ScaleUIPx(56);
+        bounds = (Rectangle){x, y, w, (float)h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_SLIDER, "Slider", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "Line", args, 8);
+    if(argc == 5) {
+        int x2 = 0, y2 = 0;
+        if(!krait_live_eval_int(args[0], &x))
+            x = 0;
+        if(!krait_live_eval_int(args[1], &y))
+            y = 0;
+        if(!krait_live_eval_int(args[2], &x2))
+            x2 = 0;
+        if(!krait_live_eval_int(args[3], &y2))
+            y2 = 0;
+        int minx = x < x2 ? x : x2;
+        int miny = y < y2 ? y : y2;
+        bounds = (Rectangle){(float)minx, (float)miny,
+                             (float)(x2 > x ? x2 - x : x - x2),
+                             (float)(y2 > y ? y2 - y : y - y2)};
+        if(bounds.width < 2) bounds.width = 2;
+        if(bounds.height < 2) bounds.height = 2;
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_RECTANGLE, "Line", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "TextInRect", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        s = strchr(args[0], '"');
+        label[0] = '\0';
+        if(s != NULL)
+            (void)krait_live_parse_string(&s, label, sizeof(label));
+        x = 0; y = 0; w = 0; h = 0;
+        if(!krait_live_next_scale_arg(&scan, &x))
+            x = 0;
+        if(!krait_live_next_scale_arg(&scan, &y))
+            y = 0;
+        if(!krait_live_next_scale_arg(&scan, &w))
+            w = 0;
+        if(!krait_live_next_scale_arg(&scan, &h))
+            h = 0;
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_TEXT,
+                               label[0] != '\0' ? label : "Text", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "Progress", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        if(!krait_live_next_scale_arg(&scan, &x))
+            x = 0;
+        if(!krait_live_next_scale_arg(&scan, &y))
+            y = 0;
+        if(!krait_live_next_scale_arg(&scan, &w))
+            w = 0;
+        if(!krait_live_next_scale_arg(&scan, &h))
+            h = 0;
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_RECTANGLE, "Progress", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "ImageBox", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        if(!krait_live_next_scale_arg(&scan, &x))
+            x = 0;
+        if(!krait_live_next_scale_arg(&scan, &y))
+            y = 0;
+        if(!krait_live_next_scale_arg(&scan, &w))
+            w = 0;
+        if(!krait_live_next_scale_arg(&scan, &h))
+            h = 0;
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_SPRITE, "Image", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "LabelFrame", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        s = strchr(args[0], '"');
+        label[0] = '\0';
+        if(s != NULL)
+            (void)krait_live_parse_string(&s, label, sizeof(label));
+        x = 0; y = 0; w = 0; h = 0;
+        if(!krait_live_next_scale_arg(&scan, &x))
+            x = 0;
+        if(!krait_live_next_scale_arg(&scan, &y))
+            y = 0;
+        if(!krait_live_next_scale_arg(&scan, &w))
+            w = 0;
+        if(!krait_live_next_scale_arg(&scan, &h))
+            h = 0;
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_GROUP,
+                               label[0] != '\0' ? label : "Frame", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "Separator", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        if(!krait_live_next_scale_arg(&scan, &x))
+            x = 0;
+        if(!krait_live_next_scale_arg(&scan, &y))
+            y = 0;
+        if(!krait_live_next_scale_arg(&scan, &w))
+            w = 0;
+        if(!krait_live_next_scale_arg(&scan, &h))
+            h = 0;
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_RECTANGLE, "Separator", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "TabBar", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        krait_live_next_scale_arg(&scan, &x);
+        krait_live_next_scale_arg(&scan, &y);
+        krait_live_next_scale_arg(&scan, &w);
+        h = ScaleUIPx(36);
+        bounds = (Rectangle){x, y, w, (float)h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_RECTANGLE, "Tab Bar", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "BottomNav", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        krait_live_next_scale_arg(&scan, &x);
+        krait_live_next_scale_arg(&scan, &y);
+        krait_live_next_scale_arg(&scan, &w);
+        krait_live_next_scale_arg(&scan, &h);
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_RECTANGLE, "Bottom Nav", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "TopNav", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        krait_live_next_scale_arg(&scan, &x);
+        krait_live_next_scale_arg(&scan, &y);
+        krait_live_next_scale_arg(&scan, &w);
+        krait_live_next_scale_arg(&scan, &h);
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_RECTANGLE, "Top Nav", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "Combobox", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        krait_live_next_scale_arg(&scan, &x);
+        krait_live_next_scale_arg(&scan, &y);
+        krait_live_next_scale_arg(&scan, &w);
+        krait_live_next_scale_arg(&scan, &h);
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_RECTANGLE, "Combobox", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "Spinbox", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        krait_live_next_scale_arg(&scan, &x);
+        krait_live_next_scale_arg(&scan, &y);
+        krait_live_next_scale_arg(&scan, &w);
+        krait_live_next_scale_arg(&scan, &h);
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_RECTANGLE, "Spinbox", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "Checkbox", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        krait_live_next_scale_arg(&scan, &x);
+        krait_live_next_scale_arg(&scan, &y);
+        krait_live_next_scale_arg(&scan, &w);
+        krait_live_next_scale_arg(&scan, &h);
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_RECTANGLE, "Checkbox", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "Radio", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        krait_live_next_scale_arg(&scan, &x);
+        krait_live_next_scale_arg(&scan, &y);
+        krait_live_next_scale_arg(&scan, &w);
+        krait_live_next_scale_arg(&scan, &h);
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_RECTANGLE, "Radio", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
+    argc = krait_live_call_args(q, "ListBox", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        krait_live_next_scale_arg(&scan, &x);
+        krait_live_next_scale_arg(&scan, &y);
+        krait_live_next_scale_arg(&scan, &w);
+        krait_live_next_scale_arg(&scan, &h);
+        bounds = (Rectangle){x, y, w, h};
+        return krait_scene_add(out, count, cap, parent, depth,
+                               KRAIT_SCENE_NODE_RECTANGLE, "List Box", NULL,
+                               bounds, source_line, source_start, source_end);
+    }
     if(krait_game_node_args(q, args, node_type, sizeof(node_type),
                             label, sizeof(label), &x, &y, &w, &h)) {
         bounds = (Rectangle){x, y, w, h};
@@ -327,11 +638,28 @@ krait_scene_scan(const char *root, const char *rel_path)
     krait_join(path, sizeof(path), root, rel_path);
     if(!krait_read_file_alloc(path, &text, &len))
         return 0;
-    if(!krait_live_find_named_body(text, "screen", NULL, &body, &body_end)) {
-        free(text);
-        return 0;
+    /* Scan the screen body, or fall back to the frame function body,
+     * or fall back to the entire file if neither exists. */
+    {
+        int found_screen = krait_live_find_named_body(text, "screen", NULL,
+                                                       &body, &body_end);
+        if(found_screen) {
+            snprintf(screen_label, sizeof(screen_label), "Screen");
+        } else {
+            char frame_name[128];
+            frame_name[0] = '\0';
+            if(krait_live_find_frame_name(text, frame_name, sizeof(frame_name)) &&
+               krait_live_find_named_body(text, frame_name, NULL, &body, &body_end)) {
+                const char *base = krait_basename(rel_path);
+                snprintf(screen_label, sizeof(screen_label), "%s", base);
+            } else {
+                body = text;
+                body_end = text + len;
+                const char *base = krait_basename(rel_path);
+                snprintf(screen_label, sizeof(screen_label), "%s", base);
+            }
+        }
     }
-    snprintf(screen_label, sizeof(screen_label), "%s", rel_path);
     count = krait_scene_add(out, 0, cap, -1, 0, KRAIT_SCENE_NODE_SCREEN,
                             screen_label, NULL, (Rectangle){0, 0, 0, 0},
                             krait_live_line_for_ptr(text, body),
@@ -339,20 +667,55 @@ krait_scene_scan(const char *root, const char *rel_path)
     stack[stack_depth++] = 0;
     line = krait_live_line_for_ptr(text, body);
     for(p = body; p < body_end && count < cap;) {
-        const char *nl = memchr(p, '\n', (size_t)(body_end - p));
-        char stmt[4096];
-        size_t n = nl != NULL ? (size_t)(nl - p) : (size_t)(body_end - p);
+        const char *stmt_start = p;
+        const char *stmt_end = body_end;
+        int paren_depth = 0;
+        int brace_depth = 0;
+        int in_string = 0;
+        int line_count = 0;
 
-        if(n >= sizeof(stmt))
-            n = sizeof(stmt) - 1;
-        memcpy(stmt, p, n);
-        stmt[n] = '\0';
-        count = krait_scene_scan_line(stmt, out, count, cap, stack,
-                                      &stack_depth, line, (int)(p - text),
-                                      (int)(p + n - text));
-        if(nl == NULL)
+        for(const char *pp = p; pp < body_end; pp++) {
+            if(in_string) {
+                if(*pp == '\\' && pp + 1 < body_end) {
+                    pp++;
+                    continue;
+                }
+                if(*pp == '"')
+                    in_string = 0;
+            } else if(*pp == '"') {
+                in_string = 1;
+            } else if(*pp == '(' || *pp == '[') {
+                paren_depth++;
+            } else if(*pp == ')' || *pp == ']') {
+                paren_depth--;
+            } else if(*pp == '{') {
+                brace_depth++;
+            } else if(*pp == '}') {
+                brace_depth--;
+            } else if(*pp == '\n' && paren_depth <= 0 && brace_depth <= 0) {
+                stmt_end = pp;
+                break;
+            }
+        }
+        {
+            char stmt[4096];
+            size_t n = (size_t)(stmt_end - stmt_start);
+            if(n >= sizeof(stmt))
+                n = sizeof(stmt) - 1;
+            memcpy(stmt, stmt_start, n);
+            stmt[n] = '\0';
+            count = krait_scene_scan_line(stmt, out, count, cap, stack,
+                                          &stack_depth, line,
+                                          (int)(stmt_start - text),
+                                          (int)(stmt_end - text));
+        }
+        for(const char *pp = stmt_start; pp < stmt_end; pp++)
+            if(*pp == '\n')
+                line_count++;
+        line += line_count + 1;
+        if(stmt_end >= body_end)
             break;
-        p = nl + 1;
+        p = stmt_end + 1;
         line++;
     }
     free(text);
@@ -415,6 +778,34 @@ krait_scene_editable(int index)
 {
     SceneNode *node = krait_scene_node(index);
     return node != NULL ? node->editable : 0;
+}
+
+int
+krait_scene_font_size(int index)
+{
+    SceneNode *node = krait_scene_node(index);
+    return node != NULL ? node->font_size : 0;
+}
+
+int
+krait_scene_layout_parent(int index)
+{
+    SceneNode *node = krait_scene_node(index);
+    return node != NULL ? node->layout_parent : -1;
+}
+
+int
+krait_scene_offset_x(int index)
+{
+    SceneNode *node = krait_scene_node(index);
+    return node != NULL ? node->offset_x : 0;
+}
+
+int
+krait_scene_offset_y(int index)
+{
+    SceneNode *node = krait_scene_node(index);
+    return node != NULL ? node->offset_y : 0;
 }
 
 static int
@@ -493,6 +884,9 @@ krait_scene_nudge(const char *root, const char *rel_path, int index,
     if(index < 0 || index >= g_scene_node_count)
         return 0;
     node = g_scene_nodes[index];
+    fprintf(stderr, "[nudge] index=%d kind=%d editable=%d dx=%d dy=%d dw=%d dh=%d span=%ld..%ld\n",
+            index, node.kind, node.editable, dx, dy, dw, dh,
+            (long)node.source_start, (long)node.source_end);
     if(!node.editable) {
         if(status != NULL && status_size > 0)
             snprintf(status, (size_t)status_size, "Node is read-only");
@@ -504,7 +898,10 @@ krait_scene_nudge(const char *root, const char *rel_path, int index,
             node.kind != KRAIT_SCENE_NODE_RECTANGLE &&
             node.kind != KRAIT_SCENE_NODE_BUTTON &&
             node.kind != KRAIT_SCENE_NODE_SPRITE &&
-            node.kind != KRAIT_SCENE_NODE_GAME_OBJECT) {
+            node.kind != KRAIT_SCENE_NODE_GAME_OBJECT &&
+            node.kind != KRAIT_SCENE_NODE_TEXT_FIELD &&
+            node.kind != KRAIT_SCENE_NODE_TOGGLE &&
+            node.kind != KRAIT_SCENE_NODE_SLIDER) {
         if(status != NULL && status_size > 0)
             snprintf(status, (size_t)status_size, "Node kind is not editable yet");
         return 0;
@@ -578,8 +975,9 @@ typedef struct KraitPropSpec {
 } KraitPropSpec;
 
 static const KraitPropSpec kry_props_text[] = {
-    {"label", "Label", KRYON_PROPERTY_STRING},
+    {"label", "Text", KRYON_PROPERTY_STRING},
     {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+    {"font_size", "Font Size", KRYON_PROPERTY_INT},
 };
 
 static const KraitPropSpec kry_props_rect[] = {
@@ -605,12 +1003,26 @@ static const KraitPropSpec kry_props_game[] = {
     {"position", "Position", KRYON_PROPERTY_RECTANGLE},
 };
 
+static const KraitPropSpec kry_props_text_field[] = {
+    {"label", "Text", KRYON_PROPERTY_STRING},
+    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+};
+
+static const KraitPropSpec kry_props_toggle[] = {
+    {"label", "Label", KRYON_PROPERTY_STRING},
+    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+};
+
+static const KraitPropSpec kry_props_slider[] = {
+    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+};
+
 static const KraitPropSpec *
 krait_prop_specs(int kind, int *out_count)
 {
     switch(kind) {
     case KRAIT_SCENE_NODE_TEXT:
-        *out_count = 2; return kry_props_text;
+        *out_count = 3; return kry_props_text;
     case KRAIT_SCENE_NODE_RECTANGLE:
         *out_count = 1; return kry_props_rect;
     case KRAIT_SCENE_NODE_BUTTON:
@@ -621,6 +1033,12 @@ krait_prop_specs(int kind, int *out_count)
         *out_count = 1; return kry_props_group;
     case KRAIT_SCENE_NODE_GAME_OBJECT:
         *out_count = 2; return kry_props_game;
+    case KRAIT_SCENE_NODE_TEXT_FIELD:
+        *out_count = 2; return kry_props_text_field;
+    case KRAIT_SCENE_NODE_TOGGLE:
+        *out_count = 2; return kry_props_toggle;
+    case KRAIT_SCENE_NODE_SLIDER:
+        *out_count = 1; return kry_props_slider;
     default:
         *out_count = 0; return NULL;
     }
@@ -682,6 +1100,10 @@ krait_scene_property_get(int index, const char *property_id, char *buf,
             snprintf(buf, (size_t)buf_size, "%d %d %d %d",
                      (int)node->bounds.x, (int)node->bounds.y,
                      (int)node->bounds.width, (int)node->bounds.height);
+        return 1;
+    }
+    if(strcmp(property_id, "font_size") == 0) {
+        snprintf(buf, (size_t)buf_size, "%d", node->font_size);
         return 1;
     }
     return 0;

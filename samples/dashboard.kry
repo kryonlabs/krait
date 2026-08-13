@@ -1,0 +1,106 @@
+#module "dashboard"
+#import "kryon.h"
+
+app "Dashboard" {
+    size 390 700
+    fps 60
+    frame main
+}
+
+frame main {
+    BeginDrawing()
+    ClearBackground(GetThemeBackground())
+    BeginUIFrame(GetScreenWidth(), GetScreenHeight(), GetUIScale())
+
+    Background(GetThemeBackground())
+
+    Text("Dashboard", ScaleUIPx(20), ScaleUIPx(20),
+         UI_TEXT_24, GetThemeText())
+
+    Rect(ScaleUIPx(20), ScaleUIPx(56), ScaleUIPx(165), ScaleUIPx(90),
+         GetThemeSurface(), GetThemeButton())
+    Text("Steps", ScaleUIPx(32), ScaleUIPx(68),
+         UI_TEXT_12, GetThemeIcon())
+    Text("8,432", ScaleUIPx(32), ScaleUIPx(88),
+         UI_TEXT_24, GetThemeText())
+
+    Rect(ScaleUIPx(200), ScaleUIPx(56), ScaleUIPx(165), ScaleUIPx(90),
+         GetThemeSurface(), GetThemeButton())
+    Text("Calories", ScaleUIPx(212), ScaleUIPx(68),
+         UI_TEXT_12, GetThemeIcon())
+    Text("1,240", ScaleUIPx(212), ScaleUIPx(88),
+         UI_TEXT_24, GetThemeText())
+
+    Rect(ScaleUIPx(20), ScaleUIPx(158), ScaleUIPx(165), ScaleUIPx(90),
+         GetThemeSurface(), GetThemeButton())
+    Text("Distance", ScaleUIPx(32), ScaleUIPx(170),
+         UI_TEXT_12, GetThemeIcon())
+    Text("5.2 km", ScaleUIPx(32), ScaleUIPx(190),
+         UI_TEXT_24, GetThemeText())
+
+    Rect(ScaleUIPx(200), ScaleUIPx(158), ScaleUIPx(165), ScaleUIPx(90),
+         GetThemeSurface(), GetThemeButton())
+    Text("Active", ScaleUIPx(212), ScaleUIPx(170),
+         UI_TEXT_12, GetThemeIcon())
+    Text("42 min", ScaleUIPx(212), ScaleUIPx(190),
+         UI_TEXT_24, GetThemeText())
+
+    Line(ScaleUIPx(20), ScaleUIPx(265), ScaleUIPx(370), ScaleUIPx(265),
+         GetThemeButton())
+
+    Text("Weekly Goal", ScaleUIPx(20), ScaleUIPx(275),
+         UI_TEXT_16, GetThemeText())
+    Rect(ScaleUIPx(20), ScaleUIPx(300), ScaleUIPx(350), ScaleUIPx(24),
+         GetThemeButton(), GetThemeButtonHover())
+    Rect(ScaleUIPx(20), ScaleUIPx(300), ScaleUIPx(245), ScaleUIPx(24),
+         GetThemeLink(), Fade(GetThemeLink(), 0.5))
+    Text("70%", ScaleUIPx(165), ScaleUIPx(306),
+         UI_TEXT_12, Fade(GetThemeText(), 0.8))
+
+    Text("Quick Actions", ScaleUIPx(20), ScaleUIPx(345),
+         UI_TEXT_16, GetThemeText())
+
+    Button((ButtonProps){
+        .bounds = {ScaleUIPx(20), ScaleUIPx(370), ScaleUIPx(110), ScaleUIPx(44)},
+        .label = "Start",
+        .style = UI_BUTTON_STYLE_PRIMARY,
+    })
+    Button((ButtonProps){
+        .bounds = {ScaleUIPx(140), ScaleUIPx(370), ScaleUIPx(110), ScaleUIPx(44)},
+        .label = "History",
+        .style = UI_BUTTON_STYLE_SECONDARY,
+    })
+    Button((ButtonProps){
+        .bounds = {ScaleUIPx(260), ScaleUIPx(370), ScaleUIPx(110), ScaleUIPx(44)},
+        .label = "Share",
+        .style = UI_BUTTON_STYLE_SECONDARY,
+    })
+
+    Separator(ScaleUIPx(20), ScaleUIPx(430), ScaleUIPx(350), ScaleUIPx(2), 0)
+
+    Text("Reminders", ScaleUIPx(20), ScaleUIPx(442),
+         UI_TEXT_16, GetThemeText())
+
+    Rect(ScaleUIPx(20), ScaleUIPx(468), ScaleUIPx(350), ScaleUIPx(50),
+         GetThemeSurface(), GetThemeButton())
+    Text("Morning Workout", ScaleUIPx(32), ScaleUIPx(482),
+         UI_TEXT_12, GetThemeText())
+    Text("7:00 AM", ScaleUIPx(32), ScaleUIPx(500),
+         UI_TEXT_12, GetThemeIcon())
+    workout_toggle: int = 1
+    Toggle(ScaleUIPx(310), ScaleUIPx(476), ScaleUIPx(50), ScaleUIPx(28),
+                       &workout_toggle, "Off", "On")
+
+    Rect(ScaleUIPx(20), ScaleUIPx(528), ScaleUIPx(350), ScaleUIPx(50),
+         GetThemeSurface(), GetThemeButton())
+    Text("Evening Walk", ScaleUIPx(32), ScaleUIPx(542),
+         UI_TEXT_12, GetThemeText())
+    Text("6:30 PM", ScaleUIPx(32), ScaleUIPx(560),
+         UI_TEXT_12, GetThemeIcon())
+    walk_toggle: int = 0
+    Toggle(ScaleUIPx(310), ScaleUIPx(536), ScaleUIPx(50), ScaleUIPx(28),
+                       &walk_toggle, "Off", "On")
+
+    EndUIFocus()
+    EndDrawing()
+}

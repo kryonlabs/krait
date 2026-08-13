@@ -1,0 +1,134 @@
+#module "ide.cartridge"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+
+krait_krb_open :: (root: const char*, src: const char*, status: char*, status_size: int) -> int #extern
+krait_krb_loaded :: () -> int #extern
+krait_krb_status :: () -> const char* #extern
+krait_krb_version :: () -> int #extern
+krait_krb_node_count :: () -> int #extern
+krait_krb_node_depth :: (index: int) -> int #extern
+krait_krb_node_type_name :: (index: int) -> const char* #extern
+krait_krb_node_name :: (index: int) -> const char* #extern
+krait_krb_node_text :: (index: int) -> const char* #extern
+krait_krb_node_x :: (index: int) -> int #extern
+krait_krb_node_y :: (index: int) -> int #extern
+krait_krb_node_w :: (index: int) -> int #extern
+krait_krb_node_h :: (index: int) -> int #extern
+krait_krb_node_bind_slot :: (index: int) -> int #extern
+krait_krb_string_count :: () -> int #extern
+krait_krb_import_count :: () -> int #extern
+krait_krb_op_count :: () -> int #extern
+krait_krb_op_text :: (index: int) -> const char* #extern
+krait_krb_draw :: (viewport: Rectangle) -> int #extern
+
+cartridge_scroll :: int #global
+cartridge_loaded_source :: [1024] char #global
+cartridge_selected :: int #global
+
+reload_cartridge :: (st: state.IdeState*) {
+    src := st->preview_selected_path
+    if st->project.loaded == 0 {
+        return
+    }
+    if strlen(src) == 0 {
+        return
+    }
+    if strcmp(cartridge_loaded_source, src) == 0 {
+        return
+    }
+    status: [128] char
+    krait_krb_open(st->project.path, src, status, sizeof(status))
+    snprintf(cartridge_loaded_source, sizeof(cartridge_loaded_source), "%s", src)
+    cartridge_scroll = 0
+    if cartridge_selected >= krait_krb_node_count() {
+        cartridge_selected = 0
+    }
+}
+
+draw_cartridge :: (bounds: Rectangle, st: state.IdeState*) {
+    DrawRectangleRec(bounds, GetThemeSurface())
+    pad := ScaleUIPx(8)
+
+    DrawUIText("Cartridge", (int)bounds.x + pad, (int)bounds.y + pad,
+               ScaleUIPx(15), GetThemeText())
+    reload_cartridge(st)
+    DrawUIText(krait_krb_status(), (int)bounds.x + pad,
+               (int)bounds.y + ScaleUIPx(24), ScaleUIPx(11), GetThemeIcon())
+
+    if krait_krb_loaded() == 0 {
+        return
+    }
+
+    preview_h := ScaleUIPx(96)
+    preview := (Rectangle){bounds.x + pad, bounds.y + ScaleUIPx(44),
+                           bounds.width - pad * 2, (float)preview_h}
+    DrawRectangleLinesEx(preview, 1, GetThemeButton())
+    DrawUIText("Preview", (int)preview.x + ScaleUIPx(6),
+               (int)preview.y + ScaleUIPx(4), ScaleUIPx(10), GetThemeIcon())
+    BeginScissorMode((int)preview.x, (int)preview.y,
+                     (int)preview.width, (int)preview.height)
+    krait_krb_draw(preview)
+    EndScissorMode()
+
+    tree_top := (int)preview.y + preview_h + ScaleUIPx(10)
+    DrawUIText("Nodes", (int)bounds.x + pad, tree_top, ScaleUIPx(12),
+               GetThemeText())
+    count := krait_krb_node_count()
+    row_h := ScaleUIPx(20)
+    list_y := tree_top + ScaleUIPx(20) - cartridge_scroll
+    i := 0
+    while i < count {
+        row := (Rectangle){bounds.x, (float)list_y, bounds.width, (float)row_h}
+        if list_y > (int)bounds.y + (int)bounds.height {
+            break
+        }
+        if list_y + row_h > tree_top {
+            depth := krait_krb_node_depth(i)
+            tname := krait_krb_node_type_name(i)
+            name := krait_krb_node_name(i)
+            indent_x := (int)row.x + pad + depth * ScaleUIPx(12)
+            if cartridge_selected == i {
+                DrawRectangleRec(row, GetThemeButton())
+            }
+            DrawUIText(tname, indent_x, (int)row.y + ScaleUIPx(5),
+                       ScaleUIPx(11), GetThemeIcon())
+            DrawUIText(name, indent_x + ScaleUIPx(44),
+                       (int)row.y + ScaleUIPx(5), ScaleUIPx(12),
+                       GetThemeText())
+            if CheckCollisionPointRec(GetMousePosition(), row) &&
+               IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
+                cartridge_selected = i
+            }
+        }
+        list_y = list_y + row_h
+        i = i + 1
+    }
+
+    foot := (int)bounds.y + (int)bounds.height - ScaleUIPx(64)
+    DrawUIText("Selection", (int)bounds.x + pad, foot, ScaleUIPx(12),
+               GetThemeText())
+    if cartridge_selected >= 0 && cartridge_selected < count {
+        sel := cartridge_selected
+        line: [160] char
+        snprintf(line, sizeof(line), "%s \"%s\"  %d,%d  %dx%d",
+                 krait_krb_node_type_name(sel), krait_krb_node_name(sel),
+                 krait_krb_node_x(sel), krait_krb_node_y(sel),
+                 krait_krb_node_w(sel), krait_krb_node_h(sel))
+        DrawUIText(line, (int)bounds.x + pad, foot + ScaleUIPx(16),
+                   ScaleUIPx(11), GetThemeText())
+        slot := krait_krb_node_bind_slot(sel)
+        if slot >= 0 {
+            snprintf(line, sizeof(line), "bind slot %d", slot)
+            DrawUIText(line, (int)bounds.x + pad, foot + ScaleUIPx(30),
+                       ScaleUIPx(11), GetThemeLink())
+        }
+    }
+    summary: [96] char
+    snprintf(summary, sizeof(summary), "v%d  nodes %d  strings %d  imports %d  ops %d",
+             krait_krb_version(), count, krait_krb_string_count(),
+             krait_krb_import_count(), krait_krb_op_count())
+    DrawUIText(summary, (int)bounds.x + pad, foot + ScaleUIPx(46),
+               ScaleUIPx(11), GetThemeIcon())
+}

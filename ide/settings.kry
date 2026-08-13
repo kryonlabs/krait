@@ -98,6 +98,38 @@ draw_appearance :: (body: Rectangle, st: state.IdeState*) {
     }
 }
 
+draw_panes :: (body: Rectangle, st: state.IdeState*) {
+    x := (int)body.x + ScaleUIPx(24)
+    y := (int)body.y + ScaleUIPx(22)
+    w := (int)body.width - ScaleUIPx(48)
+    if w > ScaleUIPx(420) {
+        w = ScaleUIPx(420)
+    }
+    DrawUIText("Panes", x, y, ScaleUIPx(20), GetThemeText())
+    y = y + ScaleUIPx(34)
+
+    row_h := ScaleUIPx(56)
+    DrawRectangle(x, y, w, row_h, GetThemeSurface())
+    DrawRectangleLines(x, y, w, row_h, GetThemeButton())
+    DrawUIText("Mobile preview", x + ScaleUIPx(14), y + ScaleUIPx(11),
+               ScaleUIPx(15), GetThemeText())
+    DrawUIText("Force the single-column phone layout at any window size.",
+               x + ScaleUIPx(14), y + ScaleUIPx(33),
+               GetUISmallFontSize(), GetThemeIcon())
+    toggle_x := x + w - ScaleUIPx(142)
+    toggle_y := y + (row_h - ScaleUIPx(26)) / 2
+    if DrawUIToggleSwitch(toggle_x, toggle_y, ScaleUIPx(128),
+                          ScaleUIPx(26), &st->force_mobile_layout,
+                          "Off", "On") {
+        st->force_mobile_layout = st->force_mobile_layout != 0 ? 1 : 0
+        if krait_settings_save(st) {
+            state.project_set_status(st, "Settings saved")
+        } else {
+            state.project_set_status(st, "Could not save settings")
+        }
+    }
+}
+
 draw_extensions :: (body: Rectangle, st: state.IdeState*) {
     x := (int)body.x + ScaleUIPx(24)
     y := (int)body.y + ScaleUIPx(22)
@@ -166,6 +198,8 @@ draw_settings :: (bounds: Rectangle, st: state.IdeState*) {
         draw_appearance(body, st)
     } else if st->settings_tab == SETTINGS_TAB_EXTENSIONS {
         draw_extensions(body, st)
+    } else if st->settings_tab == SETTINGS_TAB_PANES {
+        draw_panes(body, st)
     } else {
         bx := (int)body.x + ScaleUIPx(24)
         by := (int)body.y + ScaleUIPx(22)

@@ -13,11 +13,11 @@ prob :: #import "ide/problems"
 srch :: #import "ide/search"
 sett :: #import "ide/settings"
 mods :: #import "ide/modules"
-widgets :: #import "ide/widgets"
-meta :: #import "ide/project_meta"
-assets :: #import "ide/assets"
+	widgets :: #import "ide/widgets"
+	meta :: #import "ide/project_meta"
+	krb :: #import "ide/cartridge"
 
-krait_load_ui_font :: () -> int #extern
+	krait_load_ui_font :: () -> int #extern
 krait_scaffold_project :: (path: const char*, status: char*, status_size: int) -> int #extern
 krait_layout_load :: (st: state.IdeState*) -> int #extern
 krait_layout_save :: (st: state.IdeState*) -> int #extern
@@ -58,6 +58,7 @@ init :: () {
 
 shutdown :: () {
     krait_preview_unload()
+    con.console_stop(&istate)
     krait_settings_save(&istate)
     krait_layout_save(&istate)
     if IsTextureValid(settings_icon) {
@@ -124,13 +125,18 @@ draw_top_bar :: (view_w: int) {
              GetThemeButton())
     x := ScaleUIPx(12)
     if istate.project.loaded {
-        if DrawUIGenericButton(x, ScaleUIPx(6), ScaleUIPx(80), ScaleUIPx(26),
-                               "Project", UI_BUTTON_STYLE_TAB,
-                               0, NULL) {
-            project_menu_open = project_menu_open == 0 ? 1 : 0
+        if IsUIDesktopMode() != 0 {
+            if DrawUIGenericButton(x, ScaleUIPx(6), ScaleUIPx(80), ScaleUIPx(26),
+                                   "Project", UI_BUTTON_STYLE_TAB,
+                                   0, NULL) {
+                project_menu_open = project_menu_open == 0 ? 1 : 0
+            }
+            DrawUIText(istate.project.name, x + ScaleUIPx(92), ScaleUIPx(11),
+                       ScaleUIPx(15), GetThemeText())
+        } else {
+            DrawUIText(istate.project.name, x, ScaleUIPx(11),
+                       ScaleUIPx(15), GetThemeText())
         }
-        DrawUIText(istate.project.name, x + ScaleUIPx(92), ScaleUIPx(11),
-                   ScaleUIPx(15), GetThemeText())
     } else {
         DrawUIText("Krait", x, ScaleUIPx(11),
                    ScaleUIPx(15), GetThemeText())
@@ -146,8 +152,8 @@ draw_project_menu :: () {
     y := top_bar_height() - ScaleUIPx(2)
     w := ScaleUIPx(190)
     row_h := ScaleUIPx(30)
-    DrawRectangle(x, y, w, row_h * 3 + ScaleUIPx(8), GetThemeSurface())
-    DrawRectangleLines(x, y, w, row_h * 3 + ScaleUIPx(8), GetThemeButton())
+    DrawRectangle(x, y, w, row_h * 2 + ScaleUIPx(8), GetThemeSurface())
+    DrawRectangleLines(x, y, w, row_h * 2 + ScaleUIPx(8), GetThemeButton())
     if DrawUIGenericButton(x + ScaleUIPx(4), y + ScaleUIPx(4),
                            w - ScaleUIPx(8), row_h, "Metadata",
                            UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
@@ -158,13 +164,6 @@ draw_project_menu :: () {
                            w - ScaleUIPx(8), row_h, "project.kryon",
                            UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
         ed.editor_open(&istate, "project.kryon")
-        project_menu_open = 0
-    }
-    if DrawUIGenericButton(x + ScaleUIPx(4), y + ScaleUIPx(4) + row_h * 2,
-                           w - ScaleUIPx(8), row_h, "Reload Preview",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-        istate.preview_dirty = 1
-        istate.last_edit_time = GetTime() - 1.0
         project_menu_open = 0
     }
 }
@@ -260,6 +259,8 @@ init_panes :: (st: state.IdeState*) {
     st->bottom_height = ScaleUIPx(210)
     st->resizing_pane = -1
     st->active_group = state.IDE_PANE_CENTER
+    st->mobile_active_view = state.IDE_PANE_VIEW_PREVIEW
+    st->mobile_sheet = 0
     st->drag_view = -1
     st->drag_source_group = -1
     st->drag_drop_group = -1
@@ -690,13 +691,14 @@ pane_layout_default :: (st: state.IdeState*) {
     pane_add(&st->pane_groups[state.IDE_PANE_LEFT], state.IDE_PANE_VIEW_EXPLORER)
     pane_add(&st->pane_groups[state.IDE_PANE_LEFT], state.IDE_PANE_VIEW_HIERARCHY)
     pane_add(&st->pane_groups[state.IDE_PANE_LEFT], state.IDE_PANE_VIEW_WIDGETS)
-    pane_add(&st->pane_groups[state.IDE_PANE_LEFT], state.IDE_PANE_VIEW_ASSETS)
     st->pane_groups[state.IDE_PANE_LEFT].active = 2
     pane_add(&st->pane_groups[state.IDE_PANE_CENTER], state.IDE_PANE_VIEW_EDITOR)
     pane_add(&st->pane_groups[state.IDE_PANE_CENTER], state.IDE_PANE_VIEW_PREVIEW)
     st->pane_groups[state.IDE_PANE_CENTER].active = 1
     pane_add(&st->pane_groups[state.IDE_PANE_RIGHT], state.IDE_PANE_VIEW_INSPECTOR)
-    st->bottom_height = 0
+    pane_add(&st->pane_groups[state.IDE_PANE_BOTTOM], state.IDE_PANE_VIEW_CONSOLE)
+    pane_add(&st->pane_groups[state.IDE_PANE_BOTTOM], state.IDE_PANE_VIEW_PROBLEMS)
+    st->bottom_height = ScaleUIPx(220)
     st->active_group = state.IDE_PANE_CENTER
 }
 
@@ -751,9 +753,6 @@ pane_view_label :: (view: int) -> const char* {
     if view == state.IDE_PANE_VIEW_INSPECTOR {
         return "Inspector"
     }
-    if view == state.IDE_PANE_VIEW_ASSETS {
-        return "Assets"
-    }
     if view == state.IDE_PANE_VIEW_PROJECT_META {
         return "Metadata"
     }
@@ -761,7 +760,10 @@ pane_view_label :: (view: int) -> const char* {
         return "Problems"
     }
     if view == state.IDE_PANE_VIEW_CONSOLE {
-        return "Console"
+        return "Terminal"
+    }
+    if view == state.IDE_PANE_VIEW_CARTRIDGE {
+        return "Cartridge"
     }
     return "Search"
 }
@@ -781,7 +783,49 @@ sync_preview_pane :: (st: state.IdeState*) {
     }
 }
 
+mobile_nav_button :: (x: int, y: int, w: int, h: int, label: const char*,
+                      view: int, st: state.IdeState*) {
+    active := st->mobile_active_view == view
+    style := active ? UI_BUTTON_STYLE_PRIMARY : UI_BUTTON_STYLE_TAB
+    if DrawUIGenericButton(x, y, w, h, label, style, 0, NULL) {
+        st->mobile_active_view = view
+        st->layout_dirty = 1
+    }
+}
+
+# Mobile (phone) layout: one full-width pane for the active view, with a
+# touch-sized bottom navigation bar. Takes over from the 3-column workbench
+# whenever IsUIDesktopMode() is false (narrow viewport).
+draw_workbench_mobile :: (content: Rectangle, st: state.IdeState*) {
+    nav_h := ScaleUIPx(56)
+    pane := (Rectangle){content.x, content.y,
+                        content.width, content.height - (float)nav_h}
+    draw_pane_view(pane, st, st->mobile_active_view)
+    nav_y := (int)(content.y + content.height) - nav_h
+    cw := (int)content.width
+    DrawRectangle((int)content.x, nav_y, cw, nav_h, GetThemeSurface())
+    DrawLine((int)content.x, nav_y, (int)content.x + cw, nav_y, GetThemeButton())
+    count := 5
+    btn_w := cw / count
+    btn_h := nav_h - ScaleUIPx(16)
+    by := nav_y + ScaleUIPx(8)
+    bx := (int)content.x
+    mobile_nav_button(bx, by, btn_w, btn_h, "Canvas", state.IDE_PANE_VIEW_PREVIEW, st)
+    bx = bx + btn_w
+    mobile_nav_button(bx, by, btn_w, btn_h, "Nodes", state.IDE_PANE_VIEW_HIERARCHY, st)
+    bx = bx + btn_w
+    mobile_nav_button(bx, by, btn_w, btn_h, "Inspect", state.IDE_PANE_VIEW_INSPECTOR, st)
+    bx = bx + btn_w
+    mobile_nav_button(bx, by, btn_w, btn_h, "Files", state.IDE_PANE_VIEW_FILES, st)
+    bx = bx + btn_w
+    mobile_nav_button(bx, by, btn_w, btn_h, "Source", state.IDE_PANE_VIEW_EDITOR, st)
+}
+
 draw_workbench :: (content: Rectangle, st: state.IdeState*) {
+    if IsUIDesktopMode() == 0 || st->force_mobile_layout != 0 {
+        draw_workbench_mobile(content, st)
+        return
+    }
     gutter := ScaleUIPx(5)
     min_w := ScaleUIPx(220)
     min_h := ScaleUIPx(140)
@@ -1025,6 +1069,11 @@ finish_pane_drag :: (st: state.IdeState*) {
 }
 
 handle_pane_shortcuts :: (st: state.IdeState*) {
+    if ed.mod_key_down() && IsKeyPressed(KEY_GRAVE) {
+        show_tool_bottom(st, state.IDE_PANE_VIEW_CONSOLE)
+        con.console_focus(st)
+        return
+    }
     if !ed.mod_key_down() {
         return
     }
@@ -1067,8 +1116,6 @@ draw_pane_view :: (bounds: Rectangle, st: state.IdeState*, view: int) {
         widgets.draw_hierarchy(bounds, st)
     } else if view == state.IDE_PANE_VIEW_INSPECTOR {
         widgets.draw_inspector(bounds, st)
-    } else if view == state.IDE_PANE_VIEW_ASSETS {
-        assets.draw_assets(bounds, st)
     } else if view == state.IDE_PANE_VIEW_PROJECT_META {
         meta.draw_project_metadata(bounds, st)
     } else if view == state.IDE_PANE_VIEW_PROBLEMS {
@@ -1077,6 +1124,8 @@ draw_pane_view :: (bounds: Rectangle, st: state.IdeState*, view: int) {
         con.draw_console(bounds, st)
     } else if view == state.IDE_PANE_VIEW_SEARCH {
         srch.draw_search(bounds, st)
+    } else if view == state.IDE_PANE_VIEW_CARTRIDGE {
+        krb.draw_cartridge(bounds, st)
     } else {
         DrawRectangleRec(bounds, GetThemeSurface())
         DrawUIText(st->output, (int)bounds.x + ScaleUIPx(10),

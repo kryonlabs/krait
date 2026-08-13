@@ -11,6 +11,10 @@ krait_scene_depth :: (index: int) -> int #extern
 krait_scene_label :: (index: int) -> const char* #extern
 krait_scene_asset_path :: (index: int) -> const char* #extern
 krait_scene_bounds :: (index: int) -> Rectangle #extern
+krait_scene_font_size :: (index: int) -> int #extern
+krait_scene_layout_parent :: (index: int) -> int #extern
+krait_scene_offset_x :: (index: int) -> int #extern
+krait_scene_offset_y :: (index: int) -> int #extern
 krait_scene_source_line :: (index: int) -> int #extern
 krait_scene_editable :: (index: int) -> int #extern
 krait_scene_nudge :: (root: const char*, rel_path: const char*, index: int,
@@ -246,6 +250,17 @@ draw_item :: (bounds: Rectangle, st: state.IdeState*, index: int) {
         st->widget_drag_active = 1
         st->widget_drag_type = index
     }
+    badge_text: const char* = "raylib"
+    badge_w := MeasureUIText(badge_text, ScaleUIPx(10)) + ScaleUIPx(10)
+    badge_h := ScaleUIPx(16)
+    badge_x := (int)bounds.x + (int)bounds.width - badge_w - ScaleUIPx(6)
+    badge_y := (int)bounds.y + (int)bounds.height - badge_h - ScaleUIPx(4)
+    DrawRectangleRec((Rectangle){(float)badge_x, (float)badge_y,
+                                 (float)badge_w, (float)badge_h},
+                     GetThemeLink())
+    DrawUIText(badge_text, badge_x + ScaleUIPx(5),
+               badge_y + ScaleUIPx(3), ScaleUIPx(10),
+               readable_on(GetThemeLink()))
 }
 
 widget_label :: (kind: int) -> const char* {
@@ -387,6 +402,10 @@ inspector_prop_focused :: () -> int {
     return 0
 }
 
+reset_inspector_sync :: () {
+    inspector_prop_synced_node = -1
+}
+
 sync_inspector_props :: (st: state.IdeState*) {
     node := st->selected_scene_node
     if node < 0 || node >= st->scene_node_count {
@@ -405,13 +424,36 @@ sync_inspector_props :: (st: state.IdeState*) {
     inspector_prop_count = count
     i := 0
     while i < count {
+        tmp_id: [32] char
+        tmp_label: [48] char
+        tmp_kind: int
+        tmp_val: [256] char
         krait_scene_property_spec(node, i,
-            inspector_prop_id[i], sizeof(inspector_prop_id[i]),
-            inspector_prop_label[i], sizeof(inspector_prop_label[i]),
-            &inspector_prop_kind[i])
-        krait_scene_property_get(node, inspector_prop_id[i],
-            inspector_prop_buf[i], sizeof(inspector_prop_buf[i]))
-        inspector_prop_cursor[i] = strlen(inspector_prop_buf[i])
+            tmp_id, sizeof(tmp_id),
+            tmp_label, sizeof(tmp_label),
+            &tmp_kind)
+        krait_scene_property_get(node, tmp_id,
+            tmp_val, sizeof(tmp_val))
+        j := 0
+        while j < 31 && tmp_id[j] != 0 {
+            inspector_prop_id[i][j] = tmp_id[j]
+            j = j + 1
+        }
+        inspector_prop_id[i][j] = 0
+        j = 0
+        while j < 47 && tmp_label[j] != 0 {
+            inspector_prop_label[i][j] = tmp_label[j]
+            j = j + 1
+        }
+        inspector_prop_label[i][j] = 0
+        inspector_prop_kind[i] = tmp_kind
+        j = 0
+        while j < 255 && tmp_val[j] != 0 {
+            inspector_prop_buf[i][j] = tmp_val[j]
+            j = j + 1
+        }
+        inspector_prop_buf[i][j] = 0
+        inspector_prop_cursor[i] = j
         i = i + 1
     }
 }
@@ -438,19 +480,23 @@ apply_inspector_prop :: (st: state.IdeState*, prop_index: int) {
 }
 
 scan_scene :: (st: state.IdeState*) {
-    if st->project.loaded == 0 ||
-       st->active_screen < 0 ||
-       st->active_screen >= st->screen_count {
+    if st->project.loaded == 0 {
         st->scene_node_count = 0
         return
     }
-    st->scene_node_count = krait_scene_scan(st->project.path,
-                                            st->screens[st->active_screen].path)
+    scan_path: const char* = NULL
+    if st->preview_has_selection != 0 && st->preview_selected_path[0] != 0 {
+        scan_path = st->preview_selected_path
+    } else if st->active_screen >= 0 && st->active_screen < st->screen_count {
+        scan_path = st->screens[st->active_screen].path
+    }
+    if scan_path == NULL {
+        st->scene_node_count = 0
+        return
+    }
+    st->scene_node_count = krait_scene_scan(st->project.path, scan_path)
     if st->selected_scene_node >= st->scene_node_count {
         st->selected_scene_node = st->scene_node_count - 1
-    }
-    if st->selected_scene_node < 0 && st->scene_node_count > 0 {
-        st->selected_scene_node = 0
     }
 }
 
@@ -515,102 +561,160 @@ draw_hierarchy :: (bounds: Rectangle, st: state.IdeState*) {
     EndUIClip()
 }
 
+draw_stepper :: (x: int, y: int, w: int, label: const char*,
+                 value: int, focus_id: int,
+                 on_minus: int*, on_plus: int*) {
+    btn_w := ScaleUIPx(28)
+    btn_h := ScaleUIPx(28)
+    gap := ScaleUIPx(4)
+    lbl_w := ScaleUIPx(28)
+    DrawUIText(label, x, y + ScaleUIPx(6), ScaleUIPx(12), GetThemeIcon())
+    field_x := x + lbl_w
+    field_w := w - lbl_w - (btn_w + gap) * 2
+    on_minus[0] = 0
+    on_plus[0] = 0
+    if DrawUIGenericButton(field_x, y, btn_w, btn_h, "-",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        on_minus[0] = 1
+    }
+    val: [32] char
+    snprintf(val, sizeof(val), "%d", value)
+    DrawRectangleRec((Rectangle){(float)(field_x + btn_w + gap), (float)y,
+                                  (float)field_w, (float)btn_h},
+                     GetThemeBackground())
+    DrawUIText(val, field_x + btn_w + gap + ScaleUIPx(8),
+               y + ScaleUIPx(6), ScaleUIPx(13), GetThemeText())
+    if DrawUIGenericButton(field_x + btn_w + gap + field_w + gap, y,
+                           btn_w, btn_h, "+",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        on_plus[0] = 1
+    }
+}
+
+# Font size +/-: writes the new value back through the property system so it
+# persists in the source (apply_scene_nudge has no font axis).
+apply_scene_font :: (st: state.IdeState*, delta: int) {
+    if st->project.loaded == 0 || st->preview_has_selection == 0 {
+        state.project_set_status(st, "Select a source file first")
+        return
+    }
+    nv := krait_scene_font_size(st->selected_scene_node) + delta
+    if nv < 4 {
+        nv = 4
+    }
+    val: [32] char
+    snprintf(val, sizeof(val), "%d", nv)
+    status: [256] char
+    if krait_scene_property_set(st->selected_scene_node, "font_size", val,
+            st->project.path, st->preview_selected_path,
+            status, sizeof(status)) != 0 {
+        ed.editor_reload_if_open(st, st->preview_selected_path)
+        st->preview_dirty = 1
+        st->last_edit_time = GetTime()
+        scan_scene(st)
+    }
+    state.project_set_status(st, status)
+}
+
 draw_inspector :: (bounds: Rectangle, st: state.IdeState*) {
     scan_scene(st)
     DrawRectangleRec(bounds, GetThemeSurface())
     pad := ScaleUIPx(8)
-    DrawUIText("Inspector", (int)bounds.x + pad, (int)bounds.y + pad,
-               ScaleUIPx(15), GetThemeText())
     if st->selected_scene_node < 0 ||
        st->selected_scene_node >= st->scene_node_count {
         DrawUIText("No node selected", (int)bounds.x + pad,
-                   (int)bounds.y + ScaleUIPx(34), ScaleUIPx(13),
+                   (int)bounds.y + pad, ScaleUIPx(13),
                    GetThemeIcon())
         return
     }
-    kind := krait_scene_kind(st->selected_scene_node)
-    editable := krait_scene_editable(st->selected_scene_node)
-    bounds_value := krait_scene_bounds(st->selected_scene_node)
-    source_line := krait_scene_source_line(st->selected_scene_node)
-    sync_inspector_props(st)
-    y := (int)bounds.y + ScaleUIPx(34)
+    node := st->selected_scene_node
+    kind := krait_scene_kind(node)
+    bounds_value := krait_scene_bounds(node)
+    font_sz := krait_scene_font_size(node)
+    node_label := krait_scene_label(node)
+    y := (int)bounds.y + pad
+    x := (int)bounds.x + pad
+    row_w := (int)bounds.width - pad * 2
     line: [256] char
-    snprintf(line, sizeof(line), "%s  %s", scene_kind_label(kind),
-             editable != 0 ? "editable" : "read-only")
-    DrawUIText(line, (int)bounds.x + pad, y, ScaleUIPx(13), GetThemeText())
-    y = y + ScaleUIPx(20)
-    snprintf(line, sizeof(line), "line %d", source_line)
-    DrawUIText(line, (int)bounds.x + pad, y, ScaleUIPx(11),
-               GetThemeIcon())
-    y = y + ScaleUIPx(22)
-    if editable == 0 {
-        return
-    }
-    field_w := (int)bounds.width - pad * 2
-    field_h := ScaleUIPx(48)
-    i := 0
-    while i < inspector_prop_count {
-        draw_inspector_field(inspector_prop_label[i],
-            (Rectangle){(float)((int)bounds.x + pad), (float)y,
-                        (float)field_w, (float)field_h},
-            inspector_prop_buf[i], sizeof(inspector_prop_buf[i]),
-            &inspector_prop_cursor[i], &inspector_prop_focused[i],
-            6200 + i)
-        y = y + field_h + ScaleUIPx(6)
-        i = i + 1
-    }
-    if inspector_prop_count > 0 {
-        if DrawUIGenericButton((int)bounds.x + pad, y,
-           (int)bounds.width - pad * 2, ScaleUIPx(28),
-           "Apply", UI_BUTTON_STYLE_PRIMARY, 0, NULL) ||
-           (inspector_prop_focused() != 0 && IsKeyPressed(KEY_ENTER)) {
-            i = 0
-            while i < inspector_prop_count {
-                apply_inspector_prop(st, i)
-                i = i + 1
-            }
-            return
-        }
+    snprintf(line, sizeof(line), "%s", scene_kind_label(kind))
+    DrawUIText(line, x, y, ScaleUIPx(15), GetThemeText())
+    y = y + ScaleUIPx(24)
+    is_screen := kind == SCENE_NODE_SCREEN
+    if is_screen == 0 && node_label != NULL && node_label[0] != 0 {
+        DrawUIText("Text", x, y, ScaleUIPx(12), GetThemeIcon())
+        y = y + ScaleUIPx(16)
+        field_bounds := (Rectangle){(float)x, (float)y,
+                                    (float)row_w, (float)ScaleUIPx(28)}
+        DrawRectangleRec(field_bounds, GetThemeBackground())
+        DrawUIText(node_label, x + ScaleUIPx(8),
+                   y + ScaleUIPx(6), ScaleUIPx(13), GetThemeText())
+        DrawRectangleLinesEx(field_bounds, 1, GetThemeButton())
         y = y + ScaleUIPx(38)
     }
-    btn_w := ScaleUIPx(32)
-    btn_h := ScaleUIPx(24)
-    gap := ScaleUIPx(4)
-    x := (int)bounds.x + pad
-    if DrawUIGenericButton(x + btn_w + gap, y, btn_w, btn_h, "Up",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-        apply_scene_nudge(st, 0, -8, 0, 0)
-    }
-    y = y + btn_h + gap
-    if DrawUIGenericButton(x, y, btn_w, btn_h, "L",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-        apply_scene_nudge(st, -8, 0, 0, 0)
-    }
-    if DrawUIGenericButton(x + btn_w + gap, y, btn_w, btn_h, "Dn",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-        apply_scene_nudge(st, 0, 8, 0, 0)
-    }
-    if DrawUIGenericButton(x + (btn_w + gap) * 2, y, btn_w, btn_h, "R",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-        apply_scene_nudge(st, 8, 0, 0, 0)
-    }
-    y = y + btn_h + gap
-    if kind != SCENE_NODE_TEXT {
-        if DrawUIGenericButton(x, y, btn_w, btn_h, "-W",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-            apply_scene_nudge(st, 0, 0, -8, 0)
+    if is_screen == 0 {
+        minus_pressed: int
+        plus_pressed: int
+        layout_parent := krait_scene_layout_parent(node)
+        off_x := krait_scene_offset_x(node)
+        off_y := krait_scene_offset_y(node)
+        if layout_parent >= 0 {
+            DrawUIText("Offset (in group)", x, y, ScaleUIPx(12), GetThemeIcon())
+            y = y + ScaleUIPx(18)
+            draw_stepper(x, y, row_w, "X", off_x, 6300,
+                         &minus_pressed, &plus_pressed)
+        } else {
+            DrawUIText("Position", x, y, ScaleUIPx(12), GetThemeIcon())
+            y = y + ScaleUIPx(18)
+            draw_stepper(x, y, row_w, "X", (int)bounds_value.x, 6300,
+                         &minus_pressed, &plus_pressed)
         }
-        if DrawUIGenericButton(x + btn_w + gap, y, btn_w, btn_h, "+W",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-            apply_scene_nudge(st, 0, 0, 8, 0)
+        if minus_pressed != 0 {
+            apply_scene_nudge(st, -8, 0, 0, 0)
         }
-        if DrawUIGenericButton(x + (btn_w + gap) * 2, y, btn_w, btn_h, "-H",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-            apply_scene_nudge(st, 0, 0, 0, -8)
+        if plus_pressed != 0 {
+            apply_scene_nudge(st, 8, 0, 0, 0)
         }
-        if DrawUIGenericButton(x + (btn_w + gap) * 3, y, btn_w, btn_h, "+H",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-            apply_scene_nudge(st, 0, 0, 0, 8)
+        y = y + ScaleUIPx(34)
+        if layout_parent >= 0 {
+            draw_stepper(x, y, row_w, "Y", off_y, 6301,
+                         &minus_pressed, &plus_pressed)
+        } else {
+            draw_stepper(x, y, row_w, "Y", (int)bounds_value.y, 6301,
+                         &minus_pressed, &plus_pressed)
+        }
+        if minus_pressed != 0 {
+            apply_scene_nudge(st, 0, -8, 0, 0)
+        }
+        if plus_pressed != 0 {
+            apply_scene_nudge(st, 0, 8, 0, 0)
+        }
+        y = y + ScaleUIPx(34)
+        if kind != SCENE_NODE_TEXT {
+            draw_stepper(x, y, row_w, "W", (int)bounds_value.width, 6302,
+                         &minus_pressed, &plus_pressed)
+            if minus_pressed != 0 {
+                apply_scene_nudge(st, 0, 0, -8, 0)
+            }
+            if plus_pressed != 0 {
+                apply_scene_nudge(st, 0, 0, 8, 0)
+            }
+            y = y + ScaleUIPx(34)
+            draw_stepper(x, y, row_w, "H", (int)bounds_value.height, 6303,
+                         &minus_pressed, &plus_pressed)
+            if minus_pressed != 0 {
+                apply_scene_nudge(st, 0, 0, 0, -8)
+            }
+            if plus_pressed != 0 {
+                apply_scene_nudge(st, 0, 0, 0, 8)
+            }
+            y = y + ScaleUIPx(34)
+        }
+        if kind == SCENE_NODE_TEXT && font_sz > 0 {
+            DrawUIText("Font Size", x, y, ScaleUIPx(12), GetThemeIcon())
+            y = y + ScaleUIPx(18)
+            draw_stepper(x, y, row_w, "Sz", font_sz, 6304,
+                         &minus_pressed, &plus_pressed)
+            y = y + ScaleUIPx(34)
         }
     }
 }

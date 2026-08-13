@@ -2,162 +2,165 @@
 #import "kryon.h"
 #import <string.h>
 state :: #import "ide/state"
-prob :: #import "ide/problems"
-
-kry_process_spawn :: (p: KryProcess*, command: const char*, cwd: const char*) -> int #extern
-kry_process_read_poll :: (p: KryProcess*, buf: char*, cap: int) -> int #extern
-kry_process_wait_poll :: (p: KryProcess*) -> int #extern
-kry_process_kill :: (p: KryProcess*) #extern
-kry_process_close :: (p: KryProcess*) #extern
 
 #global
 
-console_run :: (st: state.IdeState*) {
-    if st->console_running {
+console_ensure :: (st: state.IdeState*, cols: int, rows: int) {
+    if st->term.running {
+        KryTermResize(&st->term, cols, rows)
         return
     }
-    cmd: [768] char
-    snprintf(cmd, sizeof(cmd), "%s", st->console_input)
-    if kry_process_spawn(&st->console_proc, cmd, st->project.path) {
-        st->console_running = 1
-        state.project_set_status(st, "Console running")
+    cwd := st->project.loaded ? st->project.path : GetWorkingDirectory()
+    if KryTermSpawn(&st->term, cwd, cols, rows) {
+        state.project_set_status(st, "Terminal ready")
     } else {
-        state.project_set_status(st, "Could not start console")
+        state.project_set_status(st, "Could not start terminal")
     }
-}
-
-console_run_command :: (st: state.IdeState*, command: const char*) {
-    if st->console_running {
-        state.project_set_status(st, "Console busy")
-        return
-    }
-    if kry_process_spawn(&st->console_proc, command, st->project.path) {
-        st->console_running = 1
-        st->console_output[0] = 0
-        state.project_set_status(st, "Running: %s")
-    } else {
-        state.project_set_status(st, "Could not start command")
-    }
-}
-
-console_run_build :: (st: state.IdeState*) {
-    console_run_command(st, "make")
-}
-
-console_run_app :: (st: state.IdeState*) {
-    console_run_command(st, "make run")
-}
-
-console_stop :: (st: state.IdeState*) {
-    if !st->console_running {
-        return
-    }
-    kry_process_kill(&st->console_proc)
-    kry_process_close(&st->console_proc)
-    st->console_running = 0
-    state.project_set_status(st, "Console stopped")
 }
 
 console_poll :: (st: state.IdeState*) {
-    if !st->console_running {
+    if st->term.fd > 0 {
+        KryTermPoll(&st->term)
+    }
+}
+
+console_stop :: (st: state.IdeState*) {
+    KryTermClose(&st->term)
+    st->console_focused = 0
+    state.project_set_status(st, "Terminal closed")
+}
+
+console_send :: (st: state.IdeState*, text: const char*) {
+    if text == NULL || text[0] == 0 {
         return
     }
-    buf: [4096] char
-    drained := 0
-    while drained == 0 {
-        n := kry_process_read_poll(&st->console_proc, buf, sizeof(buf))
-        if n <= 0 {
-            drained = 1
-        } else {
-            cur := strlen(st->console_output)
-            room := sizeof(st->console_output) - cur - 1
-            if room > 0 {
-                strncat(st->console_output, buf, room)
-            }
+    console_ensure(st, 80, 24)
+    KryTermWrite(&st->term, text, (int)strlen(text))
+}
+
+console_run_build :: (st: state.IdeState*) {
+    console_send(st, "make\n")
+}
+
+console_run_app :: (st: state.IdeState*) {
+    console_send(st, "make run\n")
+}
+
+console_focus :: (st: state.IdeState*) {
+    st->console_focused = 1
+    for int i = 0; i < st->open_count; i++ {
+        st->open_files[i].focused = 0
+    }
+}
+
+feed_keys :: (st: state.IdeState*) {
+    ch := 0
+    seq: [8] char
+
+    if IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL) {
+        if IsKeyPressed(KEY_C) {
+            KryTermWrite(&st->term, "\x03", 1)
+        }
+        if IsKeyPressed(KEY_D) {
+            KryTermWrite(&st->term, "\x04", 1)
+        }
+        if IsKeyPressed(KEY_L) {
+            KryTermWrite(&st->term, "\x0c", 1)
         }
     }
-    if kry_process_wait_poll(&st->console_proc) {
-        st->console_running = 0
-        if st->console_proc.exit_status != 0 {
-            prob.problems_parse(st, st->console_output)
+    if IsKeyPressed(KEY_ENTER) {
+        KryTermWrite(&st->term, "\r", 1)
+    }
+    if IsKeyPressed(KEY_BACKSPACE) {
+        KryTermWrite(&st->term, "\x7f", 1)
+    }
+    if IsKeyPressed(KEY_TAB) {
+        KryTermWrite(&st->term, "\t", 1)
+    }
+    if IsKeyPressed(KEY_UP) {
+        KryTermWrite(&st->term, "\x1b[A", 3)
+    }
+    if IsKeyPressed(KEY_DOWN) {
+        KryTermWrite(&st->term, "\x1b[B", 3)
+    }
+    if IsKeyPressed(KEY_RIGHT) {
+        KryTermWrite(&st->term, "\x1b[C", 3)
+    }
+    if IsKeyPressed(KEY_LEFT) {
+        KryTermWrite(&st->term, "\x1b[D", 3)
+    }
+    if IsKeyPressed(KEY_HOME) {
+        KryTermWrite(&st->term, "\x1b[H", 3)
+    }
+    if IsKeyPressed(KEY_END) {
+        KryTermWrite(&st->term, "\x1b[F", 3)
+    }
+    ch = GetCharPressed()
+    while ch > 0 {
+        if ch >= 32 && ch < 127 {
+            seq[0] = (char)ch
+            KryTermWrite(&st->term, seq, 1)
         }
-        kry_process_close(&st->console_proc)
-        state.project_set_status(st, "Console finished")
+        ch = GetCharPressed()
     }
 }
 
 draw_console :: (bounds: Rectangle, st: state.IdeState*) {
-    input_h := ScaleUIPx(28)
-    action_w := ScaleUIPx(58)
-    btn_w := ScaleUIPx(52)
+    pad := ScaleUIPx(6)
+    bar_h := ScaleUIPx(26)
     gap := ScaleUIPx(6)
-    box_style := (UITextInputStyle){
-        GetThemeSurface(),
-        GetThemeButton(),
-        GetThemeLink(),
-        GetThemeText(),
-        GetThemeLink(),
-        0,
-        ScaleUIPx(10),
-        ScaleUIPx(8)
+    btn_w := ScaleUIPx(52)
+    font := ScaleUIPx(13)
+    cell_w := MeasureUIText("M", font)
+    if cell_w < 6 {
+        cell_w = font * 6 / 10
     }
-    input_style := (UITextInputStyle){
-        GetThemeSurface(),
-        GetThemeButton(),
-        GetThemeLink(),
-        GetThemeText(),
-        GetThemeLink(),
-        0,
-        ScaleUIPx(10),
-        ScaleUIPx(6)
-    }
-    btn_y := (int)bounds.y
-    btn_x := (int)bounds.x
-    if DrawUIGenericButton(btn_x, btn_y, btn_w, input_h,
-                           "Build", UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+    line_h := font + ScaleUIPx(2)
+    term := (Rectangle){bounds.x + (float)pad,
+                        bounds.y + (float)(bar_h + gap),
+                        bounds.width - (float)(pad * 2),
+                        bounds.height - (float)(bar_h + gap + pad)}
+    cols := (int)term.width / cell_w
+    rows := (int)term.height / line_h
+    x := (int)bounds.x + pad
+    y := (int)bounds.y
+    line: [256] char
+    row := 0
+    cursor_on := 0
+
+    console_ensure(st, cols, rows)
+    if DrawUIGenericButton(x, y, btn_w, bar_h, "Build",
+                           UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
         console_run_build(st)
+        console_focus(st)
     }
-    if DrawUIGenericButton(btn_x + btn_w + gap, btn_y, btn_w, input_h,
-                           "Run", UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+    if DrawUIGenericButton(x + btn_w + gap, y, btn_w, bar_h, "Run",
+                           UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
         console_run_app(st)
+        console_focus(st)
     }
-    row2_y := btn_y + input_h + gap
-    input_bounds := (Rectangle){bounds.x, (float)row2_y,
-                                bounds.width - (float)(action_w * 2 + gap * 2),
-                                (float)input_h}
-    stop_bounds := (Rectangle){input_bounds.x + input_bounds.width + (float)gap,
-                               (float)row2_y, (float)action_w, (float)input_h}
-    clear_bounds := (Rectangle){stop_bounds.x + stop_bounds.width + (float)gap,
-                                (float)row2_y, (float)action_w, (float)input_h}
-    log_bounds := (Rectangle){bounds.x, (float)(row2_y + input_h + gap),
-                              bounds.width,
-                              bounds.height - (float)(row2_y - (int)bounds.y) -
-                                  (float)input_h - (float)gap}
-    DrawUIReadonlyTextBox((ReadonlyTextBoxProps){
-        log_bounds, st->console_output, ScaleUIPx(13),
-        box_style, ScaleUIPx(4)
-    })
-    DrawUITextField((TextFieldProps){
-        input_bounds, st->console_input, sizeof(st->console_input),
-        &st->console_cursor, &st->console_focused,
-        sizeof(st->console_input) - 1, ScaleUIPx(13), 4002,
-        input_style, (UITextInputFilter){0}, NULL, NULL
-    })
-    if DrawUIGenericButton((int)stop_bounds.x, (int)stop_bounds.y,
-                           (int)stop_bounds.width, (int)stop_bounds.height,
-                           "Stop", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+    if DrawUIGenericButton(x + (btn_w + gap) * 2, y, btn_w, bar_h, "Stop",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
         console_stop(st)
     }
-    if DrawUIGenericButton((int)clear_bounds.x, (int)clear_bounds.y,
-                           (int)clear_bounds.width, (int)clear_bounds.height,
-                           "Clear", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-        st->console_output[0] = 0
-        state.project_set_status(st, "Console cleared")
+    DrawRectangleRec(term, GetThemeBackground())
+    if CheckCollisionPointRec(GetMousePosition(), term) &&
+       IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
+        console_focus(st)
     }
-    if st->console_focused != 0 && IsKeyPressed(KEY_ENTER) {
-        if st->console_input[0] != 0 {
-            console_run(st)
-            st->console_input[0] = 0
-        }
+    if st->console_focused != 0 {
+        feed_keys(st)
+    }
+    for row = 0; row < st->term.rows; row++ {
+        KryTermLine(&st->term, row, line, sizeof(line))
+        DrawUIText(line, (int)term.x + 2,
+                   (int)term.y + row * line_h, font, GetThemeText())
+    }
+    cursor_on = ((int)(GetTime() * 2.0) & 1) == 0
+    if st->console_focused != 0 && cursor_on &&
+       st->term.cx >= 0 && st->term.cy >= 0 {
+        DrawRectangle((int)term.x + 2 + st->term.cx * cell_w,
+                      (int)term.y + st->term.cy * line_h,
+                      cell_w, line_h, GetThemeText())
     }
 }

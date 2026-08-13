@@ -408,6 +408,7 @@ draw_tabs :: (bounds: Rectangle, st: state.IdeState*) {
     if clicked >= 0 {
         st->active_open = clicked
         st->open_files[clicked].focused = 1
+        st->console_focused = 0
         state.project_set_status(st, st->open_files[clicked].path)
         return
     }
@@ -449,6 +450,9 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
             editor_redo(st)
         }
     }
+    if st->console_focused != 0 {
+        f->focused = 0
+    }
     editor_snapshot_ensure(f)
     before_len := strlen(f->source)
     text_changed := DrawUITextArea((TextAreaProps){
@@ -459,6 +463,9 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
         editor_style, (UITextInputFilter){0}, NULL
     })
     after_len := strlen(f->source)
+    if f->focused != 0 {
+        st->console_focused = 0
+    }
     if text_changed != 0 || after_len != before_len {
         if f->snapshot_valid != 0 {
             editor_push_undo(f, f->snapshot_text, f->snapshot_cursor,

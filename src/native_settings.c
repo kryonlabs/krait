@@ -44,6 +44,7 @@ krait_settings_sanitize(IdeState *st)
         st->settings_tab = 0;
     if(st->settings_scroll < 0)
         st->settings_scroll = 0;
+    st->force_mobile_layout = st->force_mobile_layout ? 1 : 0;
     if(st->module_count < 0)
         st->module_count = 0;
     if(st->module_count > IDE_MAX_MODULES)
@@ -81,6 +82,7 @@ krait_settings_defaults(IdeState *st)
     st->theme_style = THEME_STYLE_SYSTEM;
     st->settings_tab = 0;
     st->settings_scroll = 0;
+    st->force_mobile_layout = 0;
 }
 
 int
@@ -116,6 +118,8 @@ krait_settings_load(IdeState *st)
             st->theme_style = value;
         else if(strcmp(key, "settings_tab") == 0)
             st->settings_tab = value;
+        else if(strcmp(key, "force_mobile") == 0)
+            st->force_mobile_layout = value ? 1 : 0;
         else
             (void)krait_settings_set_module(st, key, value);
     }
@@ -144,6 +148,7 @@ krait_settings_save(IdeState *st)
     fprintf(file, "theme_id %d\n", st->theme_id);
     fprintf(file, "theme_style %d\n", st->theme_style);
     fprintf(file, "settings_tab %d\n", st->settings_tab);
+    fprintf(file, "force_mobile %d\n", st->force_mobile_layout ? 1 : 0);
     for(int i = 0; i < st->module_count; i++)
         fprintf(file, "module_%s_enabled %d\n",
                 st->modules[i].id, st->modules[i].enabled ? 1 : 0);

@@ -7,8 +7,23 @@ BINDIR ?= $(PREFIX)/bin
 INSTALL ?= install
 KRYON_DIR ?= vendor/kryon
 DEV_KRYON_DIR ?= ../kryon
-KRYON_BUILD_DIR ?= $(KRYON_DIR)/build
-KRYON_PLATFORM ?= $(shell uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
+KRYON_UNAME_S := $(shell uname -s 2>/dev/null)
+KRYON_UNAME_M := $(shell uname -m 2>/dev/null)
+ifeq ($(KRYON_UNAME_M),amd64)
+    KRYON_ARCH := x86_64
+else
+    KRYON_ARCH := $(KRYON_UNAME_M)
+endif
+ifeq ($(KRYON_UNAME_S),Linux)
+    KRYON_PLATFORM := linux
+else ifeq ($(KRYON_UNAME_S),FreeBSD)
+    KRYON_PLATFORM := freebsd
+else ifeq ($(KRYON_UNAME_S),Darwin)
+    KRYON_PLATFORM := macos
+else
+    KRYON_PLATFORM := $(KRYON_UNAME_S)
+endif
+KRYON_BUILD_DIR ?= $(KRYON_DIR)/build/$(KRYON_PLATFORM)-$(KRYON_ARCH)
 
 KRAIT = $(BUILD_DIR)/bin/krait
 KRAIT_GEN = $(BUILD_DIR)/gen
@@ -18,12 +33,18 @@ KRAIT_NATIVE_SRCS := src/main.c $(wildcard src/native_*.c)
 KRAIT_NATIVE_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/src/%.o,$(KRAIT_NATIVE_SRCS))
 
 KC = $(KRYON_BUILD_DIR)/bin/kc
+# Detect a kc built for the wrong platform (e.g. a FreeBSD binary on Linux):
+# the kernel refuses to exec it, so the shell returns 126/127. When that
+# happens, delete the stale binary so make's rule rebuilds it for the host.
+KC_RUNNABLE := $(shell [ -x "$(KC)" ] && "$(KC)" >/dev/null 2>&1; \
+    case $$? in 126|127) echo no;; *) echo yes;; esac)
 KRYON_LIB = $(KRYON_DIR)/libkryon.a
 RAYLIB_A = $(KRYON_BUILD_DIR)/raylib/libraylib.a
 KRYON_LIBOQS_A = $(KRYON_BUILD_DIR)/vendor/liboqs/lib/liboqs.a
 KRYON_CURL_A = $(KRYON_BUILD_DIR)/vendor/curl/lib/libcurl.a
 KRYON_CMARK_GFM_A = $(KRYON_BUILD_DIR)/vendor/cmark-gfm/src/libcmark-gfm.a
 KRYON_CMARK_GFM_EXTENSIONS_A = $(KRYON_BUILD_DIR)/vendor/cmark-gfm/extensions/libcmark-gfm-extensions.a
+KRYON_BOX2D_A = $(KRYON_BUILD_DIR)/vendor/box2d/src/libbox2d.a
 
 RAY_SDL_CFLAGS ?= $(shell pkg-config --cflags sdl2 2>/dev/null)
 RAY_SDL_LDLIBS ?= $(shell pkg-config --libs sdl2 2>/dev/null)
@@ -62,16 +83,28 @@ else
 KRYON_PLATFORM_LDLIBS ?=
 endif
 
-.PHONY: all krait run dev test smoke clean install uninstall kryon-deps boundary-check docs-site
+.PHONY: all krait run dev test smoke clean install uninstall kryon-deps boundary-check docs-site android-debug android-install android-clean
 
 all: krait
 
 krait: $(KRAIT)
 
 kryon-deps:
+	@if git -C "$(KRYON_DIR)" rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+	    git -C "$(KRYON_DIR)" submodule update --init --recursive; \
+	fi
 	$(MAKE) -C $(KRYON_DIR) all
 
-$(KRAIT_GEN)/.transpiled: $(KRAIT_SRCS) | $(KC)
+# Phony guard: if kc exists but is built for a different platform (the kernel
+# refuses to exec it), delete it so the $(KC) rule below rebuilds it for the host.
+.PHONY: ensure-kc-runnable
+ensure-kc-runnable:
+	@if [ "$(KC_RUNNABLE)" != yes ] && [ -x "$(KC)" ]; then \
+	    echo "kc at $(KC) is not runnable on $(KRYON_PLATFORM); rebuilding"; \
+	    rm -f "$(KC)"; \
+	fi
+
+$(KRAIT_GEN)/.transpiled: $(KRAIT_SRCS) | ensure-kc-runnable $(KC)
 	@mkdir -p $(KRAIT_GEN)
 	$(KC) --root . -o $(KRAIT_GEN) $(KRAIT_SRCS)
 	@touch $@
@@ -92,16 +125,16 @@ $(BUILD_DIR)/src/%.o: src/%.c $(KRAIT_GEN)/.transpiled
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -I$(KRAIT_GEN) -c $< -o $@
 
-$(KRAIT): kryon-deps $(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KRAIT_GEN)/.transpiled $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) | $(BUILD_DIR)/bin
+$(KRAIT): kryon-deps $(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KRAIT_GEN)/.transpiled $(KRYON_LIB) $(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) | $(BUILD_DIR)/bin
 	$(CC) $(CFLAGS) $(CPPFLAGS) -I$(KRAIT_GEN) $(RAY_CFLAGS) $(SYSTEM_THEME_CFLAGS) -o $@ \
 		$(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) \
 		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
-		$(RAYLIB_A) $(RAY_LDLIBS) $(KRYON_LIBOQS_A) $(KRYON_CURL_LDLIBS) \
+		$(RAYLIB_A) $(KRYON_BOX2D_A) $(RAY_LDLIBS) $(KRYON_LIBOQS_A) $(KRYON_CURL_LDLIBS) \
 		$(KRYON_MARKDOWN_LDLIBS) \
 		-Wl,-export-dynamic $(KRYON_PLATFORM_LDLIBS) \
 		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) -lz -lpthread -lm
 
-$(KC) $(KRYON_LIB) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A):
+$(KC) $(KRYON_LIB) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) $(KRYON_BOX2D_A):
 	$(MAKE) -C $(KRYON_DIR) all
 
 $(RAYLIB_A):
@@ -118,6 +151,21 @@ dev: KRYON_DIR := $(DEV_KRYON_DIR)
 dev: krait
 	@kryon_dir=$$(cd "$(KRYON_DIR)" && pwd); \
 	KRYON_DIR="$$kryon_dir" $(KRAIT) --kryon-dir "$$kryon_dir" $(ARGS)
+
+# Android (arm64-v8a). Builds the native libkrait.so (raylib+kryon+krait, cross
+# via the NDK) and packages a signed, zipaligned debug APK. Requires the NDK and
+# a platform jar; the scripts auto-detect ANDROID_NDK_HOME / ANDROID_HOME.
+android-debug: krait
+	ANDROID_API=$${ANDROID_API:-29} sh scripts/build-android-native.sh
+	sh scripts/package-android-apk.sh
+
+android-install: android-debug
+	@adb=$$(command -v adb || echo "$${ANDROID_HOME:-$$HOME/Android/Sdk}/platform-tools/adb"); \
+	$$adb install -r build/android-arm64/krait.apk && \
+	$$adb shell am start -n com.kryonlabs.krait/android.app.NativeActivity
+
+android-clean:
+	rm -rf build/android-arm64
 
 test: krait boundary-check
 

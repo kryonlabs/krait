@@ -7,7 +7,9 @@
 #include "ui_icons.h"
 #include "ui_inspect.h"
 
+#if !defined(__ANDROID__)
 #include <SDL2/SDL.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +22,13 @@ static unsigned char krait_key_down_now[KRAIT_KEY_COUNT];
 static unsigned char krait_key_pressed_now[KRAIT_KEY_COUNT];
 static unsigned char krait_key_pressed_pending[KRAIT_KEY_COUNT];
 
+/* Mobile preview / DPI smoke overrides. Desktop-only knobs; on Android the UI
+ * scale comes from GetWindowScaleDPI() (device density) instead. */
+static int g_phone_mode = 0;
+static int g_phone_w = 420;
+static int g_phone_h = 880;
+static float g_ui_scale_override = 0.0f;
+
 static void
 krait_use_kryon_dir(const char *path)
 {
@@ -28,6 +37,7 @@ krait_use_kryon_dir(const char *path)
     setenv("KRYON_DIR", path, 1);
 }
 
+#if !defined(__ANDROID__)
 static int
 krait_sdl_keycode_to_ui_key(SDL_Keycode keycode)
 {
@@ -61,6 +71,7 @@ krait_sdl_key_event(void *userdata, SDL_Event *event)
     }
     return 0;
 }
+#endif
 
 static void
 krait_update_logical_keys(void)
@@ -73,13 +84,17 @@ krait_update_logical_keys(void)
 static void
 krait_init_logical_keys(void)
 {
+#if !defined(__ANDROID__)
     SDL_AddEventWatch(krait_sdl_key_event, NULL);
+#endif
 }
 
 static void
 krait_shutdown_logical_keys(void)
 {
+#if !defined(__ANDROID__)
     SDL_DelEventWatch(krait_sdl_key_event, NULL);
+#endif
 }
 
 static int
@@ -170,8 +185,8 @@ run_live_reload_smoke(const char *project_path, const char *rel_path)
 int
 main(int argc, char **argv)
 {
-    const int screen_w = 1400;
-    const int screen_h = 900;
+    int screen_w = 1400;
+    int screen_h = 900;
     const UIIconAsset *window_icon_asset;
     Image window_icon = {0};
     int argi = 1;
@@ -238,8 +253,36 @@ main(int argc, char **argv)
                 live_rel_path = argv[argi + 2];
             break;
         }
+        if(strcmp(argv[argi], "--phone") == 0) {
+            g_phone_mode = 1;
+            argi++;
+            /* Optional "--phone W H" to pick exact phone dimensions. */
+            if(argc >= argi + 2 && argv[argi][0] >= '0' && argv[argi][0] <= '9') {
+                int pw = atoi(argv[argi]);
+                int ph = atoi(argv[argi + 1]);
+                if(pw >= 200 && ph >= 400) {
+                    g_phone_w = pw;
+                    g_phone_h = ph;
+                    argi += 2;
+                }
+            }
+            continue;
+        }
+        if(strcmp(argv[argi], "--dpi") == 0) {
+            if(argc > argi + 1) {
+                g_ui_scale_override = (float)atof(argv[argi + 1]);
+                argi += 2;
+                continue;
+            }
+            break;
+        }
         project_arg = argv[argi];
         break;
+    }
+
+    if(g_phone_mode) {
+        screen_w = g_phone_w;
+        screen_h = g_phone_h;
     }
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
@@ -254,7 +297,24 @@ main(int argc, char **argv)
         }
     }
     SetTargetFPS(60);
-    InitUI(screen_w, screen_h, GetUIScale());
+    /* UI scale: real device density on Android, overridable on desktop for
+     * smoke testing. Drives every ScaleUIPx() call site and the
+     * IsUIDesktopMode() mobile breakpoint. */
+    float ui_scale = 1.0f;
+#if defined(PLATFORM_ANDROID) || defined(__ANDROID__) || defined(ANDROID)
+    {
+        Vector2 dpid = GetWindowScaleDPI();
+        if(dpid.x > 1.0f)
+            ui_scale = dpid.x;
+    }
+#endif
+    if(g_ui_scale_override > 0.0f)
+        ui_scale = g_ui_scale_override;
+    if(ui_scale < 1.0f)
+        ui_scale = 1.0f;
+    if(ui_scale > 4.0f)
+        ui_scale = 4.0f;
+    InitUI(screen_w, screen_h, ui_scale);
     krait_init_logical_keys();
     SetKeyPlatformCallbacks(krait_update_logical_keys,
                               krait_logical_key_pressed,

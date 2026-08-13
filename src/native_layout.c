@@ -95,7 +95,7 @@ krait_layout_clear_node(PaneNode *node)
 static void
 krait_layout_remove_duplicates(IdeState *st)
 {
-    int seen[IDE_PANE_VIEW_SETTINGS + 1] = {0};
+    int seen[IDE_PANE_VIEW_ASSETS + 1] = {0};
 
     if(st == NULL)
         return;
@@ -161,6 +161,7 @@ krait_layout_enforce_studio(IdeState *st)
         IDE_PANE_VIEW_EXPLORER,
         IDE_PANE_VIEW_HIERARCHY,
         IDE_PANE_VIEW_WIDGETS,
+        IDE_PANE_VIEW_CARTRIDGE,
     };
     static const int center_views[] = {
         IDE_PANE_VIEW_PREVIEW,
@@ -344,7 +345,6 @@ krait_layout_save(IdeState *st)
 
     if(st == NULL)
         return 0;
-    krait_layout_sanitize(st);
     krait_layout_file(path, sizeof(path));
     krait_ensure_parent_dir(path);
     file = fopen(path, "w");

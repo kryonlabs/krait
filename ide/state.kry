@@ -20,6 +20,7 @@
     IDE_PANE_VIEW_SETTINGS,
     IDE_PANE_VIEW_HIERARCHY,
     IDE_PANE_VIEW_INSPECTOR,
+    IDE_PANE_VIEW_CARTRIDGE,
     IDE_PANE_VIEW_ASSETS,
 }
 
@@ -193,6 +194,9 @@ IdeState :: struct {
     bottom_height: int
     resizing_pane: int
     layout_dirty: int
+    mobile_active_view: int
+    mobile_sheet: int
+    force_mobile_layout: int
     drag_view: int
     drag_source_group: int
     drag_active: int
@@ -253,14 +257,9 @@ IdeState :: struct {
     preview_dirty: int
     last_edit_time: float
     preview_host_ready: int
-    # console
-    console_proc: KryProcess
-    console_running: int
-    console_output: [65536] char
-    console_input: [512] char
-    console_cursor: int
+    # terminal (PTY)
+    term: KryTerm
     console_focused: int
-    console_scroll: int
     # problems
     diagnostics: [64] Diagnostic
     diagnostic_count: int

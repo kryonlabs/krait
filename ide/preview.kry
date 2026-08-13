@@ -6,6 +6,7 @@ ed :: #import "ide/editor"
 mods :: #import "ide/modules"
 screens :: #import "ide/screens"
 prob :: #import "ide/problems"
+widgets :: #import "ide/widgets"
 
 krait_live_draw_canvas :: (root: const char*, rel_path: const char*,
                            w: int, h: int,
@@ -22,6 +23,11 @@ krait_scene_scan :: (root: const char*, rel_path: const char*) -> int #extern
 krait_scene_bounds :: (index: int) -> Rectangle #extern
 krait_scene_label :: (index: int) -> const char* #extern
 krait_project_preview_size :: (root: const char*, w: int*, h: int*) -> int #extern
+
+canvas_menu_open :: int #global
+canvas_menu_x :: int #global
+canvas_menu_y :: int #global
+canvas_menu_items :: [3] UIMenuItem #global
 
 #global
 
@@ -208,7 +214,10 @@ canvas_select_node :: (st: state.IdeState*, rel_path: const char*,
     st->scene_node_count = count
     if selected >= 0 {
         st->selected_scene_node = selected
+        widgets.reset_inspector_sync()
         state.project_set_status(st, krait_scene_label(selected))
+    } else {
+        st->selected_scene_node = -1
     }
 }
 
@@ -246,12 +255,6 @@ draw_preview_toolbar :: (bounds: Rectangle, st: state.IdeState*) {
     if DrawUIGenericButton(x, y, ScaleUIPx(28), h, "+",
                            UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
         preview_set_zoom(st, st->preview_zoom * 1.18)
-    }
-    x = x + ScaleUIPx(36)
-    if DrawUIGenericButton(x, y, ScaleUIPx(58), h, "Reload",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-        st->preview_dirty = 1
-        st->last_edit_time = GetTime() - 1.0
     }
 }
 
@@ -314,6 +317,8 @@ draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
         st->preview_has_selection = 1
         st->preview_host_ready = 0
         selection_changed = 1
+        st->selected_scene_node = -1
+        widgets.reset_inspector_sync()
     }
     status: [512] char
     pw: int = 0
@@ -351,11 +356,17 @@ draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
         } else if wheel < 0.0 {
             preview_set_zoom(st, st->preview_zoom * 0.90)
         }
-        if IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) || IsMouseButtonDown(MOUSE_BUTTON_RIGHT) {
+        # Pan with middle mouse only; right-click is reserved for the context menu.
+        if IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) {
             delta := GetMouseDelta()
             st->preview_pan_x = st->preview_pan_x + delta.x
             st->preview_pan_y = st->preview_pan_y + delta.y
             st->preview_scale_mode = state.IDE_PREVIEW_SCALE_CUSTOM
+        }
+        if IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) {
+            canvas_menu_x = (int)mouse.x
+            canvas_menu_y = (int)mouse.y
+            canvas_menu_open = 1
         }
     }
     draw_w := (float)pw * scale
@@ -366,10 +377,10 @@ draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
     if source_is_screen != 0 &&
        st->active_screen >= 0 && st->active_screen < st->screen_count {
         canvas_insert_widget(st, dst, scale)
-        canvas_select_node(st, source_path, dst, scale)
     }
-    BeginScissorMode((int)content.x, (int)content.y,
-                     (int)content.width, (int)content.height)
+    # Selection works for any renderable source (screen, frame, or fallback),
+    # not just screens — canvas_select_node no-ops unless the click is in-canvas.
+    canvas_select_node(st, source_path, dst, scale)
     ensure_texture(st, pw, ph)
     ok := st->preview_host_ready
     if selection_changed != 0 ||
@@ -390,10 +401,24 @@ draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
             st->preview_dirty = 0
         }
     }
+    BeginScissorMode((int)content.x, (int)content.y,
+                     (int)content.width, (int)content.height)
     BeginUIInspectFrame(st->project.path)
     DrawTexturePro(st->preview_texture.texture,
                    (Rectangle){0, 0, (float)pw, -(float)ph},
                    dst, (Vector2){0, 0}, 0.0, WHITE)
+    DrawRectangleLinesEx(dst, ScaleUIPx(2), GetThemeButton())
+    if ok != 0 &&
+       st->selected_scene_node >= 0 &&
+       st->selected_scene_node < st->scene_node_count {
+        nb := krait_scene_bounds(st->selected_scene_node)
+        if nb.width > 0.0 && nb.height > 0.0 {
+            sel := (Rectangle){dst.x + nb.x * scale,
+                               dst.y + nb.y * scale,
+                               nb.width * scale, nb.height * scale}
+            DrawRectangleLinesEx(sel, 2, GetThemeLink())
+        }
+    }
     if ok == 0 {
         DrawRectangleRec(dst, GetThemeBackground())
         DrawUIText("Live canvas error", (int)dst.x + ScaleUIPx(16),
@@ -402,4 +427,33 @@ draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
                    (int)dst.y + ScaleUIPx(40), ScaleUIPx(12), GetThemeIcon())
     }
     EndScissorMode()
+    if canvas_menu_open != 0 {
+        canvas_menu_items[0].kind = UI_MENU_COMMAND
+        canvas_menu_items[0].label = "Reset View"
+        canvas_menu_items[0].id = 1
+        canvas_menu_items[1].kind = UI_MENU_COMMAND
+        canvas_menu_items[1].label = "Zoom 100%"
+        canvas_menu_items[1].id = 2
+        canvas_menu_items[2].kind = UI_MENU_COMMAND
+        canvas_menu_items[2].label = "Clear Selection"
+        canvas_menu_items[2].id = 3
+        canvas_menu_items[2].disabled = st->selected_scene_node < 0 ? 1 : 0
+        cmd := PopupMenu(8600, canvas_menu_x, canvas_menu_y, canvas_menu_items, 3)
+        if cmd == 1 {
+            st->preview_scale_mode = state.IDE_PREVIEW_SCALE_FIT
+            st->preview_pan_x = 0.0
+            st->preview_pan_y = 0.0
+            canvas_menu_open = 0
+        } else if cmd == 2 {
+            st->preview_zoom = 1.0
+            st->preview_scale_mode = state.IDE_PREVIEW_SCALE_CUSTOM
+            canvas_menu_open = 0
+        } else if cmd == 3 {
+            st->selected_scene_node = -1
+            widgets.reset_inspector_sync()
+            canvas_menu_open = 0
+        } else if IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
+            canvas_menu_open = 0
+        }
+    }
 }

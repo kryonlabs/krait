@@ -256,7 +256,7 @@ krait_live_exec_call(KraitLive *live, char *line)
         live->render_count++;
         return 1;
     }
-    argc = krait_live_call_args(q, "DrawUITextField", args, 8);
+    argc = krait_live_call_args(q, "TextField", args, 8);
     if(argc == 1) {
         scan = args[0];
         if(!krait_live_next_scale_arg(&scan, &x) ||
@@ -273,7 +273,7 @@ krait_live_exec_call(KraitLive *live, char *line)
         live->render_count++;
         return 1;
     }
-    argc = krait_live_call_args(q, "DrawUIToggleSwitch", args, 8);
+    argc = krait_live_call_args(q, "Toggle", args, 8);
     if(argc >= 7) {
         char off_label[128] = "Off";
         char on_label[128] = "On";
@@ -298,7 +298,7 @@ krait_live_exec_call(KraitLive *live, char *line)
         live->render_count++;
         return 1;
     }
-    argc = krait_live_call_args(q, "DrawUISlider", args, 8);
+    argc = krait_live_call_args(q, "Slider", args, 8);
     if(argc >= 8) {
         char slider_label[128] = "Value";
         char *s = args[4];
@@ -311,13 +311,136 @@ krait_live_exec_call(KraitLive *live, char *line)
             return 0;
         }
         (void)krait_live_parse_string(&s, slider_label, sizeof(slider_label));
-        Text(slider_label, x, y - ScaleUIPx(18), UI_TEXT_12, GetThemeText());
-        Rect(x, y, w, ScaleUIPx(8), GetThemeButton(), GetThemeButtonHover());
-        Rect(x + w / 2 - ScaleUIPx(6), y - ScaleUIPx(5),
-                   ScaleUIPx(12), ScaleUIPx(18), GetThemeLink(), GetThemeLink());
+        /* Match DrawUISlider's editor_bounds {x,y,w,56}: label row at y, track at y+28. */
+        Text(slider_label, x, y, UI_TEXT_12, GetThemeText());
+        Rect(x, y + ScaleUIPx(28), w, ScaleUIPx(8), GetThemeButton(), GetThemeButtonHover());
+        Rect(x + w / 2 - ScaleUIPx(6), y + ScaleUIPx(21),
+                   ScaleUIPx(12), ScaleUIPx(22), GetThemeLink(), GetThemeLink());
         live->render_count++;
         return 1;
     }
+    argc = krait_live_call_args(q, "Line", args, 8);
+    if(argc == 5) {
+        int x2 = 0, y2 = 0;
+        if(!krait_live_eval_int(args[0], &x) ||
+           !krait_live_eval_int(args[1], &y) ||
+           !krait_live_eval_int(args[2], &x2) ||
+           !krait_live_eval_int(args[3], &y2) ||
+           !krait_live_eval_color(args[4], &color)) {
+            krait_live_status(live, "%s:%d: unsupported Line arguments",
+                              live->rel_path, live->line_no);
+            return 0;
+        }
+        DrawLine(x, y, x2, y2, color);
+        live->render_count++;
+        return 1;
+    }
+    argc = krait_live_call_args(q, "TextInRect", args, 8);
+    if(argc >= 1) {
+        char *s = args[0];
+        char *scan = args[1];
+        if(!krait_live_parse_string(&s, label, sizeof(label))) {
+            krait_live_status(live, "%s:%d: unsupported TextInRect arguments",
+                              live->rel_path, live->line_no);
+            return 0;
+        }
+        if(!krait_live_next_scale_arg(&scan, &x))
+            x = 0;
+        if(!krait_live_next_scale_arg(&scan, &y))
+            y = 0;
+        if(!krait_live_next_scale_arg(&scan, &w))
+            w = 0;
+        if(!krait_live_next_scale_arg(&scan, &h))
+            h = 0;
+        DrawUIText(label, x + ScaleUIPx(4), y + ScaleUIPx(4), UI_TEXT_12,
+                   GetThemeText());
+        live->render_count++;
+        return 1;
+    }
+    argc = krait_live_call_args(q, "Progress", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        if(!krait_live_next_scale_arg(&scan, &x))
+            x = 0;
+        if(!krait_live_next_scale_arg(&scan, &y))
+            y = 0;
+        if(!krait_live_next_scale_arg(&scan, &w))
+            w = 0;
+        if(!krait_live_next_scale_arg(&scan, &h))
+            h = ScaleUIPx(20);
+        Rect(x, y, w, h, GetThemeButton(), GetThemeButtonHover());
+        live->render_count++;
+        return 1;
+    }
+    argc = krait_live_call_args(q, "ImageBox", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        if(!krait_live_next_scale_arg(&scan, &x))
+            x = 0;
+        if(!krait_live_next_scale_arg(&scan, &y))
+            y = 0;
+        if(!krait_live_next_scale_arg(&scan, &w))
+            w = 0;
+        if(!krait_live_next_scale_arg(&scan, &h))
+            h = 0;
+        Rect(x, y, w, h, GetThemeSurface(), GetThemeButton());
+        live->render_count++;
+        return 1;
+    }
+    argc = krait_live_call_args(q, "LabelFrame", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        char *ls = strchr(args[0], '"');
+        label[0] = '\0';
+        if(ls != NULL)
+            (void)krait_live_parse_string(&ls, label, sizeof(label));
+        x = 0; y = 0; w = 0; h = 0;
+        if(!krait_live_next_scale_arg(&scan, &x))
+            x = 0;
+        if(!krait_live_next_scale_arg(&scan, &y))
+            y = 0;
+        if(!krait_live_next_scale_arg(&scan, &w))
+            w = 0;
+        if(!krait_live_next_scale_arg(&scan, &h))
+            h = 0;
+        Rect(x, y, w, h, (Color){0}, GetThemeButton());
+        if(label[0] != '\0')
+            DrawUIText(label, x + ScaleUIPx(8), y, UI_TEXT_12, GetThemeText());
+        live->render_count++;
+        return 1;
+    }
+    argc = krait_live_call_args(q, "Separator", args, 8);
+    if(argc >= 1) {
+        char *scan = args[0];
+        x = 0; y = 0; w = 0; h = 0;
+        if(!krait_live_next_scale_arg(&scan, &x))
+            x = 0;
+        if(!krait_live_next_scale_arg(&scan, &y))
+            y = 0;
+        if(!krait_live_next_scale_arg(&scan, &w))
+            w = 0;
+        if(!krait_live_next_scale_arg(&scan, &h))
+            h = 2;
+        DrawLine(x, y, x + w, y + h, GetThemeButton());
+        live->render_count++;
+        return 1;
+    }
+    argc = krait_live_call_args(q, "BeginNodeGroup", args, 8);
+    if(argc >= 2) {
+        char *scan = args[1];
+        x = 0; y = 0; w = 0; h = 0;
+        krait_live_next_scale_arg(&scan, &x);
+        krait_live_next_scale_arg(&scan, &y);
+        krait_live_next_scale_arg(&scan, &w);
+        krait_live_next_scale_arg(&scan, &h);
+        DrawRectangleLines(x, y, w, h, GetThemeButton());
+        live->render_count++;
+        return 1;
+    }
+    if(strncmp(q, "EndNodeGroup", 12) == 0)
+        return 1;
     if(krait_live_starts_word(q, "if")) {
         q = krait_live_trim(q + 2);
         argc = krait_live_call_args(q, "Button", args, 8);

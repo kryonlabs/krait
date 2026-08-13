@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Krait Android manifest. Pure NativeActivity: the framework loads
+     libkrait.so (android:app.lib_name below) and calls ANativeActivity_onCreate,
+     which raylib's native_app_glue wires to android_main -> C main(). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.kryonlabs.krait"
+    android:versionCode="1"
+    android:versionName="0.1.0">
+
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="Krait"
+        android:hasCode="false"
+        android:allowBackup="false"
+        android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout"
+            android:screenOrientation="sensor">
+            <meta-data android:name="android.app.lib_name" android:value="krait" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

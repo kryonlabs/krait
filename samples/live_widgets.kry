@@ -9,7 +9,7 @@ app "Live Widgets" {
 
 screen main {
     Background(GetThemeBackground())
-    Text("Text", ScaleUIPx(20), ScaleUIPx(20), UI_TEXT_16, GetThemeText())
+    Text("Text", ScaleUIPx(36), ScaleUIPx(20), UI_TEXT_16, GetThemeText())
     if Button((ButtonProps){
         .bounds = {ScaleUIPx(20), ScaleUIPx(58), ScaleUIPx(140), ScaleUIPx(36)},
         .label = "Button",
@@ -19,10 +19,10 @@ screen main {
     field_1: [128] char
     field_cursor_1: int = 0
     field_focused_1: int = 0
-    DrawUITextField((TextFieldProps){(Rectangle){(float)ScaleUIPx(20), (float)ScaleUIPx(110), (float)ScaleUIPx(180), (float)ScaleUIPx(34)}, field_1, sizeof(field_1), &field_cursor_1, &field_focused_1, 128, UI_TEXT_16, 4201, (UITextInputStyle){GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(), GetThemeLink(), 0, ScaleUIPx(8), ScaleUIPx(6)}, (UITextInputFilter){0}, NULL, NULL})
+    TextField((TextFieldProps){(Rectangle){(float)ScaleUIPx(20), (float)ScaleUIPx(110), (float)ScaleUIPx(180), (float)ScaleUIPx(34)}, field_1, sizeof(field_1), &field_cursor_1, &field_focused_1, 128, UI_TEXT_16, 4201, (UITextInputStyle){GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(), GetThemeLink(), 0, ScaleUIPx(8), ScaleUIPx(6)}, (UITextInputFilter){0}, NULL, NULL})
     toggle_1: int = 0
-    DrawUIToggleSwitch(ScaleUIPx(20), ScaleUIPx(160), ScaleUIPx(120), ScaleUIPx(28), &toggle_1, "Off", "On")
+    Toggle(ScaleUIPx(20), ScaleUIPx(160), ScaleUIPx(120), ScaleUIPx(28), &toggle_1, "Off", "On")
     slider_1: int = 50
-    DrawUISlider(5201, ScaleUIPx(20), ScaleUIPx(220), ScaleUIPx(180), "Value", 0, 100, &slider_1, "")
-    Rect(ScaleUIPx(250), ScaleUIPx(40), ScaleUIPx(220), ScaleUIPx(140), Fade(GetThemeButton(), 0.45), GetThemeButtonHover())
+    Slider(5201, ScaleUIPx(20), ScaleUIPx(220), ScaleUIPx(180), "Value", 0, 100, &slider_1, "")
+    Rect(ScaleUIPx(226), ScaleUIPx(56), ScaleUIPx(220), ScaleUIPx(140), Fade(GetThemeButton(), 0.45), GetThemeButtonHover())
 }

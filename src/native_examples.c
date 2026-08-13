@@ -92,25 +92,32 @@ int
 krait_load_ui_font(void)
 {
     const char *kryon_dir = getenv("KRYON_DIR");
-    char path[KRAIT_PATH_MAX];
+    char kdir_path[KRAIT_PATH_MAX];
+    const char *sources[3];
+    int source_count = 0;
     int codepoints[0x7e - 0x20 + 1];
     int codepoint_count = 0;
-    const char *source;
 
     for(int codepoint = 0x20; codepoint <= 0x7e; codepoint++)
         codepoints[codepoint_count++] = codepoint;
 
+    /* The bare path is the embedded-asset key and resolves with no filesystem
+     * (Android, where the .ttf is baked into libkryon.a); the prefixed paths
+     * are desktop file fallbacks. RegisterUIFontFileSource checks embedded first. */
+    sources[source_count++] = "fonts/noto/NotoSans-Regular.ttf";
     if(kryon_dir != NULL && kryon_dir[0] != '\0') {
-        krait_join(path, sizeof(path), kryon_dir, "fonts/noto/NotoSans-Regular.ttf");
-        source = path;
-    } else {
-        source = "vendor/kryon/fonts/noto/NotoSans-Regular.ttf";
+        krait_join(kdir_path, sizeof(kdir_path), kryon_dir, "fonts/noto/NotoSans-Regular.ttf");
+        sources[source_count++] = kdir_path;
     }
+    sources[source_count++] = "vendor/kryon/fonts/noto/NotoSans-Regular.ttf";
 
-    if(!RegisterUIFontFileSource("default", source, codepoints,
-                                 codepoint_count, 1))
-        return 0;
-    UseUIFont("default");
-    return 1;
+    for(int i = 0; i < source_count; i++) {
+        if(RegisterUIFontFileSource("default", sources[i], codepoints,
+                                     codepoint_count, 1)) {
+            UseUIFont("default");
+            return 1;
+        }
+    }
+    return 0;
 }
 

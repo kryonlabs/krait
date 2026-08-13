@@ -9,16 +9,21 @@ if [ ! -d "$kryon" ]; then
     exit 1
 fi
 
+# Kryon's library/compiler code must not reference standalone IDE repositories
+# (Krait/Kite) — those are downstream consumers. Marketing prose (docs/,
+# README, CHANGELOG) and the `kt` launcher — which intentionally execs the IDE
+# for `kryon ide` — are out of scope: this enforces no code/link dependency,
+# not a ban on mentioning the companion product.
 matches=$(
     rg -in '(^|[^[:alnum:]_])(kite|krait)([^[:alnum:]_]|$)|/(kite|krait)' \
+        -g '!**/cmd/kt/**' \
         "$kryon"/Makefile "$kryon"/GNUmakefile "$kryon"/makefile \
-        "$kryon"/README.md "$kryon"/CHANGELOG.md "$kryon"/docs \
         "$kryon"/mk "$kryon"/cmd "$kryon"/include "$kryon"/src \
         "$kryon"/tests "$kryon"/tools 2>/dev/null || true
 )
 
 if [ -n "$matches" ]; then
-    echo "Kryon must not reference standalone IDE repositories:" >&2
+    echo "Kryon library/compiler code must not reference standalone IDE repositories:" >&2
     echo "$matches" >&2
     status=1
 fi
