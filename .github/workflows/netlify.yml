@@ -66,6 +66,7 @@ jobs:
           test -n "$auth_token" || { echo "::notice::NETLIFY_AUTH_TOKEN is empty or missing; skipping Netlify deploy"; exit 0; }
           test -n "$site_id" || { echo "::notice::NETLIFY_SITE_ID is empty or missing; skipping Netlify deploy"; exit 0; }
           netlify deploy \
+            --no-build \
             --dir build/site \
             --alias "pr-${{ github.event.pull_request.number }}" \
             --message "Preview ${{ github.event.pull_request.number }}" \
@@ -99,6 +100,7 @@ jobs:
           test -n "$auth_token" || { echo "::notice::NETLIFY_AUTH_TOKEN is empty or missing; skipping Netlify deploy"; exit 0; }
           test -n "$site_id" || { echo "::notice::NETLIFY_SITE_ID is empty or missing; skipping Netlify deploy"; exit 0; }
           netlify deploy \
+            --no-build \
             --dir build/site \
             --prod \
             --message "Production ${{ github.sha }}" \
