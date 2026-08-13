@@ -193,7 +193,7 @@ krait_krb_open(const char *root, const char *rel_source, char *status,
     }
 
     dir = krait_krb_dir();
-    snprintf(kc, sizeof(kc), "%s/build/bin/kc", dir);
+    snprintf(kc, sizeof(kc), "%s/build/bin/k2b", dir);
     if(!krait_krb_quote(qkc, sizeof(qkc), kc) ||
        !krait_krb_quote(qroot, sizeof(qroot), root) ||
        !krait_krb_quote(qsrc, sizeof(qsrc), rel_source)) {
@@ -205,11 +205,11 @@ krait_krb_open(const char *root, const char *rel_source, char *status,
 
     /* kc writes <outdir>/<sourcebase>.krb for each input .kry. */
     snprintf(command, sizeof(command),
-             "mkdir -p /tmp/krait-krb && %s --emit-krb --no-main --root %s -o /tmp/krait-krb %s",
+             "mkdir -p /tmp/krait-krb && %s --no-main --root %s -o /tmp/krait-krb %s",
              qkc, qroot, qsrc);
     rc = system(command);
     if(rc != 0) {
-        krait_krb_set_status("kc --emit-krb failed (is KRYON_DIR set?)");
+        krait_krb_set_status("k2b failed (is KRYON_DIR set?)");
         if(status != NULL && status_size > 0)
             snprintf(status, (size_t)status_size, "%s", g_krb_status);
         return -1;
