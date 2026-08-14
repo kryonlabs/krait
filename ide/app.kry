@@ -109,6 +109,7 @@ frame :: () {
         krait_layout_save(&istate)
         istate.layout_dirty = 0
     }
+    DrawUIOverlays()
     EndUIFocus()
     EndDrawing()
 }

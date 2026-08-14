@@ -7,7 +7,7 @@
 #include "ui_icons.h"
 #include "ui_inspect.h"
 
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
 #include <SDL2/SDL.h>
 #endif
 #include <stdio.h>
@@ -37,7 +37,7 @@ krait_use_kryon_dir(const char *path)
     setenv("KRYON_DIR", path, 1);
 }
 
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
 static int
 krait_sdl_keycode_to_ui_key(SDL_Keycode keycode)
 {
@@ -84,7 +84,7 @@ krait_update_logical_keys(void)
 static void
 krait_init_logical_keys(void)
 {
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
     SDL_AddEventWatch(krait_sdl_key_event, NULL);
 #endif
 }
@@ -92,7 +92,7 @@ krait_init_logical_keys(void)
 static void
 krait_shutdown_logical_keys(void)
 {
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
     SDL_DelEventWatch(krait_sdl_key_event, NULL);
 #endif
 }
@@ -182,6 +182,44 @@ run_live_reload_smoke(const char *project_path, const char *rel_path)
     return 0;
 }
 
+/* Headless check of the artifact-generation path (the kir/krb/c tabs). Drives
+ * the same krait_artifact_generate() the editor calls, so it exercises the
+ * resolved tool path without needing a window or display. */
+static int
+run_artifact_smoke(const char *kind_str, const char *project, const char *rel)
+{
+    /* kind matches the native artifact enum in native_artifacts.c: 1=kir 2=krb 3=c. */
+    int kind;
+    static char out[131072];
+    char artifact_path[1024];
+    char status[512];
+
+    if(kind_str == NULL || project == NULL || rel == NULL) {
+        fprintf(stderr, "usage: --smoke-artifact <kir|krb|c> <project-dir> <rel.kry>\n");
+        return 1;
+    }
+    if(strcmp(kind_str, "kir") == 0)
+        kind = 1;
+    else if(strcmp(kind_str, "krb") == 0)
+        kind = 2;
+    else if(strcmp(kind_str, "c") == 0)
+        kind = 3;
+    else {
+        fprintf(stderr, "krait artifact smoke: unknown kind '%s' (kir/krb/c)\n", kind_str);
+        return 1;
+    }
+    if(!krait_artifact_generate(project, rel, kind, out, (int)sizeof(out),
+                                artifact_path, (int)sizeof(artifact_path),
+                                status, (int)sizeof(status))) {
+        fprintf(stderr, "krait artifact smoke FAILED (%s): %s\n", kind_str,
+                status[0] != '\0' ? status : "Artifact generation failed");
+        return 1;
+    }
+    fprintf(stderr, "krait artifact smoke OK (%s): %zu bytes <- %s\n",
+            kind_str, strlen(out), artifact_path);
+    return 0;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -194,6 +232,10 @@ main(int argc, char **argv)
     int smoke_ide = 0;
     int smoke_live = 0;
     int smoke_live_reload = 0;
+    int smoke_artifact = 0;
+    const char *artifact_kind = NULL;
+    const char *artifact_project = NULL;
+    const char *artifact_rel = NULL;
     const char *project_arg = NULL;
     const char *live_rel_path = NULL;
     const char *smoke_screenshot_path = "/tmp/krait-ide-smoke.png";
@@ -253,6 +295,16 @@ main(int argc, char **argv)
                 live_rel_path = argv[argi + 2];
             break;
         }
+        if(strcmp(argv[argi], "--smoke-artifact") == 0) {
+            smoke_artifact = 1;
+            if(argc > argi + 1)
+                artifact_kind = argv[argi + 1];
+            if(argc > argi + 2)
+                artifact_project = argv[argi + 2];
+            if(argc > argi + 3)
+                artifact_rel = argv[argi + 3];
+            break;
+        }
         if(strcmp(argv[argi], "--phone") == 0) {
             g_phone_mode = 1;
             argi++;
@@ -284,6 +336,9 @@ main(int argc, char **argv)
         screen_w = g_phone_w;
         screen_h = g_phone_h;
     }
+
+    if(smoke_artifact)
+        return run_artifact_smoke(artifact_kind, artifact_project, artifact_rel);
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(screen_w, screen_h, "Krait");

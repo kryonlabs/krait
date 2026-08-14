@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Krait Web IDE</title>
-  <meta name="description" content="Open Kryon examples by URL in the Krait web IDE shell.">
+  <meta name="description" content="Run the Krait IDE as a Kryon WebAssembly application.">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body class="ide-page">
+<body class="ide-page wasm-ide-page">
   <header class="site-header">
     <div class="site-header-inner">
       <a class="brand" href="index.html">
@@ -18,29 +18,47 @@
       <nav class="header-nav" aria-label="Primary">
         <a href="index.html#features">Features</a>
         <a href="index.html#preview">Live preview</a>
-        <a href="https://kryonlabs.com/ide.html">Kryon IDE ↗</a>
+        <a href="https://kryonlabs.com/ide.html">Kryon IDE</a>
         <a class="btn btn-primary" href="ide.html">Web IDE</a>
       </nav>
     </div>
   </header>
 
-  <main class="krait-web-ide">
-    <aside class="session-sidebar">
-      <p class="section-eyebrow">Krait Web IDE</p>
-      <h1>Example Sessions</h1>
-      <p>Open a Kryon source URL as a browser session. The embedded preview is powered by Kryon’s web compiler and KRB renderer path.</p>
-      <form class="source-form" data-source-form>
-        <label for="source-url">Source URL</label>
-        <input id="source-url" name="src" type="url" data-source-url>
-        <button class="btn btn-primary" type="submit">Open</button>
-      </form>
-      <div class="example-list" data-examples></div>
-    </aside>
-    <section class="session-frame-wrap">
-      <iframe title="Kryon Web IDE session" data-session-frame></iframe>
-    </section>
+  <main class="wasm-ide-shell">
+    <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+    <div class="wasm-status" data-krait-status>
+      <strong>Krait Web IDE</strong>
+      <span>Loading Krait WASM...</span>
+    </div>
   </main>
 
-  <script src="ide.js"></script>
+  <script>
+    var statusEl = document.querySelector("[data-krait-status] span");
+    var Module = {
+      canvas: document.getElementById("canvas"),
+      arguments: [],
+      preRun: [function() {
+        if (statusEl) statusEl.textContent = "Mounting browser project files...";
+      }],
+      setStatus: function(text) {
+        if (statusEl && text) statusEl.textContent = text;
+      },
+      onRuntimeInitialized: function() {
+        if (statusEl) statusEl.textContent = "Starting Krait...";
+        setTimeout(function() {
+          var panel = document.querySelector("[data-krait-status]");
+          if (panel) panel.classList.add("is-hidden");
+        }, 800);
+      },
+      print: function(text) {
+        console.log(text);
+      },
+      printErr: function(text) {
+        console.error(text);
+        if (statusEl) statusEl.textContent = text;
+      }
+    };
+  </script>
+  <script async src="krait.js"></script>
 </body>
 </html>
