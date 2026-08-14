@@ -432,7 +432,7 @@ krait_preview_build(IdeState *st, char *status, int status_size)
             snprintf(status, (size_t)status_size, "Preview path too long");
         return 0;
     }
-    krait_kryon_tool_path(kc_tool, sizeof(kc_tool), "kc");
+    krait_kryon_tool_path(kc_tool, sizeof(kc_tool), "k2c");
     if(!krait_shell_quote(q_kc, sizeof(q_kc), kc_tool)) {
         if(status != NULL && status_size > 0)
             snprintf(status, (size_t)status_size, "Preview path too long");

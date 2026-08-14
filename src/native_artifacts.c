@@ -201,7 +201,7 @@ krait_artifact_generate(const char *root, const char *rel_source, int kind,
     else if(kind == KRAIT_ARTIFACT_KRB)
         krait_kryon_tool_path(tool, sizeof(tool), "k2b");
     else if(kind == KRAIT_ARTIFACT_C)
-        krait_kryon_tool_path(tool, sizeof(tool), "kc");
+        krait_kryon_tool_path(tool, sizeof(tool), "k2c");
     else
         return 0;
     /* The tool runs with krait's CWD; pass the source as <root>/<rel> so it is

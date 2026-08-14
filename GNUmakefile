@@ -32,12 +32,12 @@ KRAIT_OBJS := $(patsubst %.kry,$(KRAIT_GEN)/%.o,$(KRAIT_SRCS))
 KRAIT_NATIVE_SRCS := src/main.c $(wildcard src/native_*.c)
 KRAIT_NATIVE_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/src/%.o,$(KRAIT_NATIVE_SRCS))
 
-KC = $(KRYON_BUILD_DIR)/bin/kc
+K2C = $(KRYON_BUILD_DIR)/bin/k2c
 # Detect a kc built for the wrong platform (e.g. a FreeBSD binary on Linux):
 # the kernel refuses to exec it, so the shell returns 126/127. When that
 # happens, delete the stale binary so make's rule rebuilds it for the host.
-KC_RUNNABLE := $(shell if [ ! -x "$(KC)" ]; then echo yes; \
-    elif "$(KC)" >/dev/null 2>&1; then echo yes; \
+K2C_RUNNABLE := $(shell if [ ! -x "$(K2C)" ]; then echo yes; \
+    elif "$(K2C)" >/dev/null 2>&1; then echo yes; \
     else rc=$$?; if [ $$rc -eq 126 ] || [ $$rc -eq 127 ]; then echo no; else echo yes; fi; fi)
 KRYON_LIB = $(KRYON_BUILD_DIR)/libkryon.a
 RAYLIB_A = $(KRYON_BUILD_DIR)/raylib/libraylib.a
@@ -97,17 +97,17 @@ kryon-deps:
 	$(MAKE) -C $(KRYON_DIR) all
 
 # Phony guard: if kc exists but is built for a different platform (the kernel
-# refuses to exec it), delete it so the $(KC) rule below rebuilds it for the host.
-.PHONY: ensure-kc-runnable
-ensure-kc-runnable:
-	@if [ "$(KC_RUNNABLE)" != yes ] && [ -x "$(KC)" ]; then \
-	    echo "kc at $(KC) is not runnable on $(KRYON_PLATFORM); rebuilding"; \
-	    rm -f "$(KC)"; \
+# refuses to exec it), delete it so the $(K2C) rule below rebuilds it for the host.
+.PHONY: ensure-k2c-runnable
+ensure-k2c-runnable:
+	@if [ "$(K2C_RUNNABLE)" != yes ] && [ -x "$(K2C)" ]; then \
+	    echo "k2c at $(K2C) is not runnable on $(KRYON_PLATFORM); rebuilding"; \
+	    rm -f "$(K2C)"; \
 	fi
 
-$(KRAIT_GEN)/.transpiled: $(KRAIT_SRCS) | ensure-kc-runnable $(KC)
+$(KRAIT_GEN)/.transpiled: $(KRAIT_SRCS) | ensure-k2c-runnable $(K2C)
 	@mkdir -p $(KRAIT_GEN)
-	$(KC) --root . -o $(KRAIT_GEN) $(KRAIT_SRCS)
+	$(K2C) --root . -o $(KRAIT_GEN) $(KRAIT_SRCS)
 	@touch $@
 
 $(KRAIT_GEN)/ide/app.o: $(KRAIT_GEN)/.transpiled
@@ -135,7 +135,7 @@ $(KRAIT): kryon-deps $(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KRAIT_GEN)/.transpiled
 		-Wl,-export-dynamic $(KRYON_PLATFORM_LDLIBS) \
 		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) -lz -lpthread -lm
 
-$(KC) $(KRYON_LIB) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) $(KRYON_BOX2D_A):
+$(K2C) $(KRYON_LIB) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) $(KRYON_BOX2D_A):
 	$(MAKE) -C $(KRYON_DIR) all
 
 $(RAYLIB_A):
