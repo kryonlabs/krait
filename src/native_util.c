@@ -71,7 +71,7 @@ krait_path_exists(const char *path)
 void
 krait_kryon_tool_path(char *out, size_t out_size, const char *tool)
 {
-    /* kryon builds its tools (k2ir/k2b/kc) into the platform-tagged dir
+    /* kryon builds its tools (k2ir/k2b/k2c) into the platform-tagged dir
      * <kryon_dir>/build/<platform>-<arch>/bin/, never the legacy flat
      * build/bin/, so derive the host platform/arch the same way kryon's
      * Makefile does (amd64 -> x86_64; Linux/FreeBSD/Darwin -> the lower
