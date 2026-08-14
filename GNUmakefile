@@ -33,7 +33,7 @@ KRAIT_NATIVE_SRCS := src/main.c $(wildcard src/native_*.c)
 KRAIT_NATIVE_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/src/%.o,$(KRAIT_NATIVE_SRCS))
 
 K2C = $(KRYON_BUILD_DIR)/bin/k2c
-# Detect a kc built for the wrong platform (e.g. a FreeBSD binary on Linux):
+# Detect a k2c built for the wrong platform (e.g. a FreeBSD binary on Linux):
 # the kernel refuses to exec it, so the shell returns 126/127. When that
 # happens, delete the stale binary so make's rule rebuilds it for the host.
 K2C_RUNNABLE := $(shell if [ ! -x "$(K2C)" ]; then echo yes; \
@@ -96,7 +96,7 @@ kryon-deps:
 	fi
 	$(MAKE) -C $(KRYON_DIR) all
 
-# Phony guard: if kc exists but is built for a different platform (the kernel
+# Phony guard: if k2c exists but is built for a different platform (the kernel
 # refuses to exec it), delete it so the $(K2C) rule below rebuilds it for the host.
 .PHONY: ensure-k2c-runnable
 ensure-k2c-runnable:

@@ -1,6 +1,6 @@
 /*
  * Cartridge (krb) explorer backend. Compiles the current .kry source to a .krb
- * cartridge (kc --emit-krb), loads it with KrbLoadFile, and exposes the node
+ * cartridge (k2b), loads it with KrbLoadFile, and exposes the node
  * tree, string table, program, and host imports to ide/cartridge.kry.
  * krait_krb_draw renders the cartridge through the raylib-backed KryBackend for
  * an in-panel preview.
@@ -155,7 +155,7 @@ int
 krait_krb_open(const char *root, const char *rel_source, char *status,
                int status_size)
 {
-    char kc[KRAIT_PATH_MAX];
+    char k2b[KRAIT_PATH_MAX];
     char qkc[KRAIT_PATH_MAX * 2];
     char qroot[KRAIT_PATH_MAX * 2];
     char input[KRAIT_PATH_MAX];
@@ -182,9 +182,9 @@ krait_krb_open(const char *root, const char *rel_source, char *status,
         return -1;
     }
 
-    krait_kryon_tool_path(kc, sizeof(kc), "k2b");
+    krait_kryon_tool_path(k2b, sizeof(k2b), "k2b");
     krait_join(input, sizeof(input), root, rel_source);
-    if(!krait_krb_quote(qkc, sizeof(qkc), kc) ||
+    if(!krait_krb_quote(qkc, sizeof(qkc), k2b) ||
        !krait_krb_quote(qroot, sizeof(qroot), root) ||
        !krait_krb_quote(qinput, sizeof(qinput), input)) {
         krait_krb_set_status("Path too long");
@@ -193,7 +193,7 @@ krait_krb_open(const char *root, const char *rel_source, char *status,
         return -1;
     }
 
-    /* kc writes <outdir>/<sourcebase>.krb for each input .kry. */
+    /* k2b writes <outdir>/<sourcebase>.krb for each input .kry. */
     snprintf(command, sizeof(command),
              "mkdir -p /tmp/krait-krb && %s --no-main --root %s -o /tmp/krait-krb %s",
              qkc, qroot, qinput);
