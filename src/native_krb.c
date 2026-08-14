@@ -34,16 +34,6 @@ static int g_krb_str_count;
 static char g_krb_op_disasm[KRAIT_KRB_OP_MAX][48];
 static int g_krb_op_count;
 
-/* Resolve the kryon source tree (KRYON_DIR env, then the vendored checkout). */
-static const char *
-krait_krb_dir(void)
-{
-    const char *dir = getenv("KRYON_DIR");
-    if(dir != NULL && dir[0] != '\0')
-        return dir;
-    return "vendor/kryon";
-}
-
 /* Wrap a path in single quotes for /bin/sh, escaping embedded quotes. */
 static int
 krait_krb_quote(char *dst, size_t dst_size, const char *src)
@@ -168,11 +158,11 @@ krait_krb_open(const char *root, const char *rel_source, char *status,
     char kc[KRAIT_PATH_MAX];
     char qkc[KRAIT_PATH_MAX * 2];
     char qroot[KRAIT_PATH_MAX * 2];
-    char qsrc[KRAIT_PATH_MAX * 2];
+    char input[KRAIT_PATH_MAX];
+    char qinput[KRAIT_PATH_MAX * 2];
     char command[KRAIT_PATH_MAX * 8];
     char base[256];
     char krb_path[KRAIT_PATH_MAX];
-    const char *dir;
     const char *dot;
     int rc;
 
@@ -192,11 +182,11 @@ krait_krb_open(const char *root, const char *rel_source, char *status,
         return -1;
     }
 
-    dir = krait_krb_dir();
-    snprintf(kc, sizeof(kc), "%s/build/bin/k2b", dir);
+    krait_kryon_tool_path(kc, sizeof(kc), "k2b");
+    krait_join(input, sizeof(input), root, rel_source);
     if(!krait_krb_quote(qkc, sizeof(qkc), kc) ||
        !krait_krb_quote(qroot, sizeof(qroot), root) ||
-       !krait_krb_quote(qsrc, sizeof(qsrc), rel_source)) {
+       !krait_krb_quote(qinput, sizeof(qinput), input)) {
         krait_krb_set_status("Path too long");
         if(status != NULL && status_size > 0)
             snprintf(status, (size_t)status_size, "%s", g_krb_status);
@@ -206,7 +196,7 @@ krait_krb_open(const char *root, const char *rel_source, char *status,
     /* kc writes <outdir>/<sourcebase>.krb for each input .kry. */
     snprintf(command, sizeof(command),
              "mkdir -p /tmp/krait-krb && %s --no-main --root %s -o /tmp/krait-krb %s",
-             qkc, qroot, qsrc);
+             qkc, qroot, qinput);
     rc = system(command);
     if(rc != 0) {
         krait_krb_set_status("k2b failed (is KRYON_DIR set?)");

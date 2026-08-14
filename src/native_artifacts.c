@@ -14,16 +14,6 @@ enum {
     KRAIT_ARTIFACT_C = 3
 };
 
-static const char *
-krait_artifact_kryon_dir(void)
-{
-    const char *dir = getenv("KRYON_DIR");
-
-    if(dir != NULL && dir[0] != '\0')
-        return dir;
-    return "vendor/kryon";
-}
-
 static int
 shell_quote(char *dst, size_t dst_size, const char *src)
 {
@@ -187,12 +177,12 @@ krait_artifact_generate(const char *root, const char *rel_source, int kind,
     char temp[KRAIT_PATH_MAX];
     char qtool[KRAIT_PATH_MAX * 2];
     char qroot[KRAIT_PATH_MAX * 2];
-    char qsrc[KRAIT_PATH_MAX * 2];
+    char input[KRAIT_PATH_MAX];
+    char qinput[KRAIT_PATH_MAX * 2];
     char qtemp[KRAIT_PATH_MAX * 2];
     char cmd[KRAIT_PATH_MAX * 8];
     char stem[KRAIT_PATH_MAX];
     char base[256];
-    const char *kryon_dir;
     int rc;
 
     if(out != NULL && out_size > 0)
@@ -204,30 +194,33 @@ krait_artifact_generate(const char *root, const char *rel_source, int kind,
     if(root == NULL || rel_source == NULL || !krait_path_has_suffix(rel_source, ".kry"))
         return 0;
 
-    kryon_dir = krait_artifact_kryon_dir();
     snprintf(temp, sizeof(temp), "/tmp/krait-artifacts-%ld-%d",
              (long)getpid(), kind);
     if(kind == KRAIT_ARTIFACT_KIR)
-        snprintf(tool, sizeof(tool), "%s/build/bin/k2ir", kryon_dir);
+        krait_kryon_tool_path(tool, sizeof(tool), "k2ir");
     else if(kind == KRAIT_ARTIFACT_KRB)
-        snprintf(tool, sizeof(tool), "%s/build/bin/k2b", kryon_dir);
+        krait_kryon_tool_path(tool, sizeof(tool), "k2b");
     else if(kind == KRAIT_ARTIFACT_C)
-        snprintf(tool, sizeof(tool), "%s/build/bin/kc", kryon_dir);
+        krait_kryon_tool_path(tool, sizeof(tool), "kc");
     else
         return 0;
+    /* The tool runs with krait's CWD; pass the source as <root>/<rel> so it is
+     * found regardless of where krait was launched (the editor passes f->name
+     * which is relative to the project, not to krait's launch dir). */
+    krait_join(input, sizeof(input), root, rel_source);
     if(!shell_quote(qtool, sizeof(qtool), tool) ||
        !shell_quote(qroot, sizeof(qroot), root) ||
-       !shell_quote(qsrc, sizeof(qsrc), rel_source) ||
+       !shell_quote(qinput, sizeof(qinput), input) ||
        !shell_quote(qtemp, sizeof(qtemp), temp)) {
         if(status != NULL && status_size > 0)
             snprintf(status, (size_t)status_size, "Artifact path too long");
         return 0;
     }
     snprintf(cmd, sizeof(cmd), "rm -rf %s && mkdir -p %s && %s --no-main --root %s -o %s %s",
-             qtemp, qtemp, qtool, qroot, qtemp, qsrc);
+             qtemp, qtemp, qtool, qroot, qtemp, qinput);
     if(kind == KRAIT_ARTIFACT_KIR)
         snprintf(cmd, sizeof(cmd), "rm -rf %s && mkdir -p %s && %s --root %s -o %s %s",
-                 qtemp, qtemp, qtool, qroot, qtemp, qsrc);
+                 qtemp, qtemp, qtool, qroot, qtemp, qinput);
     rc = system(cmd);
     if(rc != 0) {
         if(status != NULL && status_size > 0)

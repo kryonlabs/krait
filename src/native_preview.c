@@ -407,6 +407,8 @@ krait_preview_build(IdeState *st, char *status, int status_size)
     char configured_live[KRAIT_PATH_MAX];
     char configured_build[KRAIT_PATH_MAX * 4];
     char q_kryon[KRAIT_PATH_MAX * 2];
+    char kc_tool[KRAIT_PATH_MAX];
+    char q_kc[KRAIT_PATH_MAX * 2];
     char command[KRAIT_PATH_MAX * 12];
     int has_project_host;
 
@@ -426,6 +428,12 @@ krait_preview_build(IdeState *st, char *status, int status_size)
     if(kryon_dir == NULL || kryon_dir[0] == '\0')
         kryon_dir = "vendor/kryon";
     if(!krait_shell_quote(q_kryon, sizeof(q_kryon), kryon_dir)) {
+        if(status != NULL && status_size > 0)
+            snprintf(status, (size_t)status_size, "Preview path too long");
+        return 0;
+    }
+    krait_kryon_tool_path(kc_tool, sizeof(kc_tool), "kc");
+    if(!krait_shell_quote(q_kc, sizeof(q_kc), kc_tool)) {
         if(status != NULL && status_size > 0)
             snprintf(status, (size_t)status_size, "Preview path too long");
         return 0;
@@ -484,13 +492,13 @@ krait_preview_build(IdeState *st, char *status, int status_size)
 
     snprintf(command, sizeof(command),
              "mkdir -p build/kryon/gen && "
-             "%s/build/bin/kc --no-main --root . -o build/kryon/gen "
+             "%s --no-main --root . -o build/kryon/gen "
              "$(find . -name '*.kry' -not -path './build/*' -not -path './vendor/*' | sort) && "
              "cc -shared -fPIC "
              "-Ibuild/kryon/gen -I%s/include -I%s/src/ui -I%s/vendor/clay "
              "-o build/kryon/app_host.so "
              "$(find build/kryon/gen -name '*.c' | sort) build/kryon/preview_shim.c",
-             q_kryon, kryon_dir, kryon_dir, kryon_dir);
+             q_kc, kryon_dir, kryon_dir, kryon_dir);
     return krait_preview_build_start(st->project.path, host_path,
                                      command, status, status_size);
 }

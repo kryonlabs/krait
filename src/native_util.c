@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 
 void
@@ -65,6 +66,38 @@ krait_path_exists(const char *path)
 {
     struct stat st;
     return path != NULL && stat(path, &st) == 0;
+}
+
+void
+krait_kryon_tool_path(char *out, size_t out_size, const char *tool)
+{
+    /* kryon builds its tools (k2ir/k2b/kc) into the platform-tagged dir
+     * <kryon_dir>/build/<platform>-<arch>/bin/, never the legacy flat
+     * build/bin/, so derive the host platform/arch the same way kryon's
+     * Makefile does (amd64 -> x86_64; Linux/FreeBSD/Darwin -> the lower
+     * kryon name). <kryon_dir> is $KRYON_DIR, default "vendor/kryon". */
+    const char *dir = getenv("KRYON_DIR");
+    const char *plat = "linux";
+    const char *arch = "x86_64";
+    struct utsname u;
+
+    if(dir == NULL || dir[0] == '\0')
+        dir = "vendor/kryon";
+    if(uname(&u) == 0) {
+        if(strcmp(u.sysname, "FreeBSD") == 0)
+            plat = "freebsd";
+        else if(strcmp(u.sysname, "Darwin") == 0)
+            plat = "macos";
+        else if(strcmp(u.sysname, "Linux") == 0)
+            plat = "linux";
+        else
+            plat = u.sysname;
+        if(strcmp(u.machine, "amd64") == 0)
+            arch = "x86_64";
+        else
+            arch = u.machine;
+    }
+    snprintf(out, out_size, "%s/build/%s-%s/bin/%s", dir, plat, arch, tool);
 }
 
 int

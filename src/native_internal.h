@@ -66,6 +66,7 @@ int krait_tree_id(const char *path);
 int krait_ident_start(int ch);
 int krait_ident_char(int ch);
 void krait_title_from_file(char *dst, size_t dst_size, const char *file);
+void krait_kryon_tool_path(char *out, size_t out_size, const char *tool);
 
 /* ---- native_live_eval.c: pure parser/eval helpers (shared by scene + live) ---- */
 const char *krait_live_skip_space(const char *p);
