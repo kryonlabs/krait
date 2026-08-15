@@ -234,28 +234,25 @@ draw_top_actions :: (view_w: int, top_h: int) {
     }
     if istate.project.loaded {
         gap := ScaleUIPx(6)
-        view_w := ScaleUIPx(64)
+        view_w := ScaleUIPx(96)
         x = x - gap - view_w
-        if DrawUIGenericButton(x, y, view_w, btn_h,
-                               istate.view == state.IDE_VIEW_TEXT ?
-                                   "Studio" : "Text",
-                               istate.view == state.IDE_VIEW_TEXT ?
-                                   UI_BUTTON_STYLE_TAB_SELECTED :
-                                   UI_BUTTON_STYLE_TAB,
-                               0, NULL) {
-            istate.view = istate.view == state.IDE_VIEW_TEXT ?
-                          state.IDE_VIEW_PROJECT : state.IDE_VIEW_TEXT
+        view_options: [3] const char* = {"Studio", "Agent", "Text"}
+        view_selected := 0
+        if istate.view == state.IDE_VIEW_AGENT {
+            view_selected = 1
+        } else if istate.view == state.IDE_VIEW_TEXT {
+            view_selected = 2
         }
-        x = x - gap - view_w
-        if DrawUIGenericButton(x, y, view_w, btn_h,
-                               istate.view == state.IDE_VIEW_AGENT ?
-                                   "Studio" : "Agent",
-                               istate.view == state.IDE_VIEW_AGENT ?
-                                   UI_BUTTON_STYLE_TAB_SELECTED :
-                                   UI_BUTTON_STYLE_TAB,
-                               0, NULL) {
-            istate.view = istate.view == state.IDE_VIEW_AGENT ?
-                          state.IDE_VIEW_PROJECT : state.IDE_VIEW_AGENT
+        picked := view_selected
+        DrawUIDropdown(7800, x, y, view_w, btn_h, view_options, 3, &picked)
+        if picked != view_selected {
+            if picked == 1 {
+                istate.view = state.IDE_VIEW_AGENT
+            } else if picked == 2 {
+                istate.view = state.IDE_VIEW_TEXT
+            } else {
+                istate.view = state.IDE_VIEW_PROJECT
+            }
         }
         if istate.view == state.IDE_VIEW_PROJECT {
             redo_w := ScaleUIPx(46)
