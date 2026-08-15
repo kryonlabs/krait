@@ -1,0 +1,23 @@
+krait benchmark results
+=======================
+
+== compile gate (scaffold project) ==
+cold (unique file, full cc)        513281 us
+warm run 1 (cache hits)            210126 us
+warm run 2 (cache hits)            59776 us
+cc invocations total               4
+cc cache hits total                3
+overlay copies                     3
+
+== transcript wrap (16KB message, 500px) ==
+cold wrap+render (1 pass)          123 us
+repeat x1000 (cached)              163 us total
+per cached frame                   0 us
+
+== live app (spawned krait, 6s sample) ==
+idle CPU (ticks / 5s)              4
+idle CPU (% of one core)           0 %
+resident memory (VmRSS)            143212 kB
+
+== bench harness process ==
+peak RSS (ru_maxrss)               14308 kB

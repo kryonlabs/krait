@@ -15,9 +15,11 @@
 
 #include "kry_process.h"
 
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -31,6 +33,115 @@ typedef struct {
     size_t all_size;
     size_t all_used;
 } GateCapture;
+
+/* cc verdict cache: the syntax check re-parses kryon's headers for every
+ * generated file on every run, which measured ~3.5s for two dozen files
+ * while the transpile took 12ms. Files whose content hash was already
+ * checked green stay green, so a validation after a 1-file edit checks
+ * one file, not the whole tree. */
+#define GATE_CACHE_MAX 512
+typedef struct {
+    unsigned long hash;
+    int verdict;      /* 1 = compiles */
+    char error[96];
+} GateCcEntry;
+static GateCcEntry gate_cc_cache[GATE_CACHE_MAX];
+static int gate_cc_cache_count;
+static int gate_stats_cc_runs;
+static int gate_stats_cache_hits;
+static int gate_stats_copies;
+
+int
+krait_gate_cc_runs(void)
+{
+    return gate_stats_cc_runs;
+}
+
+int
+krait_gate_cache_hits(void)
+{
+    return gate_stats_cache_hits;
+}
+
+int
+krait_gate_copies(void)
+{
+    return gate_stats_copies;
+}
+
+static unsigned long
+gate_hash(const char *a, const char *b)
+{
+    unsigned long h = 2166136261ul;
+    const char *p = a;
+
+    while(p != NULL && *p != '\0')
+        h = (h ^ (unsigned char)*p++) * 16777619ul;
+    p = b;
+    while(p != NULL && *p != '\0')
+        h = (h ^ (unsigned char)*p++) * 16777619ul;
+    return h;
+}
+
+static GateCcEntry *
+gate_cache_find(unsigned long h)
+{
+    int i;
+
+    for(i = 0; i < gate_cc_cache_count; i++)
+        if(gate_cc_cache[i].hash == h)
+            return &gate_cc_cache[i];
+    return NULL;
+}
+
+static void
+gate_cache_store(unsigned long h, int verdict, const char *error)
+{
+    GateCcEntry *e;
+
+    if(gate_cc_cache_count >= GATE_CACHE_MAX)
+        return;   /* full: degrade to uncached, never wrong */
+    e = &gate_cc_cache[gate_cc_cache_count++];
+    e->hash = h;
+    e->verdict = verdict;
+    snprintf(e->error, sizeof(e->error), "%s", error != NULL ? error : "");
+}
+
+/* (path, mtime, size) manifest of a directory tree, so the overlay copy
+ * is skipped when the project has not changed since the last one. */
+static unsigned long
+gate_manifest(const char *dir, unsigned long h)
+{
+    DIR *d = opendir(dir);
+    struct dirent *e;
+    struct stat st;
+    char path[KRAIT_PATH_MAX * 2];
+
+    if(d == NULL)
+        return h;
+    while((e = readdir(d)) != NULL) {
+        if(e->d_name[0] == '.')
+            continue;
+        snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+        if(stat(path, &st) != 0)
+            continue;
+        if(S_ISDIR(st.st_mode)) {
+            if(strcmp(e->d_name, "out") == 0)
+                continue;   /* our own transpile output */
+            h = gate_manifest(path, h);
+            h = (h ^ (unsigned long)e->d_name[0]) * 16777619ul;
+            continue;
+        }
+        h = gate_hash(path, "");
+        /* nanosecond mtime: whole seconds collide when a project is
+         * rebuilt within the same second (tests scaffold this way) */
+        h ^= (unsigned long)st.st_mtim.tv_nsec * 31 +
+             (unsigned long)st.st_size * 1000003u +
+             (unsigned long)st.st_mtim.tv_sec;
+    }
+    closedir(d);
+    return h;
+}
 
 static int
 gate_debug(void)
@@ -152,26 +263,91 @@ gate_cc_check_all(const char *tmp, const char *k2c_path,
         if(realpath(kryon_dir, abs) != NULL)
             snprintf(kryon_dir, sizeof(kryon_dir), "%s", abs);
     }
-    snprintf(cmd, sizeof(cmd),
-             "cd '%s' && for src in $(find out -name '*.c' | LC_ALL=C sort); do "
-             "cc -fsyntax-only -std=c99 -I%s/include -I%s/src/ui "
-             "-I%s/vendor/clay -Iout -I$(dirname $src) $src 2>&1 || exit 1; "
-             "done; echo CCOKE",
-             tmp, kryon_dir, kryon_dir, kryon_dir);
-    if(gate_debug())
-        fprintf(stderr, "compile-gate: cc cmd=[%s]\n", cmd);
-    if(!kry_process_spawn(&proc, cmd, tmp))
-        return 1;
+    /* one cc per not-yet-green file; cached verdicts skip the spawn.
+     * the hash covers the file content AND the kryon checkout it is
+     * checked against, so a vendor bump invalidates everything. */
     {
-        int rc2 = 1;
-        GateCapture cap = {first_error, error_size, &rc2, all_errors, all_size,
-                           0};
+        char listpath[KRAIT_PATH_MAX * 2];
+        FILE *list;
+        char line[KRAIT_PATH_MAX];
+        int failed = 0;
 
-        gate_run(&proc, &cap);
-        if(gate_debug())
-            fprintf(stderr, "compile-gate: cc rc2=%d exit=%d\n", rc2,
-                    proc.exit_status);
-        return rc2 == 0 ? 0 : 1;
+        snprintf(cmd, sizeof(cmd),
+                 "cd '%s' && find out -name '*.c' | LC_ALL=C sort > out/.clist",
+                 tmp);
+        if(system(cmd) != 0)
+            return 1;
+        snprintf(listpath, sizeof(listpath), "%s/out/.clist", tmp);
+        list = fopen(listpath, "r");
+        if(list == NULL)
+            return 1;
+        while(fgets(line, sizeof(line), list) != NULL) {
+            char *nl = strchr(line, '\n');
+            char src[KRAIT_PATH_MAX * 2];
+            char *content = NULL;
+            long len;
+            unsigned long h;
+            GateCcEntry *entry;
+
+            if(nl != NULL)
+                *nl = '\0';
+            if(line[0] == '\0')
+                continue;
+            snprintf(src, sizeof(src), "%s/%s", tmp, line);
+            if(!krait_read_file_alloc(src, &content, &len)) {
+                free(content);
+                failed = 1;
+                break;
+            }
+            h = gate_hash(content, kryon_dir);
+            free(content);
+            entry = gate_cache_find(h);
+            if(gate_debug())
+                fprintf(stderr, "compile-gate: file %s hash=%lx cache=%s\n",
+                        line, h,
+                        entry != NULL ? (entry->verdict ? "green" : "red")
+                                      : "miss");
+            if(entry != NULL && entry->verdict) {
+                gate_stats_cache_hits++;
+                continue;
+            }
+            gate_stats_cc_runs++;
+            snprintf(cmd, sizeof(cmd),
+                     "cd '%s' && cc -fsyntax-only -std=c99 -I%s/include "
+                     "-I%s/src/ui -I%s/vendor/clay -Iout -I$(dirname '%s') "
+                     "'%s' 2>&1; echo RC=$?",
+                     tmp, kryon_dir, kryon_dir, kryon_dir, line, line);
+            if(gate_debug())
+                fprintf(stderr, "compile-gate: cc cmd=[%s]\n", cmd);
+            if(!kry_process_spawn(&proc, cmd, tmp)) {
+                failed = 1;
+                break;
+            }
+            {
+                int rc2 = 1;
+                char one_err[192];
+                GateCapture cap = {one_err, sizeof(one_err), &rc2, all_errors,
+                                   all_size, 0};
+
+                one_err[0] = '\0';
+                gate_run(&proc, &cap);
+                if(rc2 == 0) {
+                    gate_cache_store(h, 1, NULL);
+                } else {
+                    gate_cache_store(h, 0, one_err);
+                    if(first_error != NULL && error_size > 0 &&
+                       first_error[0] == '\0')
+                        snprintf(first_error, error_size, "%s",
+                                 one_err[0] != '\0' ? one_err : line);
+                    failed = 1;
+                    break;
+                }
+            }
+        }
+        fclose(list);
+        if(!failed)
+            return 0;
+        return 1;
     }
 }
 
@@ -204,10 +380,24 @@ krait_compile_gate_all(const char *project_dir,
     if(access(k2c, X_OK) != 0)
         return 0;   /* no toolchain; the gate cannot run */
     snprintf(tmp, sizeof(tmp), "/tmp/krait-gate-%d", (int)getpid());
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s' && mkdir -p '%s' && cp -R '%s/.' '%s/'",
-             tmp, tmp, project_dir, tmp);
-    if(system(cmd) != 0)
-        return 0;
+    {
+        /* warm overlay: reuse the copy while the project tree is
+         * unchanged (mtime+size manifest), saving the rm -rf + cp -R */
+        static char warm_dir[KRAIT_PATH_MAX];
+        static unsigned long warm_hash;
+        unsigned long manifest = gate_manifest(project_dir, 0x9e3779b9ul);
+
+        if(strcmp(warm_dir, project_dir) != 0 || manifest != warm_hash) {
+            snprintf(cmd, sizeof(cmd),
+                     "rm -rf '%s' && mkdir -p '%s' && cp -R '%s/.' '%s/'",
+                     tmp, tmp, project_dir, tmp);
+            if(system(cmd) != 0)
+                return 0;
+            snprintf(warm_dir, sizeof(warm_dir), "%s", project_dir);
+            warm_hash = manifest;
+            gate_stats_copies++;
+        }
+    }
     for(i = 0; i < overlay_count; i++) {
         char dst[KRAIT_PATH_MAX * 2];
 
@@ -215,13 +405,20 @@ krait_compile_gate_all(const char *project_dir,
                                                               ".kry"))
             continue;
         snprintf(dst, sizeof(dst), "%s/%s", tmp, overlay_paths[i]);
-        krait_write_text_file(dst,
-            overlay_bodies[i] != NULL ? overlay_bodies[i] : "");
+        {
+            int wok = krait_write_text_file(dst,
+                            overlay_bodies[i] != NULL ? overlay_bodies[i]
+                                                      : "");
+
+            if(gate_debug())
+                fprintf(stderr, "compile-gate: overlay write %s ok=%d\n",
+                        dst, wok);
+        }
     }
     snprintf(out, sizeof(out), "%s/out", tmp);
     snprintf(cmd, sizeof(cmd),
              "cd '%s' && '%s' --root . --no-main -o '%s' $(find . -name '*.kry' "
-             "| LC_ALL=C sort); echo RC=$?",
+             "| LC_ALL=C sort) 2>&1; echo RC=$?",
              tmp, k2c, out);
     if(all_errors != NULL && all_size > 0)
         all_errors[0] = '\0';
@@ -235,12 +432,14 @@ krait_compile_gate_all(const char *project_dir,
     if(rc == 0)
         rc = gate_cc_check_all(tmp, k2c, first_error, error_size, all_errors,
                                all_size);
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmp);
-    if(system(cmd) != 0) {
-        /* best effort cleanup */
-    }
+    /* the overlay stays warm for the next call (pid-keyed under /tmp);
+     * deleting it here would defeat the manifest skip and make the next
+     * spawn chdir into a missing dir */
     if(first_error != NULL && error_size > 0)
         krait_trim(first_error);
+    if(rc != 0 && first_error != NULL && error_size > 0 &&
+       first_error[0] == '\0')
+        snprintf(first_error, error_size, "k2c failed (exit %d)", rc);
     return rc == 0 ? 0 : 1;
 }
 

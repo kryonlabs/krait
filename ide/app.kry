@@ -62,6 +62,8 @@ init :: () {
 }
 
 krait_agent_shutdown :: () #extern
+krait_agent_busy :: () -> int #extern
+krait_agent_streaming_text :: () -> const char* #extern
 
 shutdown :: () {
     krait_preview_unload()
@@ -78,7 +80,59 @@ shutdown :: () {
     CloseFileDialog(&project_dialog)
 }
 
+# Idle throttle: llvmpipe rasterizes every frame on the CPU, so a quiet
+# UI renders at 10fps instead of 60. Anything that can change the screen
+# on its own - typing focus (cursor blink), streaming agent output, a
+# running agent or console - keeps the full rate; any input snaps back.
+frame_active :: int #global
+frame_idle_frames :: int #global
+
+frame_throttle :: () {
+    active := 0
+    delta := GetMouseDelta()
+    if delta.x != 0.0 || delta.y != 0.0 {
+        active = 1
+    }
+    if GetMouseWheelMove() != 0.0 {
+        active = 1
+    }
+    if IsMouseButtonPressed(0) || IsMouseButtonReleased(0) {
+        active = 1
+    }
+    if istate.console_focused != 0 {
+        active = 1
+    }
+    if ag.agent_input_focused != 0 {
+        active = 1
+    }
+    i := 0
+    while i < istate.open_count {
+        if istate.open_files[i].focused != 0 {
+            active = 1
+        }
+        i = i + 1
+    }
+    if kb.kanban_detail_open != 0 {
+        active = 1
+    }
+    if krait_agent_busy() != 0 || strlen(krait_agent_streaming_text()) > 0 {
+        active = 1
+    }
+    if active != 0 {
+        frame_idle_frames = 0
+    } else {
+        frame_idle_frames = frame_idle_frames + 1
+    }
+    frame_active = active
+    if frame_idle_frames < 6 {
+        SetTargetFPS(60)
+    } else {
+        SetTargetFPS(10)
+    }
+}
+
 frame :: () {
+    frame_throttle()
     w := GetScreenWidth()
     h := GetScreenHeight()
     apply_krait_theme()

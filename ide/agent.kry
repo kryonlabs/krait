@@ -7,6 +7,8 @@ ed :: #import "ide/editor"
 prob :: #import "ide/problems"
 con :: #import "ide/console"
 
+krait_wrap_lines :: (text: const char*, width: int, font: int, max_lines: int) -> int #extern
+krait_wrap_line :: (text: const char*, width: int, font: int, max_lines: int, row: int, dst: char*, dst_size: int) -> int #extern
 krait_agent_consume_console :: () -> const char* #extern
 krait_agent_clear_console :: () #extern
 krait_agent_streaming_text :: () -> const char* #extern
@@ -34,126 +36,6 @@ agent_scroll :: int #global
 agent_bound :: int #global
 agent_expanded :: int #global
 
-# Word-wrap a message for the transcript: count the physical lines that
-# fit wrap_w pixels, hard-splitting long unbroken runs.
-agent_wrap_text :: (text: const char*, wrap_w: int, font: int, max_lines: int) -> int {
-    total := 0
-    i := 0
-    line_w := 0
-    while text[i] != 0 {
-        word_start := i
-        while text[i] != 0 && text[i] != ' ' && text[i] != 10 {
-            i = i + 1
-        }
-        seg: [512] char
-        seg_len := i - word_start
-        if seg_len > 511 {
-            seg_len = 511
-        }
-        memcpy(seg, text + word_start, seg_len)
-        seg[seg_len] = 0
-        seg_w := MeasureUIText(seg, font)
-        if line_w > 0 && line_w + seg_w + font > wrap_w {
-            total = total + 1
-            line_w = 0
-            if total >= max_lines {
-                return total
-            }
-        }
-        if seg_w > wrap_w {
-            total = total + (seg_w + wrap_w - 1) / wrap_w
-            line_w = seg_w % wrap_w
-            if total >= max_lines {
-                return max_lines
-            }
-        } else {
-            line_w = line_w + seg_w + font
-        }
-        if text[i] == 10 {
-            total = total + 1
-            line_w = 0
-            if total >= max_lines {
-                return total
-            }
-        }
-        if text[i] != 0 {
-            i = i + 1
-        }
-    }
-    return total + 1
-}
-
-# Render one wrapped line: same walk as agent_wrap_text, stopping at the
-# requested row.
-agent_wrapped_line :: (text: const char*, wrap_w: int, font: int, max_lines: int,
-                       want: int, dst: char*, dst_size: int) {
-    dst[0] = 0
-    total := 0
-    i := 0
-    line_w := 0
-    start := -1
-    while text[i] != 0 {
-        word_start := i
-        while text[i] != 0 && text[i] != ' ' && text[i] != 10 {
-            i = i + 1
-        }
-        seg: [512] char
-        seg_len := i - word_start
-        if seg_len > 511 {
-            seg_len = 511
-        }
-        memcpy(seg, text + word_start, seg_len)
-        seg[seg_len] = 0
-        seg_w := MeasureUIText(seg, font)
-        if line_w > 0 && line_w + seg_w + font > wrap_w {
-            if total == want {
-                return
-            }
-            total = total + 1
-            line_w = 0
-            start = -1
-        }
-        if total == want {
-            if start < 0 {
-                start = word_start
-            }
-            take := i - start
-            if take > dst_size - 1 {
-                take = dst_size - 1
-            }
-            memcpy(dst, text + start, take)
-            dst[take] = 0
-        }
-        if seg_w > wrap_w {
-            if total == want {
-                return
-            }
-            total = total + 1
-            line_w = seg_w % wrap_w
-        } else {
-            line_w = line_w + seg_w + font
-        }
-        if text[i] == 10 {
-            if total == want {
-                return
-            }
-            total = total + 1
-            line_w = 0
-            start = -1
-        }
-        if text[i] != 0 {
-            i = i + 1
-        }
-    }
-    if total == want && start >= 0 {
-        take := i - start
-        if take > dst_size - 1 {
-            take = dst_size - 1
-        }
-        memcpy(dst, text + start, take)
-        dst[take] = 0
-    }
-}
 
 agent_bind :: (st: state.IdeState*) {
     if agent_bound != 0 {
@@ -358,7 +240,7 @@ draw_transcript :: (bounds: Rectangle, busy: int) {
         if agent_expanded == i {
             max_lines = 60
         }
-        lines := agent_wrap_text(text, wrap_w, ScaleUIPx(12), max_lines)
+        lines := krait_wrap_lines(text, wrap_w, ScaleUIPx(12), max_lines)
         block := (Rectangle){bounds.x + (float)pad, (float)(y + line_h),
                              bounds.width - (float)(pad * 2),
                              (float)(line_h * lines + ScaleUIPx(8))}
@@ -375,8 +257,8 @@ draw_transcript :: (bounds: Rectangle, busy: int) {
         row := 0
         while row < lines {
             line_buf: [512] char
-            agent_wrapped_line(text, wrap_w, ScaleUIPx(12), max_lines, row,
-                               line_buf, sizeof(line_buf))
+            krait_wrap_line(text, wrap_w, ScaleUIPx(12), max_lines, row,
+                            line_buf, sizeof(line_buf))
             DrawUIText(line_buf, (int)block.x + ScaleUIPx(8),
                        (int)block.y + ScaleUIPx(4) + row * line_h,
                        ScaleUIPx(12), color)
@@ -392,7 +274,7 @@ draw_transcript :: (bounds: Rectangle, busy: int) {
             DrawUIText("agent:", (int)bounds.x + pad, y, ScaleUIPx(11),
                        GetThemeLink())
             wrap_w2 := (int)bounds.width - pad * 2 - ScaleUIPx(16)
-            lines2 := agent_wrap_text(live, wrap_w2, ScaleUIPx(12), 30)
+            lines2 := krait_wrap_lines(live, wrap_w2, ScaleUIPx(12), 30)
             block2 := (Rectangle){bounds.x + (float)pad,
                                   (float)(y + line_h),
                                   bounds.width - (float)(pad * 2),
@@ -402,8 +284,8 @@ draw_transcript :: (bounds: Rectangle, busy: int) {
             row2 := 0
             while row2 < lines2 {
                 line_buf2: [512] char
-                agent_wrapped_line(live, wrap_w2, ScaleUIPx(12), 30, row2,
-                                   line_buf2, sizeof(line_buf2))
+                krait_wrap_line(live, wrap_w2, ScaleUIPx(12), 30, row2,
+                                line_buf2, sizeof(line_buf2))
                 DrawUIText(line_buf2, (int)block2.x + ScaleUIPx(8),
                            (int)block2.y + ScaleUIPx(4) + row2 * line_h,
                            ScaleUIPx(12), GetThemeText())

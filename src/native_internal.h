@@ -121,6 +121,9 @@ int krait_path_has_suffix(const char *path, const char *suffix);
 int krait_ignored_dir(const char *name);
 void krait_ensure_parent_dir(const char *path);
 int krait_mkdir_p(const char *dir);
+int krait_wrap_lines(const char *text, int width, int font, int max_lines);
+int krait_wrap_line(const char *text, int width, int font, int max_lines,
+                    int row, char *dst, int dst_size);
 int krait_read_file_alloc(const char *path, char **out, long *out_len);
 int krait_write_text_file(const char *path, const char *text);
 int krait_file_is_text(const char *path);
@@ -142,6 +145,9 @@ int krait_compile_gate_all(const char *project_dir,
                            char *all_errors, size_t all_size);
 int krait_run_capture(const char *dir, const char *cmdline, int timeout_s,
                       char *out, size_t out_size);
+int krait_gate_cc_runs(void);
+int krait_gate_cache_hits(void);
+int krait_gate_copies(void);
 
 /* ---- native_krbhex.c: hex editor backend for binary (.krb) files ---- */
 int krait_hex_open(const char *path);

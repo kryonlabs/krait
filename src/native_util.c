@@ -269,3 +269,145 @@ krait_trim(char *s)
     return s;
 }
 
+
+
+/* Word-wrap with a cache: the transcript re-wraps every visible message
+ * every frame, and the old .kry walker re-measured every word per row.
+ * The line table is built once per (text, width, font) and reused until
+ * any of them changes. */
+#define WRAP_CACHE_LINES 4096
+typedef struct {
+    const char *text;   /* pointers are stable between frames: identity
+                         * check first, hash only on a new pointer */
+    unsigned long hash;
+    int width;
+    int font;
+    int count;
+    int starts[WRAP_CACHE_LINES];
+    int lens[WRAP_CACHE_LINES];
+} WrapCache;
+static WrapCache wrap_cache;
+
+static unsigned long
+wrap_hash(const char *s)
+{
+    unsigned long h = 2166136261ul;
+
+    while(s != NULL && *s != '\0')
+        h = (h ^ (unsigned char)*s++) * 16777619ul;
+    return h;
+}
+
+static int
+wrap_build(const char *text, int width, int font)
+{
+    const char *p = text;
+    int line_w = 0;
+    int count = 0;
+    int start = 0;
+
+    wrap_cache.text = text;
+    wrap_cache.hash = wrap_hash(text);
+    wrap_cache.width = width;
+    wrap_cache.font = font;
+    wrap_cache.count = 0;
+    if(text == NULL || width <= 0) {
+        wrap_cache.count = text != NULL ? 1 : 0;
+        if(wrap_cache.count == 1) {
+            wrap_cache.starts[0] = 0;
+            wrap_cache.lens[0] = (int)strlen(text);
+        }
+        return wrap_cache.count;
+    }
+    while(*p != '\0') {
+        const char *word = p;
+        char seg[512];
+        size_t seg_len;
+        int seg_w;
+
+        while(*p != '\0' && *p != ' ' && *p != '\n')
+            p++;
+        seg_len = (size_t)(p - word);
+        if(seg_len > sizeof(seg) - 1)
+            seg_len = sizeof(seg) - 1;
+        memcpy(seg, word, seg_len);
+        seg[seg_len] = '\0';
+        seg_w = MeasureUIText(seg, font);
+        if(line_w > 0 && line_w + seg_w + font > width) {
+            if(count >= WRAP_CACHE_LINES)
+                break;
+            wrap_cache.starts[count] = start;
+            wrap_cache.lens[count] = (int)(word - text) - start;
+            while(wrap_cache.lens[count] > 0 &&
+                  text[start + wrap_cache.lens[count] - 1] == ' ')
+                wrap_cache.lens[count]--;
+            count++;
+            start = (int)(word - text);
+            line_w = 0;
+        }
+        line_w += seg_w + font;
+        if(*p == '\n') {
+            if(count >= WRAP_CACHE_LINES)
+                break;
+            wrap_cache.starts[count] = start;
+            wrap_cache.lens[count] = (int)(p - text) - start;
+            count++;
+            start = (int)(p - text) + 1;
+            line_w = 0;
+            p++;
+        } else if(*p != '\0') {
+            p++;
+        }
+    }
+    if(count < WRAP_CACHE_LINES) {
+        wrap_cache.starts[count] = start;
+        wrap_cache.lens[count] = (int)strlen(text + start);
+        while(wrap_cache.lens[count] > 0 &&
+              text[start + wrap_cache.lens[count] - 1] == ' ')
+            wrap_cache.lens[count]--;
+        if(wrap_cache.lens[count] > 0 || count == 0)
+            count++;
+    }
+    wrap_cache.count = count;
+    return count;
+}
+
+int
+krait_wrap_lines(const char *text, int width, int font, int max_lines)
+{
+    int n;
+
+    if(text == NULL)
+        return 0;
+    if(wrap_cache.text == text && wrap_cache.width == width &&
+       wrap_cache.font == font && wrap_cache.count > 0)
+        n = wrap_cache.count;
+    else
+        n = wrap_build(text, width, font);
+    return n < max_lines ? n : max_lines;
+}
+
+int
+krait_wrap_line(const char *text, int width, int font, int max_lines, int row,
+                char *dst, int dst_size)
+{
+    int n;
+
+    if(dst == NULL || dst_size <= 0)
+        return 0;
+    dst[0] = '\0';
+    if(text == NULL || row < 0)
+        return 0;
+    n = krait_wrap_lines(text, width, font, max_lines);
+    if(row >= n)
+        return 0;
+    {
+        int len = wrap_cache.lens[row];
+
+        if(len > dst_size - 1)
+            len = dst_size - 1;
+        memcpy(dst, text + wrap_cache.starts[row], (size_t)len);
+        dst[len] = '\0';
+    }
+    return 1;
+}
