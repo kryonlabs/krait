@@ -65,9 +65,12 @@ typedef enum {
 typedef struct {
     const char *role;     /* "system" | "user" | "assistant" */
     const char *content;
+    const char *image_b64;   /* optional PNG base64 -> multimodal turn */
 } KraitAiMessage;
 
 void krait_ai_set_key(const char *api_key);
+char *krait_ai_base64_file(const char *path);
+char *krait_ai_build_body(const KraitAiMessage *messages, int count);
 int krait_ai_configured(void);
 KraitAiRequest *krait_ai_chat(const KraitAiMessage *messages, int count,
                               int timeout_s);
@@ -207,6 +210,8 @@ int krait_artifact_save_binary(const char *generated_path,
                                const char *dest_path);
 int krait_live_draw_canvas(const char *root, const char *rel_path, int w, int h,
                            char *status, int status_size);
+int krait_live_capture_png(const char *root, const char *rel_path, int w, int h,
+                           const char *png_path, char *status, int status_size);
 int krait_game_node_args(const char *q, char args[8][256], char *type,
                          size_t type_size, char *label, size_t label_size,
                          int *x, int *y, int *w, int *h);

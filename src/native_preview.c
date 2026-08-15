@@ -547,9 +547,35 @@ krait_preview_draw(IdeState *st, const char *rel_path, Rectangle viewport,
     return 1;
 }
 
+/* Live-interpreter render into an offscreen texture, exported as PNG.
+ * Pixels are read AFTER EndTextureMode (reading inside texture mode
+ * poisons the framebuffer on llvmpipe). */
+static int
+live_render_captured(const char *root, const char *rel_path, int w, int h,
+                     const char *png_path, char *status, int status_size)
+{
+    RenderTexture2D target;
+    int ok;
+
+    target = LoadRenderTexture(w, h);
+    BeginTextureMode(target);
+    ClearBackground(GetThemeBackground());
+    ok = krait_live_draw_source(root, rel_path, w, h, status, status_size);
+    EndTextureMode();
+    if(ok) {
+        Image shot = LoadImageFromTexture(target.texture);
+
+        ExportImage(shot, png_path);
+        UnloadImage(shot);
+    }
+    UnloadRenderTexture(target);
+    return ok;
+}
+
 int
-krait_live_draw_canvas(const char *root, const char *rel_path, int w, int h,
-                       char *status, int status_size)
+krait_live_draw_canvas_ex(const char *root, const char *rel_path, int w,
+                          int h, const char *capture_png_path,
+                          char *status, int status_size)
 {
     char live_status[512];
     int live_ok;
@@ -561,8 +587,13 @@ krait_live_draw_canvas(const char *root, const char *rel_path, int w, int h,
             snprintf(status, (size_t)status_size, "No .kry source selected");
         return 0;
     }
-    live_ok = krait_live_draw_source(root, rel_path, w, h,
-                                     live_status, sizeof(live_status));
+    if(capture_png_path != NULL && capture_png_path[0] != '\0')
+        live_ok = live_render_captured(root, rel_path, w, h,
+                                       capture_png_path, live_status,
+                                       sizeof(live_status));
+    else
+        live_ok = krait_live_draw_source(root, rel_path, w, h,
+                                         live_status, sizeof(live_status));
     if(live_ok && strstr(live_status, "delegates") == NULL) {
         if(status != NULL && status_size > 0)
             snprintf(status, (size_t)status_size, "%s", live_status);
@@ -624,10 +655,40 @@ krait_live_draw_canvas(const char *root, const char *rel_path, int w, int h,
         }
         EndUIFocus();
         EndTextureMode();
+        if(capture_png_path != NULL && capture_png_path[0] != '\0') {
+            /* read AFTER EndTextureMode (reading inside texture mode
+             * poisons the framebuffer on llvmpipe) */
+            Image shot = LoadImageFromTexture(target.texture);
+
+            ExportImage(shot, capture_png_path);
+            UnloadImage(shot);
+        }
         UnloadRenderTexture(target);
         return ok;
         }
     }
+    if(capture_png_path != NULL && capture_png_path[0] != '\0')
+        return live_render_captured(root, rel_path, w, h, capture_png_path,
+                                    status, status_size);
     return krait_live_draw_source(root, rel_path, w, h, status, status_size);
 }
 
+
+int
+krait_live_draw_canvas(const char *root, const char *rel_path, int w, int h,
+                       char *status, int status_size)
+{
+    return krait_live_draw_canvas_ex(root, rel_path, w, h, NULL, status,
+                                     status_size);
+}
+
+/* Offscreen preview render exported as a PNG on disk - the agent's eyes. */
+int
+krait_live_capture_png(const char *root, const char *rel_path, int w, int h,
+                       const char *png_path, char *status, int status_size)
+{
+    if(png_path == NULL || png_path[0] == '\0')
+        return 0;
+    return krait_live_draw_canvas_ex(root, rel_path, w, h, png_path, status,
+                                     status_size);
+}

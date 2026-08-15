@@ -54,6 +54,11 @@ static int agent_busy;
 static char agent_status[160];
 static int agent_files_changed;
 
+/* screenshot attachment: captured PNG base64, sent with the next request
+ * as a multimodal turn so the model can see the running UI */
+static char *agent_pending_image;
+static int agent_image_count;
+
 /* files the current (or most recent) agent batch wrote, so the UI can
  * reload open editors and Revert can restore the .bak copies */
 #define AGENT_MAX_WRITTEN 32
@@ -79,12 +84,15 @@ static const char *const agent_system_prompt =
     "{\"tool\":\"read\",\"path\":\"main.kry\"}, "
     "{\"tool\":\"write\",\"path\":\"ui.kry\",\"content\":\"...\"}, "
     "{\"tool\":\"compile\"}, {\"tool\":\"run\",\"cmd\":\"make\"}, "
+    "{\"tool\":\"screenshot\",\"path\":\"main.kry\"}, "
     "{\"tool\":\"sfs_list\",\"path\":\"/widgets\"}, "
     "{\"tool\":\"sfs_read\",\"path\":\"/widgets/0/bounds\"}, "
     "{\"tool\":\"sfs_write\",\"path\":\"/widgets/0/tap\",\"value\":\"1\"}]. "
     "Writes are applied to the project immediately and a compile check "
     "runs after every write batch - fix any errors it reports before "
-    "finishing. The sfs_* tools address the RUNNING app through kryon's "
+    "finishing. screenshot renders a .kry screen offscreen and shows the "
+    "image to you on the next turn - use it to check layout work. "
+    "The sfs_* tools address the RUNNING app through kryon's "
     "synthetic file system: /widgets lists the live widget tree, and "
     "writing /widgets/<i>/tap clicks that widget. Messages beginning "
     "with TOOL RESULTS contain tool output. Finish with a short "
@@ -410,6 +418,40 @@ agent_tool_run(const char *cmd, char *out, size_t out_size)
              exit_status, buf);
 }
 
+/* Render the project's screen offscreen, encode the PNG, and hold it for
+ * the next request. The tool result reports the size so the model knows
+ * the screenshot landed. */
+static void
+agent_tool_screenshot(const char *path, char *out, size_t out_size)
+{
+    char png[KRAIT_PATH_MAX * 2];
+    char status[512];
+    char rel[256];
+    size_t used = strlen(out);
+
+    snprintf(rel, sizeof(rel), "%s",
+             path != NULL && path[0] != '\0' ? path : "main.kry");
+    snprintf(png, sizeof(png), "/tmp/krait-agent-shot-%d.png", (int)getpid());
+    if(!krait_live_capture_png(agent_project, rel, 640, 480, png, status,
+                               sizeof(status))) {
+        snprintf(out + used, out_size - used,
+                 "[screenshot %s] failed: %s\n", rel,
+                 status[0] != '\0' ? status : "render error");
+        return;
+    }
+    free(agent_pending_image);
+    agent_pending_image = krait_ai_base64_file(png);
+    if(agent_pending_image == NULL) {
+        snprintf(out + used, out_size - used,
+                 "[screenshot %s] failed: could not encode %s\n", rel, png);
+        return;
+    }
+    agent_image_count++;
+    snprintf(out + used, out_size - used,
+             "[screenshot %s] attached (%zu bytes base64) - study it "
+             "before answering\n", rel, strlen(agent_pending_image));
+}
+
 /* content search over the project through the same engine the studio
  * search pane uses */
 static void
@@ -489,7 +531,11 @@ krait_agent_run_tools(const char *json)
                          "[write] refused: %s\n",
                          path != NULL ? path : "");
             }
-        } else if(strcmp(tool, "compile") == 0)
+        } else if(strcmp(tool, "screenshot") == 0)
+            agent_tool_screenshot(kry_json_string(kry_json_get(action,
+                                                               "path")),
+                                  out, AGENT_TOOL_OUT_CAP);
+        else if(strcmp(tool, "compile") == 0)
             agent_tool_compile(out, AGENT_TOOL_OUT_CAP);
         else if(strcmp(tool, "run") == 0)
             agent_tool_run(kry_json_string(kry_json_get(action, "cmd")),
@@ -607,15 +653,25 @@ agent_build_context(KraitAiMessage *msgs, int max, char *temps[], int *temp_coun
     int i;
     size_t used = 0;
 
+    const char *pending_image = agent_pending_image;
+
     *temp_count = 0;
     msgs[count].role = "system";
     msgs[count].content = agent_system_prompt;
+    msgs[count].image_b64 = NULL;
     count++;
     for(i = agent_msg_count - 1; i >= 0 && count < max; i--) {
         AgentMsg *m = &agent_msgs[i];
         const char *role = "user";
         char *content = NULL;
+        const char *image = NULL;
 
+        /* the newest user/tool turn carries the screenshot */
+        if(pending_image != NULL &&
+           (m->kind == AGENT_MSG_USER || m->kind == AGENT_MSG_TOOL)) {
+            image = pending_image;
+            pending_image = NULL;
+        }
         if(m->kind == AGENT_MSG_ASSISTANT || m->kind == AGENT_MSG_ACTIONS)
             role = "assistant";
         if(m->kind == AGENT_MSG_TOOL) {
@@ -636,6 +692,7 @@ agent_build_context(KraitAiMessage *msgs, int max, char *temps[], int *temp_coun
         }
         msgs[count].role = role;
         msgs[count].content = content != NULL ? content : m->text;
+        msgs[count].image_b64 = image;
         count++;
     }
     /* reverse the tail so the conversation reads chronologically */
@@ -668,6 +725,8 @@ agent_start_request(void)
     agent_req = krait_ai_chat(msgs, count, 180);
     for(i = 0; i < temp_count; i++)
         free(temps[i]);
+    free(agent_pending_image);
+    agent_pending_image = NULL;
     if(agent_req == NULL) {
         agent_busy = 0;
         agent_set_status("agent request failed to start");
@@ -709,6 +768,8 @@ krait_agent_bind(const char *project_dir)
     agent_round = 0;
     agent_stop_requested = 0;
     agent_set_status("");
+    free(agent_pending_image);
+    agent_pending_image = NULL;
     snprintf(agent_project, sizeof(agent_project), "%s", project_dir);
     agent_history_dir(dir, sizeof(dir));
     snprintf(agent_history_path, sizeof(agent_history_path), "%s/history.jsonl",

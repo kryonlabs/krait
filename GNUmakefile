@@ -191,13 +191,15 @@ $(KANBAN_TEST): tests/kanban_test.c $(BUILD_DIR)/src/native_kanban.o $(BUILD_DIR
 agent-test: $(AGENT_TEST)
 	$(AGENT_TEST)
 
-$(AGENT_TEST): tests/agent_test.c $(BUILD_DIR)/src/native_agent.o $(BUILD_DIR)/src/native_compile.o $(BUILD_DIR)/src/native_ai.o $(BUILD_DIR)/src/native_util.o $(BUILD_DIR)/src/native_scaffold.o $(BUILD_DIR)/src/native_project.o $(KRYON_LIB) $(RAYLIB_A) $(KRYON_CURL_A) | $(BUILD_DIR)
+$(AGENT_TEST): tests/agent_test.c $(BUILD_DIR)/src/native_agent.o $(BUILD_DIR)/src/native_compile.o $(BUILD_DIR)/src/native_ai.o $(BUILD_DIR)/src/native_util.o $(BUILD_DIR)/src/native_scaffold.o $(BUILD_DIR)/src/native_project.o $(BUILD_DIR)/src/native_preview.o $(BUILD_DIR)/src/native_live.o $(BUILD_DIR)/src/native_live_eval.o $(BUILD_DIR)/src/native_scene.o $(KRYON_LIB) $(RAYLIB_A) $(KRYON_CURL_A) | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc -I$(KRAIT_GEN) -I$(KRYON_DIR)/include -o $@ tests/agent_test.c \
 		$(BUILD_DIR)/src/native_agent.o $(BUILD_DIR)/src/native_compile.o \
 		$(BUILD_DIR)/src/native_ai.o \
 		$(BUILD_DIR)/src/native_util.o $(BUILD_DIR)/src/native_scaffold.o \
-		$(BUILD_DIR)/src/native_project.o \
+		$(BUILD_DIR)/src/native_project.o $(BUILD_DIR)/src/native_preview.o \
+		$(BUILD_DIR)/src/native_live.o $(BUILD_DIR)/src/native_live_eval.o \
+		$(BUILD_DIR)/src/native_scene.o \
 		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
 		$(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) \
 		$(KRYON_CURL_LDLIBS) $(KRYON_MARKDOWN_LDLIBS) $(RAY_LDLIBS) \

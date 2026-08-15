@@ -60,22 +60,75 @@ krait_ai_model(void)
     return model != NULL && model[0] != '\0' ? model : KRAIT_AI_DEFAULT_MODEL;
 }
 
-KraitAiRequest *
-krait_ai_chat(const KraitAiMessage *messages, int count, int timeout_s)
+static const char *
+krait_ai_vision_model(void)
 {
-    const char *key = krait_ai_key();
-    const char *base = getenv("ZAI_BASE_URL");
-    KraitAiRequest *r;
+    const char *model = getenv("ZAI_VISION_MODEL");
+
+    return model != NULL && model[0] != '\0' ? model : "glm-4.6v";
+}
+
+/* base64 of raw bytes; malloc'd, caller frees. Used for image parts. */
+static char *
+krait_ai_base64(const unsigned char *data, size_t len)
+{
+    static const char table[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    char *out = malloc(((len + 2) / 3) * 4 + 1);
+    size_t i;
+    size_t o = 0;
+
+    if(out == NULL)
+        return NULL;
+    for(i = 0; i < len; i += 3) {
+        unsigned v = (unsigned)data[i] << 16;
+
+        if(i + 1 < len)
+            v |= (unsigned)data[i + 1] << 8;
+        if(i + 2 < len)
+            v |= (unsigned)data[i + 2];
+        out[o++] = table[(v >> 18) & 63];
+        out[o++] = table[(v >> 12) & 63];
+        out[o++] = i + 1 < len ? table[(v >> 6) & 63] : '=';
+        out[o++] = i + 2 < len ? table[v & 63] : '=';
+    }
+    out[o] = '\0';
+    return out;
+}
+
+/* base64 of a file's contents; malloc'd, NULL when unreadable */
+char *
+krait_ai_base64_file(const char *path)
+{
+    char *data = NULL;
+    long len;
+    char *encoded;
+
+    if(!krait_read_file_alloc(path, &data, &len) || data == NULL || len <= 0) {
+        free(data);
+        return NULL;
+    }
+    encoded = krait_ai_base64((const unsigned char *)data, (size_t)len);
+    free(data);
+    return encoded;
+}
+
+/* Pure request-body builder so tests can verify multimodality without
+ * spending a request. malloc'd JSON, caller frees. */
+char *
+krait_ai_build_body(const KraitAiMessage *messages, int count)
+{
     KryJsonBuf body = {0};
-    char url[1024];
     int i;
 
-    if(key == NULL || key[0] == '\0' || messages == NULL || count <= 0)
+    if(messages == NULL || count <= 0)
         return NULL;
-    if(base == NULL || base[0] == '\0')
-        base = KRAIT_AI_DEFAULT_BASE;
     kry_json_buf_raw(&body, "{\"model\":");
-    kry_json_buf_str(&body, krait_ai_model());
+    for(i = 0; i < count; i++)
+        if(messages[i].image_b64 != NULL && messages[i].image_b64[0] != '\0')
+            break;
+    kry_json_buf_str(&body, i < count ? krait_ai_vision_model()
+                                      : krait_ai_model());
     kry_json_buf_raw(&body, ",\"messages\":[");
     for(i = 0; i < count; i++) {
         if(i > 0)
@@ -83,17 +136,49 @@ krait_ai_chat(const KraitAiMessage *messages, int count, int timeout_s)
         kry_json_buf_raw(&body, "{\"role\":");
         kry_json_buf_str(&body, messages[i].role);
         kry_json_buf_raw(&body, ",\"content\":");
-        kry_json_buf_str(&body, messages[i].content);
+        if(messages[i].image_b64 != NULL && messages[i].image_b64[0] != '\0') {
+            /* multimodal content parts: text + data-URL image */
+            kry_json_buf_raw(&body, "[{\"type\":\"text\",\"text\":");
+            kry_json_buf_str(&body, messages[i].content);
+            kry_json_buf_raw(&body,
+                             "},{\"type\":\"image_url\",\"image_url\":"
+                             "{\"url\":\"data:image/png;base64,");
+            kry_json_buf_raw(&body, messages[i].image_b64);
+            kry_json_buf_raw(&body, "\"}}]");
+        } else {
+            kry_json_buf_str(&body, messages[i].content);
+        }
         kry_json_buf_raw(&body, "}");
     }
     kry_json_buf_raw(&body, "],\"thinking\":{\"type\":\"disabled\"}}");
-    r = calloc(1, sizeof(*r));
-    if(r == NULL) {
+    {
+        char *out = strdup(kry_json_buf_finish(&body));
+
         kry_json_buf_free(&body);
+        return out;
+    }
+}
+
+KraitAiRequest *
+krait_ai_chat(const KraitAiMessage *messages, int count, int timeout_s)
+{
+    const char *key = krait_ai_key();
+    const char *base = getenv("ZAI_BASE_URL");
+    KraitAiRequest *r;
+    char url[1024];
+
+    if(key == NULL || key[0] == '\0' || messages == NULL || count <= 0)
+        return NULL;
+    if(base == NULL || base[0] == '\0')
+        base = KRAIT_AI_DEFAULT_BASE;
+    r = calloc(1, sizeof(*r));
+    if(r == NULL)
+        return NULL;
+    r->request_body = krait_ai_build_body(messages, count);
+    if(r->request_body == NULL) {
+        free(r);
         return NULL;
     }
-    r->request_body = strdup(kry_json_buf_finish(&body));
-    kry_json_buf_free(&body);
     snprintf(url, sizeof(url), "%s/chat/completions", base);
     r->http = kry_http_post_json(url, key, r->request_body,
                                  timeout_s > 0 ? timeout_s : 180);
