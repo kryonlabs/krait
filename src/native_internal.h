@@ -143,6 +143,16 @@ int krait_compile_gate_all(const char *project_dir,
 int krait_run_capture(const char *dir, const char *cmdline, int timeout_s,
                       char *out, size_t out_size);
 
+/* ---- native_krbhex.c: hex editor backend for binary (.krb) files ---- */
+int krait_hex_open(const char *path);
+int krait_hex_size(void);
+int krait_hex_byte(int index);
+int krait_hex_set_byte(int index, int value);
+int krait_hex_dirty(void);
+int krait_hex_changed_count(void);
+const char *krait_hex_path(void);
+int krait_hex_save(void);
+
 /* ---- native_agent.c: agent-view conversation engine (ZCode-style loop) ---- */
 void krait_agent_bind(const char *project_dir);
 int krait_agent_count(void);

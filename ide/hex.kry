@@ -1,0 +1,306 @@
+#module "ide.hex"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+
+krait_hex_open :: (path: const char*) -> int #extern
+krait_hex_size :: () -> int #extern
+krait_hex_byte :: (index: int) -> int #extern
+krait_hex_set_byte :: (index: int, value: int) -> int #extern
+krait_hex_dirty :: () -> int #extern
+krait_hex_changed_count :: () -> int #extern
+krait_hex_path :: () -> const char* #extern
+krait_hex_save :: () -> int #extern
+
+hex_cursor :: int #global
+hex_nibble :: int #global
+hex_scroll :: int #global
+hex_focused :: int #global
+
+is_krb_file :: (name: const char*) -> int {
+    len := strlen(name)
+    return len >= 4 && strcmp(name + len - 4, ".krb") == 0
+}
+
+hex_ensure_open :: (st: state.IdeState*, f: state.OpenFile*) {
+    path := krait_hex_path()
+    if strlen(path) > 0 && strcmp(path, f->path) == 0 {
+        return
+    }
+    if krait_hex_open(f->path) != 0 {
+        hex_cursor = 0
+        hex_nibble = 0
+        hex_scroll = 0
+        hex_focused = 0
+    }
+}
+
+hex_save :: (st: state.IdeState*) {
+    if krait_hex_save() != 0 {
+        state.project_set_status(st, "Saved (hex)")
+    } else {
+        state.project_set_status(st, "Hex save failed")
+    }
+}
+
+hex_key_value :: () -> int {
+    k := KEY_ZERO
+    while k <= KEY_NINE {
+        if IsKeyPressed(k) {
+            return k - KEY_ZERO
+        }
+        k = k + 1
+    }
+    k = KEY_A
+    while k <= KEY_F {
+        if IsKeyPressed(k) {
+            return k - KEY_A + 10
+        }
+        k = k + 1
+    }
+    return -1
+}
+
+hex_input :: (st: state.IdeState*) {
+    size := krait_hex_size()
+    if size <= 0 {
+        return
+    }
+    if hex_cursor >= size {
+        hex_cursor = size - 1
+    }
+    if IsKeyPressed(KEY_LEFT) {
+        hex_cursor = hex_cursor - 1
+        hex_nibble = 0
+        if hex_cursor < 0 {
+            hex_cursor = 0
+        }
+    }
+    if IsKeyPressed(KEY_RIGHT) {
+        hex_cursor = hex_cursor + 1
+        hex_nibble = 0
+        if hex_cursor >= size {
+            hex_cursor = size - 1
+        }
+    }
+    if IsKeyPressed(KEY_UP) {
+        hex_cursor = hex_cursor - 16
+        hex_nibble = 0
+        if hex_cursor < 0 {
+            hex_cursor = 0
+        }
+    }
+    if IsKeyPressed(KEY_DOWN) {
+        hex_cursor = hex_cursor + 16
+        hex_nibble = 0
+        if hex_cursor >= size {
+            hex_cursor = size - 1
+        }
+    }
+    if IsKeyPressed(KEY_HOME) {
+        hex_cursor = hex_cursor - hex_cursor % 16
+        hex_nibble = 0
+    }
+    if IsKeyPressed(KEY_END) {
+        hex_cursor = hex_cursor - hex_cursor % 16 + 15
+        hex_nibble = 0
+        if hex_cursor >= size {
+            hex_cursor = size - 1
+        }
+    }
+    if IsKeyPressed(KEY_PAGE_UP) {
+        hex_cursor = hex_cursor - 256
+        if hex_cursor < 0 {
+            hex_cursor = 0
+        }
+    }
+    if IsKeyPressed(KEY_PAGE_DOWN) {
+        hex_cursor = hex_cursor + 256
+        if hex_cursor >= size {
+            hex_cursor = size - 1
+        }
+    }
+    mod := IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL) ||
+           IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER)
+    if mod && IsKeyPressed(KEY_S) {
+        hex_save(st)
+        return
+    }
+    value := hex_key_value()
+    if value >= 0 {
+        old := krait_hex_byte(hex_cursor)
+        if old >= 0 {
+            if hex_nibble == 0 {
+                krait_hex_set_byte(hex_cursor, (old & 0x0F) | value << 4)
+                hex_nibble = 1
+            } else {
+                krait_hex_set_byte(hex_cursor, (old & 0xF0) | value)
+                hex_nibble = 0
+                hex_cursor = hex_cursor + 1
+                if hex_cursor >= size {
+                    hex_cursor = size - 1
+                }
+            }
+        }
+    }
+    if IsKeyPressed(KEY_BACKSPACE) {
+        hex_cursor = hex_cursor - 1
+        hex_nibble = 0
+        if hex_cursor < 0 {
+            hex_cursor = 0
+        }
+    }
+}
+
+hex_nibble_char :: (byte: int, nibble: int) -> char {
+    v := nibble == 0 ? (byte >> 4) & 0xF : byte & 0xF
+    if v < 10 {
+        return '0' + v
+    }
+    return 'A' + v - 10
+}
+
+draw_hex_editor :: (bounds: Rectangle, st: state.IdeState*, f: state.OpenFile*) {
+    hex_ensure_open(st, f)
+    size0 := krait_hex_size()
+    if size0 == 0 {
+        DrawUIText("hex: file empty or not loaded", (int)bounds.x + ScaleUIPx(16),
+                   (int)bounds.y + ScaleUIPx(16), ScaleUIPx(13), GetThemeIcon())
+        return
+    }
+    DrawRectangleRec(bounds, GetThemeSurface())
+    pad := ScaleUIPx(8)
+    row_h := ScaleUIPx(16)
+    font := ScaleUIPx(12)
+    char_w := MeasureUIText("0", font)
+    size := krait_hex_size()
+
+    head: [256] char
+    snprintf(head, sizeof(head), "%s  %d bytes", f->name, size)
+    DrawUIText(head, (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(6),
+               font, GetThemeText())
+    if krait_hex_dirty() != 0 {
+        DrawUIText("modified", (int)bounds.x + pad + ScaleUIPx(260),
+                   (int)bounds.y + ScaleUIPx(6), font, GetThemeLink())
+    }
+    if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - ScaleUIPx(64),
+                           (int)bounds.y + ScaleUIPx(2), ScaleUIPx(64),
+                           ScaleUIPx(22), "Save",
+                           UI_BUTTON_STYLE_PRIMARY,
+                           krait_hex_dirty() == 0 ? 1 : 0, NULL) {
+        hex_save(st)
+    }
+
+    grid := (Rectangle){bounds.x + (float)pad,
+                        bounds.y + (float)ScaleUIPx(30),
+                        bounds.width - (float)(pad * 2),
+                        bounds.height - (float)ScaleUIPx(38)}
+    if grid.width < 480.0 || grid.height < (float)row_h {
+        DrawUIText("pane too small for the hex view",
+                   (int)grid.x, (int)grid.y, font, GetThemeIcon())
+        return
+    }
+
+    total_rows := (size + 15) / 16
+    visible_rows := (int)grid.height / row_h
+    if visible_rows < 1 {
+        visible_rows = 1
+    }
+    max_scroll := total_rows - visible_rows
+    if max_scroll < 0 {
+        max_scroll = 0
+    }
+    hex_scroll = hex_scroll + (int)(GetMouseWheelMove() * 4.0)
+    if CheckCollisionPointRec(GetMousePosition(), grid) {
+        hex_focused = 1
+    }
+    if hex_focused != 0 {
+        hex_input(st)
+    }
+    if hex_scroll > max_scroll {
+        hex_scroll = max_scroll
+    }
+    if hex_scroll < 0 {
+        hex_scroll = 0
+    }
+    if hex_cursor / 16 < hex_scroll {
+        hex_scroll = hex_cursor / 16
+    }
+    if hex_cursor / 16 >= hex_scroll + visible_rows {
+        hex_scroll = hex_cursor / 16 - visible_rows + 1
+    }
+
+    off_x := (int)grid.x
+    hex_x := off_x + char_w * 9
+    ascii_x := hex_x + char_w * (16 * 3 + 2)
+    top := (int)grid.y
+
+    BeginScissorMode((int)grid.x, (int)grid.y, (int)grid.width,
+                     (int)grid.height)
+    row := 0
+    while row < visible_rows {
+        line_index := hex_scroll + row
+        if line_index >= total_rows {
+            break
+        }
+        y := top + row * row_h
+        off: [16] char
+        snprintf(off, sizeof(off), "%08x", line_index * 16)
+        DrawUIText(off, off_x, y, font, GetThemeIcon())
+        col := 0
+        while col < 16 {
+            index := line_index * 16 + col
+            if index >= size {
+                break
+            }
+            byte := krait_hex_byte(index)
+            cx := hex_x + col * 3 * char_w
+            is_cursor := index == hex_cursor && hex_focused != 0
+            if is_cursor {
+                cw := char_w * 2
+                caret_w := hex_nibble == 0 ? char_w : char_w
+                caret_x := hex_nibble == 0 ? cx : cx + char_w
+                DrawRectangle(caret_x, y, caret_w, row_h, GetThemeLink())
+            }
+            pair: [3] char
+            pair[0] = hex_nibble_char(byte, 0)
+            pair[1] = hex_nibble_char(byte, 1)
+            pair[2] = 0
+            if is_cursor && hex_nibble == 0 {
+                DrawUIText(pair + 1, cx + char_w, y, font, GetThemeSurface())
+            } else if is_cursor {
+                DrawUIText(pair, cx, y, font, GetThemeSurface())
+                DrawUIText(pair + 1, cx + char_w, y, font, GetThemeLink())
+            } else {
+                DrawUIText(pair, cx, y, font, GetThemeText())
+            }
+            cell := (Rectangle){(float)cx, (float)y, (float)(char_w * 3),
+                                (float)row_h}
+            if CheckCollisionPointRec(GetMousePosition(), cell) &&
+               IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
+                hex_cursor = index
+                hex_nibble = 0
+                hex_focused = 1
+            }
+            col = col + 1
+        }
+        acol := 0
+        while acol < 16 {
+            index := line_index * 16 + acol
+            if index >= size {
+                break
+            }
+            byte := krait_hex_byte(index)
+            ch := byte >= 32 && byte < 127 ? byte : '.'
+            one: [2] char
+            one[0] = ch
+            one[1] = 0
+            DrawUIText(one, ascii_x + acol * char_w, y, font,
+                       index == hex_cursor && hex_focused != 0 ?
+                           GetThemeLink() : GetThemeText())
+            acol = acol + 1
+        }
+        row = row + 1
+    }
+    EndScissorMode()
+}

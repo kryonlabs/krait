@@ -144,6 +144,8 @@ run_smoke(const char *project_path, const char *screenshot_path, int build_previ
 {
     if(project_path != NULL)
         open_startup_project(project_path);
+    if(getenv("KRAIT_SMOKE_OPEN_FILE") != NULL)
+        ide_editor_editor_open(&istate, getenv("KRAIT_SMOKE_OPEN_FILE"));
     (void)build_preview;
     for(int i = 0; i < 4; i++) {
         UpdateKeyPlatformState();

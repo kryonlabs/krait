@@ -176,6 +176,44 @@ test_tools(void)
     system("rm -rf /tmp/krait-agent-tools-proj");
 }
 
+/* Hex editor backend: open/edit/save round-trip with .bak backup. */
+static void
+test_hex_editor(void)
+{
+    const char path[] = "/tmp/krait-hex-test.krb";
+    unsigned char payload[8] = {0x4B, 0x52, 0x42, 0x01, 0x00, 0x00,
+                                0xAB, 0xCD};
+    FILE *f = fopen(path, "wb");
+
+    CHECK(f != NULL);
+    if(f != NULL) {
+        fwrite(payload, 1, sizeof(payload), f);
+        fclose(f);
+    }
+
+    CHECK(krait_hex_open(path) == 1);
+    CHECK(krait_hex_size() == 8);
+    CHECK(krait_hex_byte(0) == 0x4B);
+    CHECK(krait_hex_byte(7) == 0xCD);
+    CHECK(krait_hex_byte(8) == -1);   /* out of range */
+    CHECK(krait_hex_dirty() == 0);
+
+    CHECK(krait_hex_set_byte(3, 0x42) == 1);
+    CHECK(krait_hex_byte(3) == 0x42);
+    CHECK(krait_hex_dirty() == 1);
+    CHECK(krait_hex_changed_count() == 1);
+
+    CHECK(krait_hex_save() == 1);
+    CHECK(krait_hex_dirty() == 0);
+    CHECK(access("/tmp/krait-hex-test.krb.bak", F_OK) == 0);
+
+    CHECK(krait_hex_open(path) == 1);   /* reopen reads saved bytes */
+    CHECK(krait_hex_byte(3) == 0x42);
+    CHECK(krait_hex_byte(7) == 0xCD);
+    unlink(path);
+    unlink("/tmp/krait-hex-test.krb.bak");
+}
+
 /* Multimodal plumbing: base64 encoding and request-body shape. */
 static void
 test_vision_body(void)
@@ -356,6 +394,7 @@ main(void)
     test_compile_gate();
     test_run_capture();
     test_tools();
+    test_hex_editor();
     test_vision_body();
     test_stream_body();
     test_live_agent_gated();

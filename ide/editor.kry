@@ -3,6 +3,8 @@
 #import <string.h>
 #import <stdlib.h>
 state :: #import "ide/state"
+hx :: #import "ide/hex"
+krait_hex_open :: (path: const char*) -> int #extern
 mods :: #import "ide/modules"
 
 kry_fs_read_file :: (path: const char*, buf: char*, cap: int) -> int #extern
@@ -251,6 +253,30 @@ editor_load_into_slot :: (st: state.IdeState*, slot: state.OpenFile*,
     full: [1024] char
     snprintf(full, sizeof(full), "%s/%s", st->project.path, name)
     editor_file_history_clear(slot)
+    if hx.is_krb_file(name) != 0 {
+        if krait_hex_open(full) == 0 {
+            state.project_set_status(st, "Could not read file")
+            return 0
+        }
+        slot->source[0] = 0
+        snprintf(slot->name, sizeof(slot->name), "%s", name)
+        snprintf(slot->path, sizeof(slot->path), "%s", full)
+        slot->used = 1
+        slot->cursor = 0
+        slot->focused = 0
+        slot->scroll = 0
+        slot->dirty = 0
+        slot->revision = 0
+        slot->saved_revision = 0
+        slot->artifact_tab = state.IDE_ARTIFACT_KRY
+        slot->artifact_source[0] = 0
+        slot->artifact_name[0] = 0
+        slot->artifact_path[0] = 0
+        slot->artifact_cursor = 0
+        slot->artifact_focused = 0
+        slot->artifact_scroll = 0
+        return 1
+    }
     n := kry_fs_read_file(full, slot->source, sizeof(slot->source))
     if n < 0 {
         state.project_set_status(st, "Could not read file")
@@ -354,6 +380,10 @@ editor_save_active :: (st: state.IdeState*) {
     if f == NULL {
         return
     }
+    if hx.is_krb_file(f->name) != 0 {
+        hx.hex_save(st)
+        return
+    }
     if f->artifact_tab != state.IDE_ARTIFACT_KRY {
         editor_save_artifact(st, f)
         return
@@ -374,6 +404,11 @@ editor_reload_if_open :: (st: state.IdeState*, name: const char*) {
         return
     }
     f := &st->open_files[idx]
+    if hx.is_krb_file(name) != 0 {
+        krait_hex_open(f->path)
+        state.project_set_status(st, "Reloaded (hex)")
+        return
+    }
     n := kry_fs_read_file(f->path, f->source, sizeof(f->source))
     if n < 0 {
         state.project_set_status(st, "Could not reload file")
@@ -599,6 +634,10 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
                         bounds.width, bounds.height - (float)tab_h}
     f := state.active_file(st)
     if f == NULL {
+        return
+    }
+    if hx.is_krb_file(f->name) != 0 {
+        hx.draw_hex_editor(body, st, f)
         return
     }
     if is_kry_file(f->name) != 0 {
