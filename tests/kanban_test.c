@@ -89,38 +89,69 @@ test_ai_state_without_key(void)
 }
 
 /* Live loop: card -> GLM -> proposal -> k2c+cc gates -> apply. Opt-in
- * because it spends a real API call and needs the compiler toolchain. */
-static void
-test_live_ai_gated(void)
+ * because it spends a real API call and needs the compiler toolchain.
+ * The second card asks for constructs Kry rejects (let, comments) so a
+ * first attempt that complies fails validation and the retry loop has
+ * to correct it; either way the loop must end on compilable code. */
+static int
+live_run_card(const char *title, const char *body, int spins_max)
 {
-    const char *optin = getenv("KRAIT_KANBAN_LIVE");
-    int i;
+    int i = krait_kanban_create(0, title);
     int state = 0;
     int spins = 0;
 
-    if(optin == NULL || optin[0] == '\0' || !krait_ai_configured())
-        return;
-    printf("live kanban AI round trip... ");
-    fflush(stdout);
-    i = krait_kanban_create(0, "Add welcome screen");
     CHECK(i >= 0);
     CHECK(krait_kanban_new_project(0, i, "/tmp/krait-kanban-live-proj"));
-    CHECK(krait_kanban_set_body(0, i,
-        "Add a new file welcome.kry with a screen Welcome that draws a "
-        "centered Button labeled Hello and a Text title above it."));
+    CHECK(krait_kanban_set_body(0, i, body));
     CHECK(krait_kanban_ai_run(0, i));
-    while(spins++ < 1200) {
+    while(spins++ < spins_max) {
         state = krait_kanban_ai_poll(0, i);
         if(state >= 2)
             break;
         usleep(250 * 1000);
     }
+    if(state != 2)
+        fprintf(stderr, "live loop '%s' ended in state %d: %s\n", title,
+                state, krait_kanban_card_status(0, i));
+    return state;
+}
+
+static void
+test_live_ai_gated(void)
+{
+    const char *optin = getenv("KRAIT_KANBAN_LIVE");
+    int state;
+
+    if(optin == NULL || optin[0] == '\0' || !krait_ai_configured())
+        return;
+    printf("live kanban AI round trip... ");
+    fflush(stdout);
+    state = live_run_card("Add welcome screen",
+        "Add a new file welcome.kry with a screen Welcome that draws a "
+        "centered Button labeled Hello and a Text title above it.", 1600);
     CHECK(state == 2);
     if(state == 2) {
-        CHECK(krait_kanban_proposal_count(0, i) > 0);
-        CHECK(krait_kanban_apply(0, i) > 0);
+        CHECK(krait_kanban_proposal_count(0, krait_kanban_count(0) - 1) > 0);
+        CHECK(krait_kanban_apply(0, krait_kanban_count(0) - 1) > 0);
         CHECK(access("/tmp/krait-kanban-live-proj/welcome.kry", F_OK) == 0);
-        printf("ok (%s)\n", krait_kanban_card_status(0, i));
+        printf("ok (%s)\n",
+               krait_kanban_card_status(0, krait_kanban_count(0) - 1));
+    }
+    krait_kanban_delete(0, krait_kanban_count(0) - 1);
+
+    printf("live kanban AI retry loop... ");
+    fflush(stdout);
+    state = live_run_card("Force invalid Kry",
+        "In a new file broken.kry write a screen Broken that uses "
+        "`let x := 5` and a `// comment` line and draws a Button labeled "
+        "Broken. The let and the comment must appear in the file.", 2400);
+    CHECK(state == 2);
+    if(state == 2) {
+        int last = krait_kanban_count(0) - 1;
+
+        CHECK(krait_kanban_apply(0, last) > 0);
+        CHECK(access("/tmp/krait-kanban-live-proj/broken.kry", F_OK) == 0);
+        printf("ok (%s)\n", krait_kanban_card_status(0, last));
     }
     krait_kanban_delete(0, krait_kanban_count(0) - 1);
 }

@@ -30,6 +30,10 @@ static const char *const kb_columns[4] = {"backlog", "doing", "review", "done"};
 static const char *const kb_column_names[4] = {"Backlog", "Doing", "Review",
                                                "Done"};
 
+/* One initial GLM call plus up to two retries after validation rejects
+ * the proposal. */
+#define KB_AI_MAX_ATTEMPTS 3
+
 typedef struct {
     char id[128];        /* file stem; stable handle for this session */
     char path[KRAIT_PATH_MAX];
@@ -41,6 +45,8 @@ typedef struct {
     char proposal_paths[KB_MAX_PROPOSAL_FILES][256];
     char *proposal_bodies[KB_MAX_PROPOSAL_FILES];
     KraitAiRequest *ai;   /* in-flight request, or NULL */
+    int ai_attempts;     /* validation attempts spent this run */
+    char ai_error[256];  /* first error of the latest rejected attempt */
 } KbCard;
 
 typedef struct {
@@ -557,18 +563,56 @@ static const char *const kb_system_prompt =
     "for every file you create or change; the harness writes them "
     "verbatim after review.";
 
-int
-krait_kanban_ai_run(int col, int index)
+/* Drop a rejected attempt: free the in-memory copies and remove the
+ * proposal dir so the next attempt starts from a clean slate. */
+static void
+kb_clear_proposals(KbCard *c)
 {
-    KbCard *c = kb_card_at(col, index);
-    char prompt[16384];
+    char dir[KRAIT_PATH_MAX * 2];
+    char cmd[KRAIT_PATH_MAX * 8];
+    int i;
+
+    for(i = 0; i < c->proposal_count; i++)
+        free(c->proposal_bodies[i]);
+    memset(c->proposal_paths, 0, sizeof(c->proposal_paths));
+    memset(c->proposal_bodies, 0, sizeof(c->proposal_bodies));
+    c->proposal_count = 0;
+    if(kb_proposal_dir(c, dir, sizeof(dir))) {
+        snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dir);
+        system(cmd);
+    }
+}
+
+/* Start (or restart) the GLM chat for a card. A retry_error means the
+ * previous attempt failed validation: the prompt is rebuilt with the
+ * compiler diagnostic and the rejected files appended so the model can
+ * correct itself, and the old proposals are cleared. */
+static int
+kb_ai_start(KbCard *c, const char *retry_error)
+{
+    char prompt[24576];
     KraitAiMessage msgs[2];
 
-    if(c == NULL || !krait_ai_configured())
-        return 0;
-    if(c->ai != NULL)
-        return 1;   /* already running */
     kb_build_prompt(c, prompt, sizeof(prompt));
+    if(retry_error != NULL && retry_error[0] != '\0') {
+        int i;
+        size_t used = strlen(prompt);
+
+        snprintf(prompt + used, sizeof(prompt) - used,
+                 "\n\nPREVIOUS ATTEMPT REJECTED BY VALIDATION.\n"
+                 "first error: %s\nFix the Kry code and return the corrected "
+                 "complete files.", retry_error);
+        for(i = 0; i < c->proposal_count && i < 3; i++) {
+            used = strlen(prompt);
+            snprintf(prompt + used, sizeof(prompt) - used,
+                     "\n--- rejected %s (truncated) ---\n%.1200s\n",
+                     c->proposal_paths[i],
+                     c->proposal_bodies[i] != NULL ? c->proposal_bodies[i]
+                                                   : "");
+        }
+        kb_clear_proposals(c);
+    }
+    c->ai_attempts++;
     msgs[0].role = "system";
     msgs[0].content = kb_system_prompt;
     msgs[1].role = "user";
@@ -578,8 +622,26 @@ krait_kanban_ai_run(int col, int index)
         snprintf(c->status, sizeof(c->status), "AI start failed");
         return 0;
     }
-    snprintf(c->status, sizeof(c->status), "running...");
+    if(c->ai_attempts > 1)
+        snprintf(c->status, sizeof(c->status), "retrying (attempt %d)...",
+                 c->ai_attempts);
+    else
+        snprintf(c->status, sizeof(c->status), "running...");
     return 1;
+}
+
+int
+krait_kanban_ai_run(int col, int index)
+{
+    KbCard *c = kb_card_at(col, index);
+
+    if(c == NULL || !krait_ai_configured())
+        return 0;
+    if(c->ai != NULL)
+        return 1;   /* already running */
+    c->ai_attempts = 0;
+    c->ai_error[0] = '\0';
+    return kb_ai_start(c, NULL);
 }
 
 typedef void (*KbLineFn)(char *line, void *userdata);
@@ -723,9 +785,11 @@ kb_process_lines(KryProcess *proc, char *carry, size_t *carry_len,
 
 /* Transpile the project overlayed with the proposals through k2c; the
  * verdict lands on the card status so Apply only ever offers code that
- * compiles (or shows the first k2c error for review). */
-static void
-kb_validate_proposals(KbCard *c)
+ * compiles (or shows the first k2c error for review). Returns 0 when the
+ * proposal compiles (or cannot be checked), nonzero otherwise, with the
+ * first diagnostic copied into err_out for the retry loop. */
+static int
+kb_validate_proposals(KbCard *c, char *err_out, size_t err_size)
 {
     char k2c[KRAIT_PATH_MAX];
     char tmp[KRAIT_PATH_MAX];
@@ -735,9 +799,11 @@ kb_validate_proposals(KbCard *c)
     char first_error[160];
     int rc;
 
+    if(err_out != NULL && err_size > 0)
+        err_out[0] = '\0';
     if(c->project[0] == '\0') {
         snprintf(c->status, sizeof(c->status), "proposal ready");
-        return;
+        return 0;
     }
     krait_kryon_tool_path(k2c, sizeof(k2c), "k2c");
     if(k2c[0] != '/') {
@@ -748,14 +814,14 @@ kb_validate_proposals(KbCard *c)
     }
     if(access(k2c, X_OK) != 0) {
         snprintf(c->status, sizeof(c->status), "proposal ready");
-        return;
+        return 0;
     }
     snprintf(tmp, sizeof(tmp), "/tmp/krait-kanban-%d", (int)getpid());
     snprintf(cmd, sizeof(cmd), "rm -rf '%s' && mkdir -p '%s' && cp -R '%s/.' '%s/'",
              tmp, tmp, c->project, tmp);
     if(system(cmd) != 0) {
         snprintf(c->status, sizeof(c->status), "proposal ready");
-        return;
+        return 0;
     }
     {
         char dir[KRAIT_PATH_MAX];
@@ -795,11 +861,15 @@ kb_validate_proposals(KbCard *c)
     }
     if(rc == 0) {
         snprintf(c->status, sizeof(c->status), "proposal ready (compiles)");
-    } else {
-        krait_trim(first_error);
-        snprintf(c->status, sizeof(c->status), "proposal ready (k2c: %s)",
-                 first_error[0] != '\0' ? first_error : "compile failed");
+        return 0;
     }
+    krait_trim(first_error);
+    snprintf(c->status, sizeof(c->status), "proposal ready (k2c: %s)",
+             first_error[0] != '\0' ? first_error : "compile failed");
+    if(err_out != NULL && err_size > 0)
+        snprintf(err_out, err_size, "%s",
+                 first_error[0] != '\0' ? first_error : "compile failed");
+    return 1;
 }
 
 /* 0 idle, 1 running, 2 proposal ready, 3 failed */
@@ -823,6 +893,7 @@ krait_kanban_ai_poll(int col, int index)
     KbCard *c = kb_card_at(col, index);
     KraitAiStatus s;
     const char *text;
+    int retry = 0;
 
     if(c == NULL)
         return 0;
@@ -885,9 +956,18 @@ krait_kanban_ai_poll(int col, int index)
             }
             kry_json_free(root);
             if(written > 0) {
+                char retry_error[256];
+
                 kb_scan_proposals(c);
-                kb_validate_proposals(c);
+                retry = kb_validate_proposals(c, retry_error,
+                                              sizeof(retry_error)) != 0;
+                if(retry)
+                    snprintf(c->ai_error, sizeof(c->ai_error), "%s",
+                             retry_error);
             } else {
+                retry = 1;
+                snprintf(c->ai_error, sizeof(c->ai_error),
+                         "reply was not usable JSON with files");
                 snprintf(c->status, sizeof(c->status),
                          "AI reply had no usable files");
             }
@@ -900,6 +980,9 @@ krait_kanban_ai_poll(int col, int index)
     }
     krait_ai_free(c->ai);
     c->ai = NULL;
+    if(retry && c->ai_attempts < KB_AI_MAX_ATTEMPTS &&
+       kb_ai_start(c, c->ai_error))
+        return 1;
     return kb_ai_state(c);
 }
 
