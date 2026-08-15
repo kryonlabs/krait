@@ -31,6 +31,7 @@ krait_kanban_reject :: (col: int, index: int) -> int #extern
 
 kanban_sel_col :: int #global
 kanban_sel_card :: int #global
+kanban_detail_open :: int #global
 kanban_detail_title :: [256] char #global
 kanban_title_cursor :: int #global
 kanban_title_focused :: int #global
@@ -39,6 +40,7 @@ kanban_ai_running :: int #global
 kanban_reset_selection :: () {
     kanban_sel_col = -1
     kanban_sel_card = -1
+    kanban_detail_open = 0
     kanban_ai_running = 0
 }
 
@@ -67,7 +69,7 @@ draw_kanban :: (bounds: Rectangle, st: state.IdeState*) {
         krait_kanban_ai_poll(kanban_sel_col, kanban_sel_card)
     }
     pad := ScaleUIPx(8)
-    if kanban_valid_selection() {
+    if kanban_detail_open != 0 && kanban_valid_selection() {
         draw_card_detail(bounds, st, pad)
         return
     }
@@ -114,6 +116,7 @@ draw_board :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
 }
 
 draw_column :: (bounds: Rectangle, col: int) {
+    DrawRectangleRec(bounds, GetThemeBackground())
     DrawRectangleLinesEx(bounds, 1, GetThemeButton())
     header: [64] char
     snprintf(header, sizeof(header), "%s (%d)",
@@ -153,6 +156,7 @@ draw_column :: (bounds: Rectangle, col: int) {
            IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
             kanban_sel_col = col
             kanban_sel_card = i
+            kanban_detail_open = 1
             snprintf(kanban_detail_title, sizeof(kanban_detail_title), "%s",
                      title)
         }
