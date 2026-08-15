@@ -62,15 +62,19 @@ test_compile_gate(void)
     CHECK(krait_scaffold_project("/tmp/krait-agent-test-proj", status,
                                  sizeof(status)) == 1);
     err[0] = '\0';
-    CHECK(krait_compile_gate("/tmp/krait-agent-test-proj", NULL, NULL, 0,
-                             err, sizeof(err)) == 0);
+    CHECK(krait_compile_gate_all("/tmp/krait-agent-test-proj", NULL, NULL, 0,
+                                 err, sizeof(err), NULL, 0) == 0);
 
     paths[0] = "broken.kry";
     bodies[0] = "screen Bad(viewport: Rectangle) {\n    let x := 5\n}\n";
     err[0] = '\0';
-    CHECK(krait_compile_gate("/tmp/krait-agent-test-proj", paths, bodies, 1,
-                             err, sizeof(err)) == 1);
+    char all_errs[1024] = {0};
+
+    CHECK(krait_compile_gate_all("/tmp/krait-agent-test-proj", paths, bodies,
+                                 1, err, sizeof(err), all_errs,
+                                 sizeof(all_errs)) == 1);
     CHECK(err[0] != '\0');
+    CHECK(strstr(all_errs, "error") != NULL);   /* diagnostics captured */
 }
 
 static void
@@ -281,6 +285,28 @@ test_live_vision_gated(void)
     system("rm -rf /tmp/krait-agent-vision-proj");
 }
 
+/* Streaming bodies request SSE; the final text still resolves. Covered
+ * hermetically by the body shape and live by every gated live test. */
+static void
+test_stream_body(void)
+{
+    KraitAiMessage msgs[2];
+    char *body;
+
+    msgs[0].role = "system";
+    msgs[0].content = "sys";
+    msgs[0].image_b64 = NULL;
+    msgs[1].role = "user";
+    msgs[1].content = "hi";
+    msgs[1].image_b64 = NULL;
+    body = krait_ai_build_body(msgs, 2);
+    CHECK(body != NULL);
+    if(body != NULL) {
+        CHECK(strstr(body, "\"stream\":true") != NULL);
+        free(body);
+    }
+}
+
 /* Live: user message -> GLM -> tool actions (read/write) -> compile
  * feedback -> final text, with the file really on disk. */
 static void
@@ -308,8 +334,8 @@ test_live_agent_gated(void)
     }
     CHECK(!krait_agent_busy());
     CHECK(access("/tmp/krait-agent-live-proj/go.kry", F_OK) == 0);
-    CHECK(krait_compile_gate("/tmp/krait-agent-live-proj", NULL, NULL, 0,
-                             NULL, 0) == 0);
+    CHECK(krait_compile_gate_all("/tmp/krait-agent-live-proj", NULL, NULL, 0,
+                                 NULL, 0, NULL, 0) == 0);
     printf("ok (%d messages, status '%s')\n", krait_agent_count(),
            krait_agent_status_text());
 }
@@ -331,6 +357,7 @@ main(void)
     test_run_capture();
     test_tools();
     test_vision_body();
+    test_stream_body();
     test_live_agent_gated();
     test_live_vision_gated();
     krait_agent_shutdown();

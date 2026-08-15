@@ -504,19 +504,32 @@ krait_agent_revert(void)
     return restored;
 }
 
+static char agent_compile_errors[2048];
+
+/* Latest agent compile diagnostics for the Problems pane (empty when the
+ * last gate passed). */
+const char *
+krait_agent_compile_errors(void)
+{
+    return agent_compile_errors;
+}
+
 static void
 agent_tool_compile(char *out, size_t out_size)
 {
     char err[256];
-    int rc = krait_compile_gate(agent_project, NULL, NULL, 0, err,
-                                sizeof(err));
+    int rc = krait_compile_gate_all(agent_project, NULL, NULL, 0, err,
+                                    sizeof(err), agent_compile_errors,
+                                    sizeof(agent_compile_errors));
     size_t used = strlen(out);
 
-    if(rc == 0)
+    if(rc == 0) {
+        agent_compile_errors[0] = '\0';
         snprintf(out + used, out_size - used, "[compile] ok\n");
-    else
+    } else {
         snprintf(out + used, out_size - used,
                  "[compile] FAILED: %s\n", err[0] != '\0' ? err : "unknown");
+    }
 }
 
 static void
@@ -969,6 +982,25 @@ const char *
 krait_agent_status_text(void)
 {
     return agent_status;
+}
+
+/* Live partial reply while the request streams; empty when nothing yet. */
+const char *
+krait_agent_streaming_text(void)
+{
+    static char partial[4096];
+    char *text;
+
+    if(!agent_busy || agent_req == NULL)
+        return "";
+    text = krait_ai_stream_text(agent_req);
+    if(text == NULL) {
+        partial[0] = '\0';
+        return partial;
+    }
+    snprintf(partial, sizeof(partial), "%s", text);
+    free(text);
+    return partial;
 }
 
 int

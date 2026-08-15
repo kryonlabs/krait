@@ -27,6 +27,9 @@ typedef struct {
     char *error;
     size_t error_size;
     int *rc;
+    char *all;        /* optional: every diagnostic line, capped */
+    size_t all_size;
+    size_t all_used;
 } GateCapture;
 
 static int
@@ -48,8 +51,16 @@ gate_capture_line(char *line, void *userdata)
         *cap->rc = atoi(line + 3);
     else if(strstr(line, "CCOKE") != NULL)
         *cap->rc = 0;
-    else if(cap->error[0] == '\0')
-        snprintf(cap->error, cap->error_size, "%s", line);
+    else {
+        if(cap->error[0] == '\0')
+            snprintf(cap->error, cap->error_size, "%s", line);
+        if(cap->all != NULL && cap->all_size > 1 &&
+           cap->all_used + strlen(line) + 2 < cap->all_size) {
+            cap->all_used += (size_t)snprintf(cap->all + cap->all_used,
+                                              cap->all_size - cap->all_used,
+                                              "%s\n", line);
+        }
+    }
 }
 
 /* Drain a KryProcess line-by-line: chunks from read_poll are split on
@@ -119,8 +130,9 @@ gate_run(KryProcess *proc, GateCapture *cap)
  * proves the C compiles against the real kryon headers (catches wrong
  * widget names k2c cannot see). */
 static int
-gate_cc_check(const char *tmp, const char *k2c_path,
-              char *first_error, size_t error_size)
+gate_cc_check_all(const char *tmp, const char *k2c_path,
+                  char *first_error, size_t error_size,
+                  char *all_errors, size_t all_size)
 {
     char kryon_dir[KRAIT_PATH_MAX];
     char cmd[KRAIT_PATH_MAX * 8];
@@ -152,7 +164,8 @@ gate_cc_check(const char *tmp, const char *k2c_path,
         return 1;
     {
         int rc2 = 1;
-        GateCapture cap = {first_error, error_size, &rc2};
+        GateCapture cap = {first_error, error_size, &rc2, all_errors, all_size,
+                           0};
 
         gate_run(&proc, &cap);
         if(gate_debug())
@@ -163,10 +176,11 @@ gate_cc_check(const char *tmp, const char *k2c_path,
 }
 
 int
-krait_compile_gate(const char *project_dir,
-                   const char *const *overlay_paths,
-                   const char *const *overlay_bodies, int overlay_count,
-                   char *first_error, size_t error_size)
+krait_compile_gate_all(const char *project_dir,
+                       const char *const *overlay_paths,
+                       const char *const *overlay_bodies, int overlay_count,
+                       char *first_error, size_t error_size,
+                       char *all_errors, size_t all_size)
 {
     char k2c[KRAIT_PATH_MAX];
     char tmp[KRAIT_PATH_MAX];
@@ -209,14 +223,18 @@ krait_compile_gate(const char *project_dir,
              "cd '%s' && '%s' --root . --no-main -o '%s' $(find . -name '*.kry' "
              "| LC_ALL=C sort); echo RC=$?",
              tmp, k2c, out);
+    if(all_errors != NULL && all_size > 0)
+        all_errors[0] = '\0';
     rc = -1;
     if(kry_process_spawn(&proc, cmd, tmp)) {
-        GateCapture cap = {first_error, error_size, &rc};
+        GateCapture cap = {first_error, error_size, &rc, all_errors, all_size,
+                           0};
 
         gate_run(&proc, &cap);
     }
     if(rc == 0)
-        rc = gate_cc_check(tmp, k2c, first_error, error_size);
+        rc = gate_cc_check_all(tmp, k2c, first_error, error_size, all_errors,
+                               all_size);
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmp);
     if(system(cmd) != 0) {
         /* best effort cleanup */

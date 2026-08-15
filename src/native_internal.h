@@ -72,6 +72,7 @@ void krait_ai_set_key(const char *api_key);
 char *krait_ai_base64_file(const char *path);
 char *krait_ai_build_body(const KraitAiMessage *messages, int count);
 const char *krait_ai_last_usage(void);
+char *krait_ai_stream_text(KraitAiRequest *request);
 int krait_ai_configured(void);
 KraitAiRequest *krait_ai_chat(const KraitAiMessage *messages, int count,
                               int timeout_s);
@@ -134,10 +135,11 @@ int krait_search_project(const char *root, const char *query,
                          SearchResult *results, int cap);
 
 /* ---- native_compile.c: shared compile gate + bounded command runner ---- */
-int krait_compile_gate(const char *project_dir,
-                       const char *const *overlay_paths,
-                       const char *const *overlay_bodies, int overlay_count,
-                       char *first_error, size_t error_size);
+int krait_compile_gate_all(const char *project_dir,
+                           const char *const *overlay_paths,
+                           const char *const *overlay_bodies, int overlay_count,
+                           char *first_error, size_t error_size,
+                           char *all_errors, size_t all_size);
 int krait_run_capture(const char *dir, const char *cmdline, int timeout_s,
                       char *out, size_t out_size);
 

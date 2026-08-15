@@ -4,7 +4,10 @@
 state :: #import "ide/state"
 tree :: #import "ide/tree"
 ed :: #import "ide/editor"
+prob :: #import "ide/problems"
 
+krait_agent_streaming_text :: () -> const char* #extern
+krait_agent_compile_errors :: () -> const char* #extern
 krait_agent_bind :: (project_dir: const char*) #extern
 krait_agent_count :: () -> int #extern
 krait_agent_kind :: (index: int) -> int #extern
@@ -26,6 +29,128 @@ agent_input_cursor :: int #global
 agent_input_focused :: int #global
 agent_scroll :: int #global
 agent_bound :: int #global
+agent_expanded :: int #global
+
+# Word-wrap a message for the transcript: count the physical lines that
+# fit wrap_w pixels, hard-splitting long unbroken runs.
+agent_wrap_text :: (text: const char*, wrap_w: int, font: int, max_lines: int) -> int {
+    total := 0
+    i := 0
+    line_w := 0
+    while text[i] != 0 {
+        word_start := i
+        while text[i] != 0 && text[i] != ' ' && text[i] != 10 {
+            i = i + 1
+        }
+        seg: [512] char
+        seg_len := i - word_start
+        if seg_len > 511 {
+            seg_len = 511
+        }
+        memcpy(seg, text + word_start, seg_len)
+        seg[seg_len] = 0
+        seg_w := MeasureUIText(seg, font)
+        if line_w > 0 && line_w + seg_w + font > wrap_w {
+            total = total + 1
+            line_w = 0
+            if total >= max_lines {
+                return total
+            }
+        }
+        if seg_w > wrap_w {
+            total = total + (seg_w + wrap_w - 1) / wrap_w
+            line_w = seg_w % wrap_w
+            if total >= max_lines {
+                return max_lines
+            }
+        } else {
+            line_w = line_w + seg_w + font
+        }
+        if text[i] == 10 {
+            total = total + 1
+            line_w = 0
+            if total >= max_lines {
+                return total
+            }
+        }
+        if text[i] != 0 {
+            i = i + 1
+        }
+    }
+    return total + 1
+}
+
+# Render one wrapped line: same walk as agent_wrap_text, stopping at the
+# requested row.
+agent_wrapped_line :: (text: const char*, wrap_w: int, font: int, max_lines: int,
+                       want: int, dst: char*, dst_size: int) {
+    dst[0] = 0
+    total := 0
+    i := 0
+    line_w := 0
+    start := -1
+    while text[i] != 0 {
+        word_start := i
+        while text[i] != 0 && text[i] != ' ' && text[i] != 10 {
+            i = i + 1
+        }
+        seg: [512] char
+        seg_len := i - word_start
+        if seg_len > 511 {
+            seg_len = 511
+        }
+        memcpy(seg, text + word_start, seg_len)
+        seg[seg_len] = 0
+        seg_w := MeasureUIText(seg, font)
+        if line_w > 0 && line_w + seg_w + font > wrap_w {
+            if total == want {
+                return
+            }
+            total = total + 1
+            line_w = 0
+            start = -1
+        }
+        if total == want {
+            if start < 0 {
+                start = word_start
+            }
+            take := i - start
+            if take > dst_size - 1 {
+                take = dst_size - 1
+            }
+            memcpy(dst, text + start, take)
+            dst[take] = 0
+        }
+        if seg_w > wrap_w {
+            if total == want {
+                return
+            }
+            total = total + 1
+            line_w = seg_w % wrap_w
+        } else {
+            line_w = line_w + seg_w + font
+        }
+        if text[i] == 10 {
+            if total == want {
+                return
+            }
+            total = total + 1
+            line_w = 0
+            start = -1
+        }
+        if text[i] != 0 {
+            i = i + 1
+        }
+    }
+    if total == want && start >= 0 {
+        take := i - start
+        if take > dst_size - 1 {
+            take = dst_size - 1
+        }
+        memcpy(dst, text + start, take)
+        dst[take] = 0
+    }
+}
 
 agent_bind :: (st: state.IdeState*) {
     if agent_bound != 0 {
@@ -49,6 +174,7 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
             i = i + 1
         }
     }
+    agent_route_problems(st)
     if ed.mod_key_down() && IsKeyPressed(KEY_L) {
         if agent_input_focused == 0 {
             agent_reset(st)
@@ -59,12 +185,13 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     row_h := ScaleUIPx(32)
     input_y := (int)bounds.y + (int)bounds.height - row_h - pad
     status := krait_agent_status_text()
+    busy := krait_agent_busy()
     transcript_h := (float)(input_y - (int)bounds.y)
     if strlen(status) > 0 {
         transcript_h = transcript_h - (float)ScaleUIPx(22)
     }
     transcript := (Rectangle){bounds.x, bounds.y, bounds.width, transcript_h}
-    draw_transcript(transcript)
+    draw_transcript(transcript, busy)
     if strlen(status) > 0 {
         DrawUIText(status, (int)bounds.x + pad,
                    input_y - ScaleUIPx(20), ScaleUIPx(12), GetThemeLink())
@@ -74,7 +201,6 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
         GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
         GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
     }
-    busy := krait_agent_busy()
     send_w := ScaleUIPx(64)
     stop_w := ScaleUIPx(58)
     field_w := bounds.width - (float)(pad * 2 + send_w + stop_w + ScaleUIPx(12))
@@ -116,6 +242,33 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     }
 }
 
+/* Compile failures land in the Problems pane, same as studio builds. */
+agent_route_problems :: (st: state.IdeState*) {
+    errors := krait_agent_compile_errors()
+    if strlen(errors) == 0 {
+        return
+    }
+    st->diagnostic_count = 0
+    line: [512] char
+    i := 0
+    n := 0
+    while errors[i] != 0 && st->diagnostic_count < 64 {
+        if errors[i] == 10 {
+            line[n] = 0
+            if n > 0 {
+                prob.parse_diagnostic_line(st, line)
+            }
+            n = 0
+        } else {
+            if n < 511 {
+                line[n] = errors[i]
+                n = n + 1
+            }
+        }
+        i = i + 1
+    }
+}
+
 agent_reset :: (st: state.IdeState*) {
     krait_agent_clear()
     agent_input[0] = 0
@@ -130,7 +283,7 @@ agent_send_input :: () {
     agent_input_cursor = 0
 }
 
-draw_transcript :: (bounds: Rectangle) {
+draw_transcript :: (bounds: Rectangle, busy: int) {
     count := krait_agent_count()
     pad := ScaleUIPx(12)
     line_h := ScaleUIPx(17)
@@ -187,19 +340,64 @@ draw_transcript :: (bounds: Rectangle) {
         snprintf(head, sizeof(head), "%s:", label)
         DrawUIText(head, (int)bounds.x + pad, y, ScaleUIPx(11),
                    GetThemeLink())
+        wrap_w := (int)bounds.width - pad * 2 - ScaleUIPx(16)
+        max_lines := 3
+        if agent_expanded == i {
+            max_lines = 60
+        }
+        lines := agent_wrap_text(text, wrap_w, ScaleUIPx(12), max_lines)
         block := (Rectangle){bounds.x + (float)pad, (float)(y + line_h),
                              bounds.width - (float)(pad * 2),
-                             (float)(line_h * 3)}
+                             (float)(line_h * lines + ScaleUIPx(8))}
         if kind == 2 || kind == 3 {
             DrawRectangleRec(block, GetThemeSurface())
         }
+        hit := CheckCollisionPointRec(GetMousePosition(), block) &&
+               IsMouseButtonReleased(MOUSE_BUTTON_LEFT)
+        if hit {
+            agent_expanded = agent_expanded == i ? -1 : i
+        }
         BeginScissorMode((int)block.x, (int)block.y, (int)block.width,
                          (int)block.height)
-        DrawUIText(text, (int)block.x + ScaleUIPx(8),
-                   (int)block.y + ScaleUIPx(4), ScaleUIPx(12), color)
+        row := 0
+        while row < lines {
+            line_buf: [512] char
+            agent_wrapped_line(text, wrap_w, ScaleUIPx(12), max_lines, row,
+                               line_buf, sizeof(line_buf))
+            DrawUIText(line_buf, (int)block.x + ScaleUIPx(8),
+                       (int)block.y + ScaleUIPx(4) + row * line_h,
+                       ScaleUIPx(12), color)
+            row = row + 1
+        }
         EndScissorMode()
-        y = y + line_h * 4 + ScaleUIPx(6)
+        y = y + line_h * (lines + 1) + ScaleUIPx(10)
         i = i + 1
+    }
+    if busy != 0 {
+        live := krait_agent_streaming_text()
+        if strlen(live) > 0 {
+            DrawUIText("agent:", (int)bounds.x + pad, y, ScaleUIPx(11),
+                       GetThemeLink())
+            wrap_w2 := (int)bounds.width - pad * 2 - ScaleUIPx(16)
+            lines2 := agent_wrap_text(live, wrap_w2, ScaleUIPx(12), 30)
+            block2 := (Rectangle){bounds.x + (float)pad,
+                                  (float)(y + line_h),
+                                  bounds.width - (float)(pad * 2),
+                                  (float)(line_h * lines2 + ScaleUIPx(8))}
+            BeginScissorMode((int)block2.x, (int)block2.y,
+                             (int)block2.width, (int)block2.height)
+            row2 := 0
+            while row2 < lines2 {
+                line_buf2: [512] char
+                agent_wrapped_line(live, wrap_w2, ScaleUIPx(12), 30, row2,
+                                   line_buf2, sizeof(line_buf2))
+                DrawUIText(line_buf2, (int)block2.x + ScaleUIPx(8),
+                           (int)block2.y + ScaleUIPx(4) + row2 * line_h,
+                           ScaleUIPx(12), GetThemeText())
+                row2 = row2 + 1
+            }
+            EndScissorMode()
+        }
     }
     EndScissorMode()
 }

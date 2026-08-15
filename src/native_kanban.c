@@ -651,10 +651,10 @@ kb_validate_proposals(KbCard *c, char *err_out, size_t err_size)
         paths[i] = c->proposal_paths[i];
         bodies[i] = c->proposal_bodies[i];
     }
-    rc = krait_compile_gate(c->project, paths, bodies,
-                            c->proposal_count < KB_MAX_PROPOSAL_FILES ?
-                                c->proposal_count : KB_MAX_PROPOSAL_FILES,
-                            first_error, sizeof(first_error));
+    rc = krait_compile_gate_all(c->project, paths, bodies,
+                                c->proposal_count < KB_MAX_PROPOSAL_FILES ?
+                                    c->proposal_count : KB_MAX_PROPOSAL_FILES,
+                                first_error, sizeof(first_error), NULL, 0);
     if(rc == 0) {
         snprintf(c->status, sizeof(c->status), "proposal ready (compiles)");
         return 0;

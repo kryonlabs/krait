@@ -95,7 +95,13 @@ frame :: () {
     } else if istate.view == state.IDE_VIEW_SETTINGS {
         sett.draw_settings(content, &istate)
     } else if istate.view == state.IDE_VIEW_AGENT {
-        ag.draw_agent(content, &istate)
+        if IsUIDesktopMode() == 0 || istate.force_mobile_layout != 0 {
+            content.height = content.height - (float)ScaleUIPx(56)
+            ag.draw_agent(content, &istate)
+            draw_mobile_nav(content, &istate)
+        } else {
+            ag.draw_agent(content, &istate)
+        }
     } else {
         sync_preview_pane(&istate)
         draw_project_view(content, &istate)
@@ -835,15 +841,29 @@ draw_workbench_mobile :: (content: Rectangle, st: state.IdeState*) {
     pane := (Rectangle){content.x, content.y,
                         content.width, content.height - (float)nav_h}
     draw_pane_view(pane, st, st->mobile_active_view)
+    draw_mobile_nav(content, st)
+}
+
+draw_mobile_nav :: (content: Rectangle, st: state.IdeState*) {
+    nav_h := ScaleUIPx(56)
     nav_y := (int)(content.y + content.height) - nav_h
     cw := (int)content.width
     DrawRectangle((int)content.x, nav_y, cw, nav_h, GetThemeSurface())
     DrawLine((int)content.x, nav_y, (int)content.x + cw, nav_y, GetThemeButton())
-    count := 5
+    count := 6
     btn_w := cw / count
     btn_h := nav_h - ScaleUIPx(16)
     by := nav_y + ScaleUIPx(8)
     bx := (int)content.x
+    if DrawUIGenericButton(bx + ScaleUIPx(4), by, btn_w - ScaleUIPx(8), btn_h,
+                           "Agent", st->view == state.IDE_VIEW_AGENT ?
+                               UI_BUTTON_STYLE_TAB_SELECTED :
+                               UI_BUTTON_STYLE_TAB,
+                           0, NULL) {
+        st->view = st->view == state.IDE_VIEW_AGENT ?
+                   state.IDE_VIEW_PROJECT : state.IDE_VIEW_AGENT
+    }
+    bx = bx + btn_w
     mobile_nav_button(bx, by, btn_w, btn_h, "Canvas", state.IDE_PANE_VIEW_PREVIEW, st)
     bx = bx + btn_w
     mobile_nav_button(bx, by, btn_w, btn_h, "Nodes", state.IDE_PANE_VIEW_HIERARCHY, st)

@@ -150,7 +150,12 @@ krait_ai_build_body(const KraitAiMessage *messages, int count)
         }
         kry_json_buf_raw(&body, "}");
     }
-    kry_json_buf_raw(&body, "],\"thinking\":{\"type\":\"disabled\"}}");
+    if(getenv("KRAIT_AI_STREAM") == NULL ||
+       getenv("KRAIT_AI_STREAM")[0] != '0')
+        kry_json_buf_raw(&body, "],\"stream\":true,"
+                                 "\"thinking\":{\"type\":\"disabled\"}}");
+    else
+        kry_json_buf_raw(&body, "],\"thinking\":{\"type\":\"disabled\"}}");
     {
         char *out = strdup(kry_json_buf_finish(&body));
 
@@ -231,14 +236,105 @@ krait_ai_extract_usage(const char *response)
     kry_json_free(root);
 }
 
+/* Concatenate choices[0].delta.content from every complete SSE "data:"
+ * line. Works on full and partial bodies alike; returns a malloc'd string
+ * (empty when nothing has arrived yet). */
+static char *
+krait_ai_sse_text(const char *body)
+{
+    char *out = malloc(8192);
+    size_t used = 0;
+    const char *p = body;
+
+    if(out == NULL)
+        return NULL;
+    out[0] = '\0';
+    if(body == NULL)
+        return out;
+    while((p = strstr(p, "data:")) != NULL) {
+        const char *line = p + 5;
+        const char *nl = strchr(line, '\n');
+        char chunk[1024];
+        size_t len;
+
+        p = nl != NULL ? nl + 1 : line + strlen(line);
+        if(nl == NULL)
+            continue;   /* incomplete line: wait for more bytes */
+        len = (size_t)(nl - line);
+        if(len >= sizeof(chunk))
+            len = sizeof(chunk) - 1;
+        memcpy(chunk, line, len);
+        chunk[len] = '\0';
+        {
+            char *trimmed = chunk;
+
+            while(*trimmed == ' ')
+                trimmed++;
+            if(strncmp(trimmed, "[DONE]", 6) == 0)
+                break;
+            {
+                KryJson *root = kry_json_parse(trimmed);
+                KryJson *delta;
+                const char *piece;
+
+                if(root == NULL)
+                    continue;
+                delta = kry_json_get(root, "choices");
+                delta = kry_json_at(delta, 0);
+                delta = kry_json_get(delta, "delta");
+                piece = kry_json_string(kry_json_get(delta, "content"));
+                if(piece != NULL && used + strlen(piece) < 8192 - 1) {
+                    memcpy(out + used, piece, strlen(piece));
+                    used += strlen(piece);
+                    out[used] = '\0';
+                }
+                kry_json_free(root);
+            }
+        }
+    }
+    return out;
+}
+
+/* Live text so far: parses the partial body while the request runs. */
+char *
+krait_ai_stream_text(KraitAiRequest *r)
+{
+    char partial[16384];
+
+    if(r == NULL)
+        return NULL;
+    if(kry_http_partial(r->http, partial, sizeof(partial)) == 0)
+        return NULL;
+    if(strstr(partial, "data:") == NULL)
+        return NULL;   /* not an SSE body (or nothing yet) */
+    return krait_ai_sse_text(partial);
+}
+
 static int
 krait_ai_extract_text(const char *response, char **out)
 {
-    KryJson *root = kry_json_parse(response);
+    KryJson *root;
     KryJson *content;
     const char *text;
 
     *out = NULL;
+    if(response == NULL)
+        return 0;
+    /* streaming responses arrive as SSE; concatenate the deltas */
+    if(strstr(response, "data:") == response ||
+       strstr(response, "\ndata:") != NULL) {
+        char *joined = krait_ai_sse_text(response);
+
+        if(joined == NULL)
+            return 0;
+        if(joined[0] == '\0') {
+            free(joined);
+            return 0;
+        }
+        *out = joined;
+        return 1;
+    }
+    root = kry_json_parse(response);
     if(root == NULL)
         return 0;
     content = kry_json_get(root, "choices");
