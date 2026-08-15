@@ -1,0 +1,181 @@
+#module "ide.agent"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+tree :: #import "ide/tree"
+
+krait_agent_bind :: (project_dir: const char*) #extern
+krait_agent_count :: () -> int #extern
+krait_agent_kind :: (index: int) -> int #extern
+krait_agent_text :: (index: int) -> const char* #extern
+krait_agent_status_text :: () -> const char* #extern
+krait_agent_busy :: () -> int #extern
+krait_agent_files_changed :: () -> int #extern
+krait_agent_send :: (text: const char*) -> int #extern
+krait_agent_stop :: () #extern
+krait_agent_clear :: () #extern
+krait_agent_poll :: () -> int #extern
+
+agent_input :: [2048] char #global
+agent_input_cursor :: int #global
+agent_input_focused :: int #global
+agent_scroll :: int #global
+agent_bound :: int #global
+
+agent_bind :: (st: state.IdeState*) {
+    if agent_bound != 0 {
+        return
+    }
+    if st->project.loaded == 0 {
+        return
+    }
+    krait_agent_bind(st->project.path)
+    agent_bound = 1
+}
+
+draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
+    agent_bind(st)
+    krait_agent_poll()
+    if krait_agent_files_changed() != 0 {
+        tree.refresh_tree(st)
+    }
+    DrawRectangleRec(bounds, GetThemeBackground())
+    pad := ScaleUIPx(10)
+    row_h := ScaleUIPx(32)
+    input_y := (int)bounds.y + (int)bounds.height - row_h - pad
+    status := krait_agent_status_text()
+    transcript_h := (float)(input_y - (int)bounds.y)
+    if strlen(status) > 0 {
+        transcript_h = transcript_h - (float)ScaleUIPx(22)
+    }
+    transcript := (Rectangle){bounds.x, bounds.y, bounds.width, transcript_h}
+    draw_transcript(transcript)
+    if strlen(status) > 0 {
+        DrawUIText(status, (int)bounds.x + pad,
+                   input_y - ScaleUIPx(20), ScaleUIPx(12), GetThemeLink())
+    }
+
+    style := (UITextInputStyle){
+        GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
+        GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
+    }
+    busy := krait_agent_busy()
+    send_w := ScaleUIPx(64)
+    stop_w := ScaleUIPx(58)
+    field_w := bounds.width - (float)(pad * 2 + send_w + stop_w + ScaleUIPx(12))
+    DrawUITextField((TextFieldProps){
+        (Rectangle){bounds.x + (float)pad, (float)input_y,
+                    field_w, (float)row_h},
+        agent_input, sizeof(agent_input),
+        &agent_input_cursor, &agent_input_focused,
+        sizeof(agent_input) - 1, ScaleUIPx(13), 7601,
+        style, (UITextInputFilter){0}, NULL, NULL
+    })
+    if strlen(agent_input) > 0 && busy == 0 {
+        if DrawUIGenericButton((int)bounds.x + pad + (int)field_w + ScaleUIPx(6),
+                               input_y, send_w, row_h, "Send",
+                               UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+            agent_send_input()
+        }
+    }
+    if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - stop_w,
+                           input_y, stop_w, row_h, busy != 0 ? "Stop" : "Clear",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        if busy != 0 {
+            krait_agent_stop()
+        } else {
+            agent_reset(st)
+        }
+    }
+    if agent_input_focused != 0 && IsKeyPressed(KEY_ENTER) && busy == 0 {
+        agent_send_input()
+    }
+}
+
+agent_reset :: (st: state.IdeState*) {
+    krait_agent_clear()
+    agent_input[0] = 0
+    agent_input_cursor = 0
+    agent_bound = 0
+    agent_bind(st)
+}
+
+agent_send_input :: () {
+    krait_agent_send(agent_input)
+    agent_input[0] = 0
+    agent_input_cursor = 0
+}
+
+draw_transcript :: (bounds: Rectangle) {
+    count := krait_agent_count()
+    pad := ScaleUIPx(12)
+    line_h := ScaleUIPx(17)
+    content_h := count * (line_h * 3 + ScaleUIPx(14))
+    max_scroll := content_h - (int)bounds.height
+    if max_scroll < 0 {
+        max_scroll = 0
+    }
+    if agent_scroll > max_scroll {
+        agent_scroll = max_scroll
+    }
+    if agent_scroll < 0 {
+        agent_scroll = 0
+    }
+    if max_scroll > 0 {
+        wheel := (int)(GetMouseWheelMove() * (float)line_h * 3.0)
+        agent_scroll = agent_scroll + wheel
+        if agent_scroll > max_scroll {
+            agent_scroll = max_scroll
+        }
+        if agent_scroll < 0 {
+            agent_scroll = 0
+        }
+    }
+    if count == 0 {
+        hint := "Ask the agent to change the project: describe what you want,"
+        hint2 := "it reads, edits, compiles, and reports back."
+        DrawUIText(hint, (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(14),
+                   ScaleUIPx(13), GetThemeIcon())
+        DrawUIText(hint2, (int)bounds.x + pad,
+                   (int)bounds.y + ScaleUIPx(34), ScaleUIPx(13),
+                   GetThemeIcon())
+        return
+    }
+    BeginScissorMode((int)bounds.x, (int)bounds.y, (int)bounds.width,
+                     (int)bounds.height)
+    i := 0
+    y := (int)bounds.y + ScaleUIPx(8) - agent_scroll
+    while i < count {
+        kind := krait_agent_kind(i)
+        text := krait_agent_text(i)
+        label := "you"
+        color := GetThemeText()
+        if kind == 1 {
+            label = "agent"
+        } else if kind == 2 {
+            label = "tools"
+        } else if kind == 4 {
+            label = "actions"
+        } else if kind == 3 {
+            label = "error"
+        }
+        head: [64] char
+        snprintf(head, sizeof(head), "%s:", label)
+        DrawUIText(head, (int)bounds.x + pad, y, ScaleUIPx(11),
+                   GetThemeLink())
+        block := (Rectangle){bounds.x + (float)pad, (float)(y + line_h),
+                             bounds.width - (float)(pad * 2),
+                             (float)(line_h * 3)}
+        if kind == 2 || kind == 3 {
+            DrawRectangleRec(block, GetThemeSurface())
+        }
+        BeginScissorMode((int)block.x, (int)block.y, (int)block.width,
+                         (int)block.height)
+        DrawUIText(text, (int)block.x + ScaleUIPx(8),
+                   (int)block.y + ScaleUIPx(4), ScaleUIPx(12), color)
+        EndScissorMode()
+        y = y + line_h * 4 + ScaleUIPx(6)
+        i = i + 1
+    }
+    EndScissorMode()
+}

@@ -17,6 +17,7 @@ mods :: #import "ide/modules"
 	meta :: #import "ide/project_meta"
 	krb :: #import "ide/cartridge"
 	kb :: #import "ide/kanban"
+	ag :: #import "ide/agent"
 
 	krait_load_ui_font :: () -> int #extern
 krait_scaffold_project :: (path: const char*, status: char*, status_size: int) -> int #extern
@@ -59,9 +60,12 @@ init :: () {
     InitFileDialog(&project_dialog)
 }
 
+krait_agent_shutdown :: () #extern
+
 shutdown :: () {
     krait_preview_unload()
     con.console_stop(&istate)
+    krait_agent_shutdown()
     krait_settings_save(&istate)
     krait_layout_save(&istate)
     if IsTextureValid(settings_icon) {
@@ -90,6 +94,8 @@ frame :: () {
         start.draw_start_page(content, &istate)
     } else if istate.view == state.IDE_VIEW_SETTINGS {
         sett.draw_settings(content, &istate)
+    } else if istate.view == state.IDE_VIEW_AGENT {
+        ag.draw_agent(content, &istate)
     } else {
         sync_preview_pane(&istate)
         draw_project_view(content, &istate)
@@ -213,21 +219,35 @@ draw_top_actions :: (view_w: int, top_h: int) {
     }
     if istate.project.loaded {
         gap := ScaleUIPx(6)
-        redo_w := ScaleUIPx(46)
-        undo_w := ScaleUIPx(52)
-        x = x - gap - redo_w
-        if DrawUIGenericButton(x, y, redo_w, btn_h, "Redo",
-                               UI_BUTTON_STYLE_SECONDARY,
-                               ed.editor_can_redo(&istate) == 0 ? 1 : 0,
-                               NULL) {
-            ed.editor_redo(&istate)
+        view_w := ScaleUIPx(64)
+        x = x - gap - view_w
+        if DrawUIGenericButton(x, y, view_w, btn_h,
+                               istate.view == state.IDE_VIEW_AGENT ?
+                                   "Studio" : "Agent",
+                               istate.view == state.IDE_VIEW_AGENT ?
+                                   UI_BUTTON_STYLE_TAB_SELECTED :
+                                   UI_BUTTON_STYLE_TAB,
+                               0, NULL) {
+            istate.view = istate.view == state.IDE_VIEW_AGENT ?
+                          state.IDE_VIEW_PROJECT : state.IDE_VIEW_AGENT
         }
-        x = x - gap - undo_w
-        if DrawUIGenericButton(x, y, undo_w, btn_h, "Undo",
-                               UI_BUTTON_STYLE_SECONDARY,
-                               ed.editor_can_undo(&istate) == 0 ? 1 : 0,
-                               NULL) {
-            ed.editor_undo(&istate)
+        if istate.view == state.IDE_VIEW_PROJECT {
+            redo_w := ScaleUIPx(46)
+            undo_w := ScaleUIPx(52)
+            x = x - gap - redo_w
+            if DrawUIGenericButton(x, y, redo_w, btn_h, "Redo",
+                                   UI_BUTTON_STYLE_SECONDARY,
+                                   ed.editor_can_redo(&istate) == 0 ? 1 : 0,
+                                   NULL) {
+                ed.editor_redo(&istate)
+            }
+            x = x - gap - undo_w
+            if DrawUIGenericButton(x, y, undo_w, btn_h, "Undo",
+                                   UI_BUTTON_STYLE_SECONDARY,
+                                   ed.editor_can_undo(&istate) == 0 ? 1 : 0,
+                                   NULL) {
+                ed.editor_undo(&istate)
+            }
         }
     }
 }

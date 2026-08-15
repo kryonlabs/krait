@@ -115,6 +115,7 @@ int krait_path_exists(const char *path);
 int krait_path_has_suffix(const char *path, const char *suffix);
 int krait_ignored_dir(const char *name);
 void krait_ensure_parent_dir(const char *path);
+void krait_mkdir_p(const char *path);
 int krait_read_file_alloc(const char *path, char **out, long *out_len);
 int krait_write_text_file(const char *path, const char *text);
 int krait_file_is_text(const char *path);
@@ -123,6 +124,28 @@ int krait_ident_start(int ch);
 int krait_ident_char(int ch);
 void krait_title_from_file(char *dst, size_t dst_size, const char *file);
 void krait_kryon_tool_path(char *out, size_t out_size, const char *tool);
+
+/* ---- native_compile.c: shared compile gate + bounded command runner ---- */
+int krait_compile_gate(const char *project_dir,
+                       const char *const *overlay_paths,
+                       const char *const *overlay_bodies, int overlay_count,
+                       char *first_error, size_t error_size);
+int krait_run_capture(const char *dir, const char *cmdline, int timeout_s,
+                      char *out, size_t out_size);
+
+/* ---- native_agent.c: agent-view conversation engine (ZCode-style loop) ---- */
+void krait_agent_bind(const char *project_dir);
+int krait_agent_count(void);
+int krait_agent_kind(int index);
+const char *krait_agent_text(int index);
+const char *krait_agent_status_text(void);
+int krait_agent_busy(void);
+int krait_agent_files_changed(void);
+int krait_agent_send(const char *text);
+void krait_agent_stop(void);
+void krait_agent_clear(void);
+int krait_agent_poll(void);
+void krait_agent_shutdown(void);
 
 /* ---- native_live_eval.c: pure parser/eval helpers (shared by scene + live) ---- */
 const char *krait_live_skip_space(const char *p);

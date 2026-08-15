@@ -58,24 +58,6 @@ static KbColumn kb_board[4];
 static char kb_dir[KRAIT_PATH_MAX];
 static int kb_dir_ready;
 
-/* mkdir -p for the board tree (~/.kryon may not exist yet). */
-static void
-kb_mkdir_p(const char *path)
-{
-    char tmp[KRAIT_PATH_MAX];
-    char *p;
-
-    snprintf(tmp, sizeof(tmp), "%s", path);
-    for(p = tmp + 1; *p != '\0'; p++) {
-        if(*p == '/') {
-            *p = '\0';
-            mkdir(tmp, 0755);
-            *p = '/';
-        }
-    }
-    mkdir(tmp, 0755);
-}
-
 static void
 kb_board_dir(char *dst, size_t dst_size)
 {
@@ -237,7 +219,7 @@ krait_kanban_rescan(void)
             kb_card_free(&column->cards[i]);
         column->count = 0;
         snprintf(path, sizeof(path), "%s/%s", kb_dir, kb_columns[col]);
-        kb_mkdir_p(path);
+        krait_mkdir_p(path);
         d = opendir(path);
         if(d == NULL)
             continue;
@@ -644,159 +626,19 @@ krait_kanban_ai_run(int col, int index)
     return kb_ai_start(c, NULL);
 }
 
-typedef void (*KbLineFn)(char *line, void *userdata);
-static void kb_process_lines(KryProcess *proc, char *carry, size_t *carry_len,
-                             size_t carry_size, KbLineFn fn, void *userdata);
-
-typedef struct {
-    char *error;
-    size_t error_size;
-    int *rc;
-} KbCapture;
-
-/* Sentinels: the k2c leg echoes "RC=N"; the cc leg echoes "CCOKE" on
- * success. Everything else is potential diagnostic output. */
-static void
-kb_capture_line(char *line, void *userdata)
-{
-    KbCapture *cap = userdata;
-
-    if(getenv("KRAIT_KANBAN_DEBUG") != NULL)
-        fprintf(stderr, "kanban-validate: [%s]\n", line);
-    if(strncmp(line, "RC=", 3) == 0)
-        *cap->rc = atoi(line + 3);
-    else if(strstr(line, "CCOKE") != NULL)
-        *cap->rc = 0;
-    else if(cap->error[0] == '\0')
-        snprintf(cap->error, cap->error_size, "%s", line);
-}
-
-static void
-kb_validate_run(KryProcess *proc, KbCapture *cap)
-{
-    char carry[1024];
-    size_t carry_len = 0;
-    int spins = 0;
-
-    carry[0] = '\0';
-    while(proc->running && spins++ < 2400) {
-        struct timespec ts = {0, 50 * 1000 * 1000};
-
-        kb_process_lines(proc, carry, &carry_len, sizeof(carry),
-                         kb_capture_line, cap);
-        nanosleep(&ts, NULL);
-        kry_process_wait_poll(proc);
-    }
-    /* final drain: the sentinel line often lands right at exit, after the
-     * reap flipped running to 0 */
-    kb_process_lines(proc, carry, &carry_len, sizeof(carry),
-                     kb_capture_line, cap);
-}
-
-/* cc -fsyntax-only over the k2c output: k2c proves Kry syntax, this
- * proves the C compiles against the real kryon headers (catches wrong
- * widget names k2c cannot see). */
-static int
-kb_cc_check(const char *tmp, const char *k2c_path, const char *out,
-            char *first_error, size_t error_size)
-{
-    char kryon_dir[KRAIT_PATH_MAX];
-    char cmd[KRAIT_PATH_MAX * 8];
-    KryProcess proc;
-    char *bin_pos;
-
-    /* <kryon>/build/<platform>-<arch>/bin/k2c -> <kryon>, made absolute so
-     * the check survives the cd into the temp overlay. */
-    snprintf(kryon_dir, sizeof(kryon_dir), "%s", k2c_path);
-    bin_pos = strstr(kryon_dir, "/build/");
-    if(bin_pos == NULL)
-        return 0;   /* unexpected layout; skip the cc pass */
-    *bin_pos = '\0';
-    if(kryon_dir[0] != '/') {
-        char abs[KRAIT_PATH_MAX];
-
-        if(realpath(kryon_dir, abs) != NULL)
-            snprintf(kryon_dir, sizeof(kryon_dir), "%s", abs);
-    }
-    snprintf(cmd, sizeof(cmd),
-             "cd '%s' && for src in $(find out -name '*.c' | LC_ALL=C sort); do "
-             "cc -fsyntax-only -std=c99 -I%s/include -I%s/src/ui "
-             "-I%s/vendor/clay -Iout -I$(dirname $src) $src 2>&1 || exit 1; "
-             "done; echo CCOKE",
-             tmp, kryon_dir, kryon_dir, kryon_dir);
-    if(getenv("KRAIT_KANBAN_DEBUG") != NULL)
-        fprintf(stderr, "kanban-validate: cc cmd=[%s]\n", cmd);
-    if(!kry_process_spawn(&proc, cmd, tmp))
-        return 1;
-    {
-        int rc2 = 1;
-        KbCapture cap = {first_error, error_size, &rc2};
-
-        kb_validate_run(&proc, &cap);
-        if(getenv("KRAIT_KANBAN_DEBUG") != NULL)
-            fprintf(stderr, "kanban-validate: cc rc2=%d exit=%d\n", rc2,
-                    proc.exit_status);
-        return rc2 == 0 ? 0 : 1;
-    }
-}
-
-/* Drain a KryProcess line-by-line: chunks from read_poll are split on
- * newlines with carry across polls. Each complete line goes through fn. */
-typedef void (*KbLineFn)(char *line, void *userdata);
-
-static void
-kb_process_lines(KryProcess *proc, char *carry, size_t *carry_len,
-                 size_t carry_size, KbLineFn fn, void *userdata)
-{
-    char chunk[512];
-    int n;
-
-    while((n = kry_process_read_poll(proc, chunk, sizeof(chunk))) > 0) {
-        size_t used = 0;
-
-        while(used < (size_t)n) {
-            char *nl = memchr(chunk + used, '\n', (size_t)n - used);
-            size_t piece;
-
-            if(nl == NULL) {
-                if(*carry_len < carry_size - 1) {
-                    memcpy(carry + *carry_len, chunk + used, (size_t)n - used);
-                    *carry_len += (size_t)(n - used);
-                    carry[*carry_len] = '\0';
-                }
-                break;
-            }
-            piece = (size_t)(nl - (chunk + used));
-            {
-                if(*carry_len + piece < carry_size - 1) {
-                    memcpy(carry + *carry_len, chunk + used, piece);
-                    carry[*carry_len + piece] = '\0';
-                    krait_trim(carry);
-                    if(carry[0] != '\0')
-                        fn(carry, userdata);
-                }
-                *carry_len = 0;
-                carry[0] = '\0';
-            }
-            used += piece + 1;
-        }
-    }
-}
-
-/* Transpile the project overlayed with the proposals through k2c; the
- * verdict lands on the card status so Apply only ever offers code that
- * compiles (or shows the first k2c error for review). Returns 0 when the
- * proposal compiles (or cannot be checked), nonzero otherwise, with the
- * first diagnostic copied into err_out for the retry loop. */
+/* Transpile the project overlayed with the proposals through the shared
+ * compile gate; the verdict lands on the card status so Apply only ever
+ * offers code that compiles (or shows the first error for review).
+ * Returns 0 when the proposal compiles (or cannot be checked), nonzero
+ * otherwise, with the first diagnostic copied into err_out for the
+ * retry loop. */
 static int
 kb_validate_proposals(KbCard *c, char *err_out, size_t err_size)
 {
-    char k2c[KRAIT_PATH_MAX];
-    char tmp[KRAIT_PATH_MAX];
-    char cmd[KRAIT_PATH_MAX * 8];
-    char out[KRAIT_PATH_MAX];
-    KryProcess proc;
+    const char *paths[KB_MAX_PROPOSAL_FILES];
+    const char *bodies[KB_MAX_PROPOSAL_FILES];
     char first_error[160];
+    int i;
     int rc;
 
     if(err_out != NULL && err_size > 0)
@@ -805,60 +647,14 @@ kb_validate_proposals(KbCard *c, char *err_out, size_t err_size)
         snprintf(c->status, sizeof(c->status), "proposal ready");
         return 0;
     }
-    krait_kryon_tool_path(k2c, sizeof(k2c), "k2c");
-    if(k2c[0] != '/') {
-        char abs[KRAIT_PATH_MAX];
-
-        if(realpath(k2c, abs) != NULL)
-            snprintf(k2c, sizeof(k2c), "%s", abs);
+    for(i = 0; i < c->proposal_count && i < KB_MAX_PROPOSAL_FILES; i++) {
+        paths[i] = c->proposal_paths[i];
+        bodies[i] = c->proposal_bodies[i];
     }
-    if(access(k2c, X_OK) != 0) {
-        snprintf(c->status, sizeof(c->status), "proposal ready");
-        return 0;
-    }
-    snprintf(tmp, sizeof(tmp), "/tmp/krait-kanban-%d", (int)getpid());
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s' && mkdir -p '%s' && cp -R '%s/.' '%s/'",
-             tmp, tmp, c->project, tmp);
-    if(system(cmd) != 0) {
-        snprintf(c->status, sizeof(c->status), "proposal ready");
-        return 0;
-    }
-    {
-        char dir[KRAIT_PATH_MAX];
-        int i;
-
-        if(kb_proposal_dir(c, dir, sizeof(dir)))
-            for(i = 0; i < c->proposal_count; i++)
-                if(!krait_path_has_suffix(c->proposal_paths[i], ".kry"))
-                    continue;
-                else {
-                    char dst[KRAIT_PATH_MAX * 2];
-
-                    snprintf(dst, sizeof(dst), "%s/%s", tmp,
-                             c->proposal_paths[i]);
-                    krait_write_text_file(dst,
-                        c->proposal_bodies[i] != NULL
-                            ? c->proposal_bodies[i] : "");
-                }
-    }
-    snprintf(out, sizeof(out), "%s/out", tmp);
-    snprintf(cmd, sizeof(cmd),
-             "cd '%s' && '%s' --root . --no-main -o '%s' $(find . -name '*.kry' "
-             "| LC_ALL=C sort); echo RC=$?",
-             tmp, k2c, out);
-    first_error[0] = '\0';
-    rc = -1;
-    if(kry_process_spawn(&proc, cmd, tmp)) {
-        KbCapture cap = {first_error, sizeof(first_error), &rc};
-
-        kb_validate_run(&proc, &cap);
-    }
-    if(rc == 0)
-        rc = kb_cc_check(tmp, k2c, out, first_error, sizeof(first_error));
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmp);
-    if(system(cmd) != 0) {
-        /* best effort cleanup */
-    }
+    rc = krait_compile_gate(c->project, paths, bodies,
+                            c->proposal_count < KB_MAX_PROPOSAL_FILES ?
+                                c->proposal_count : KB_MAX_PROPOSAL_FILES,
+                            first_error, sizeof(first_error));
     if(rc == 0) {
         snprintf(c->status, sizeof(c->status), "proposal ready (compiles)");
         return 0;

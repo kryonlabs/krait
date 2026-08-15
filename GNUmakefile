@@ -169,16 +169,33 @@ android-clean:
 	rm -rf build/android-arm64
 
 KANBAN_TEST = $(BUILD_DIR)/tests/kanban_test
+AGENT_TEST = $(BUILD_DIR)/tests/agent_test
 
-test: krait boundary-check kanban-test
+test: krait boundary-check kanban-test agent-test
 
 kanban-test: $(KANBAN_TEST)
 	$(KANBAN_TEST)
 
-$(KANBAN_TEST): tests/kanban_test.c $(BUILD_DIR)/src/native_kanban.o $(BUILD_DIR)/src/native_ai.o $(BUILD_DIR)/src/native_util.o $(BUILD_DIR)/src/native_scaffold.o $(KRYON_LIB) $(RAYLIB_A) $(KRYON_CURL_A) | $(BUILD_DIR)
+$(KANBAN_TEST): tests/kanban_test.c $(BUILD_DIR)/src/native_kanban.o $(BUILD_DIR)/src/native_ai.o $(BUILD_DIR)/src/native_util.o $(BUILD_DIR)/src/native_scaffold.o $(BUILD_DIR)/src/native_compile.o $(KRYON_LIB) $(RAYLIB_A) $(KRYON_CURL_A) | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc -I$(KRAIT_GEN) -I$(KRYON_DIR)/include -o $@ tests/kanban_test.c \
 		$(BUILD_DIR)/src/native_kanban.o $(BUILD_DIR)/src/native_ai.o \
+		$(BUILD_DIR)/src/native_util.o $(BUILD_DIR)/src/native_scaffold.o \
+		$(BUILD_DIR)/src/native_compile.o \
+		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
+		$(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) \
+		$(KRYON_CURL_LDLIBS) $(KRYON_MARKDOWN_LDLIBS) $(RAY_LDLIBS) \
+		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) \
+			-lbrotlidec -lbrotlicommon -lzstd -lz -lpthread -lm
+
+agent-test: $(AGENT_TEST)
+	$(AGENT_TEST)
+
+$(AGENT_TEST): tests/agent_test.c $(BUILD_DIR)/src/native_agent.o $(BUILD_DIR)/src/native_compile.o $(BUILD_DIR)/src/native_ai.o $(BUILD_DIR)/src/native_util.o $(BUILD_DIR)/src/native_scaffold.o $(KRYON_LIB) $(RAYLIB_A) $(KRYON_CURL_A) | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc -I$(KRAIT_GEN) -I$(KRYON_DIR)/include -o $@ tests/agent_test.c \
+		$(BUILD_DIR)/src/native_agent.o $(BUILD_DIR)/src/native_compile.o \
+		$(BUILD_DIR)/src/native_ai.o \
 		$(BUILD_DIR)/src/native_util.o $(BUILD_DIR)/src/native_scaffold.o \
 		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
 		$(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) \

@@ -1,0 +1,744 @@
+/*
+ * native_agent.c - the agent-view conversation engine.
+ *
+ * A ZCode-style loop over the z.ai client: the model answers with plain
+ * text or a JSON array of tool actions (list/read/write/compile/run).
+ * Actions run against the bound project directly - writes back up the
+ * original file and land on disk, and every write batch is followed by
+ * the shared compile gate whose diagnostics feed back into the next
+ * round. The transcript persists per project as JSON lines under
+ * ~/.kryon/krait/agent/<name>-<hash>/history.jsonl. Tool execution is
+ * synchronous and blocks the UI thread (compile is seconds, run is
+ * capped by timeout); the HTTP wait itself stays async via kry_http.
+ */
+#include "kryon.h"
+#include "ide/state.h"
+#include "native_internal.h"
+
+#include "kry_json.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <stdarg.h>
+
+#define AGENT_MSG_USER 0
+#define AGENT_MSG_ASSISTANT 1
+#define AGENT_MSG_TOOL 2
+#define AGENT_MSG_ERROR 3
+#define AGENT_MSG_ACTIONS 4
+
+#define AGENT_MAX_MSGS 512
+#define AGENT_MAX_ROUNDS 12
+#define AGENT_CONTEXT_CHARS 24000
+#define AGENT_READ_CAP 16384
+#define AGENT_RUN_OUT_CAP 8192
+#define AGENT_TOOL_OUT_CAP 16384
+
+typedef struct {
+    int kind;
+    char *text;   /* malloc'd */
+} AgentMsg;
+
+static AgentMsg agent_msgs[AGENT_MAX_MSGS];
+static int agent_msg_count;
+static char agent_project[KRAIT_PATH_MAX];
+static char agent_history_path[KRAIT_PATH_MAX * 2];
+static KraitAiRequest *agent_req;
+static int agent_round;
+static int agent_stop_requested;
+static int agent_busy;
+static char agent_status[160];
+static int agent_files_changed;
+
+static const char *const agent_system_prompt =
+    "You are a coding agent working inside the Krait IDE on a Kryon "
+    "project. Kry (.kry) is a Python-indented UI language lowered to C. "
+    "STRICT syntax rules: no comments at all (// and # are errors); no "
+    "'let' (declare with 'name := expr' or 'name: Type = value'). Screens "
+    "look like: screen Name(viewport: Rectangle) { ... }. Widget calls: "
+    "DrawUIGenericButton(x, y, w, h, \"label\", UI_BUTTON_STYLE_PRIMARY, "
+    "0, NULL) returns 1 when clicked; DrawUIText(text, x, y, "
+    "UI_TEXT_16, GetThemeText()); DrawRectangleRec((Rectangle){x, y, w, "
+    "h}, GetThemeButton()). Coordinates are int pixels - wrap sizes with "
+    "ScaleUIPx(n), use (int) casts on floats. Read main.kry first and "
+    "copy its idioms exactly; write complete file contents, never diffs. "
+    "TOOLS: reply EITHER with plain text for the user OR with ONLY a "
+    "JSON array of actions, executed in order: "
+    "[{\"tool\":\"list\"}, {\"tool\":\"read\",\"path\":\"main.kry\"}, "
+    "{\"tool\":\"write\",\"path\":\"ui.kry\",\"content\":\"...\"}, "
+    "{\"tool\":\"compile\"}, {\"tool\":\"run\",\"cmd\":\"make\"}]. "
+    "Writes are applied to the project immediately and a compile check "
+    "runs after every write batch - fix any errors it reports before "
+    "finishing. Messages beginning with TOOL RESULTS contain tool "
+    "output. Finish with a short plain-text summary of what you changed.";
+
+static void
+agent_set_status(const char *fmt, ...)
+{
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(agent_status, sizeof(agent_status), fmt, ap);
+    va_end(ap);
+}
+
+static unsigned int
+agent_path_hash(const char *s)
+{
+    unsigned int h = 2166136261u;
+
+    while(*s != '\0')
+        h = (h ^ (unsigned char)*s++) * 16777619u;
+    return h;
+}
+
+static void
+agent_history_dir(char *dst, size_t dst_size)
+{
+    const char *home = getenv("HOME");
+    char name[256];
+    const char *base;
+    const char *slash;
+
+    if(home == NULL || home[0] == '\0')
+        home = ".";
+    base = agent_project[0] != '\0' ? agent_project : "none";
+    slash = strrchr(base, '/');
+    snprintf(name, sizeof(name), "%s",
+             slash != NULL && slash[1] != '\0' ? slash + 1 : base);
+    {
+        char clean[256];
+        char *p;
+
+        snprintf(clean, sizeof(clean), "%s", name);
+        for(p = clean; *p != '\0'; p++)
+            if(*p == '/' || *p == ' ' || *p == ':')
+                *p = '_';
+        snprintf(dst, dst_size, "%s/.kryon/krait/agent/%s-%08x", home, clean,
+                 agent_path_hash(agent_project));
+    }
+}
+
+static void
+agent_msg_free(AgentMsg *m)
+{
+    free(m->text);
+    m->text = NULL;
+    m->kind = AGENT_MSG_USER;
+}
+
+static void
+agent_append(int kind, const char *text)
+{
+    AgentMsg *m;
+
+    if(agent_msg_count >= AGENT_MAX_MSGS) {
+        int i;
+
+        agent_msg_free(&agent_msgs[0]);
+        memmove(&agent_msgs[0], &agent_msgs[1],
+                sizeof(AgentMsg) * (AGENT_MAX_MSGS - 1));
+        agent_msg_count = AGENT_MAX_MSGS - 1;
+    }
+    m = &agent_msgs[agent_msg_count++];
+    m->kind = kind;
+    m->text = strdup(text != NULL ? text : "");
+}
+
+static void
+agent_persist_msg(int kind, const char *text)
+{
+    FILE *f;
+
+    if(agent_history_path[0] == '\0')
+        return;
+    f = fopen(agent_history_path, "a");
+    if(f == NULL)
+        return;
+    {
+        KryJsonBuf buf = {0};
+        const char *line;
+
+        kry_json_buf_raw(&buf, "{\"kind\":");
+        kry_json_buf_num(&buf, kind);
+        kry_json_buf_raw(&buf, ",\"text\":");
+        kry_json_buf_str(&buf, text != NULL ? text : "");
+        kry_json_buf_raw(&buf, "}");
+        line = kry_json_buf_finish(&buf);
+        if(line != NULL)
+            fprintf(f, "%s\n", line);
+        kry_json_buf_free(&buf);
+    }
+    fclose(f);
+}
+
+/* load every stored message of the transcript file */
+static void
+agent_load_history(void)
+{
+    char *text = NULL;
+    long len;
+    char *p;
+
+    if(!krait_read_file_alloc(agent_history_path, &text, &len) ||
+       text == NULL) {
+        free(text);
+        return;
+    }
+    p = text;
+    while(*p != '\0') {
+        char *nl = strchr(p, '\n');
+
+        if(nl != NULL)
+            *nl = '\0';
+        if(p[0] != '\0') {
+            KryJson *root = kry_json_parse(p);
+            const char *msg_text;
+
+            if(getenv("KRAIT_AGENT_DEBUG") != NULL)
+                fprintf(stderr, "agent-load: parse %s -> %s\n", p,
+                        root != NULL ? "ok" : "FAIL");
+            if(root != NULL) {
+                msg_text = kry_json_string(kry_json_get(root, "text"));
+                if(msg_text != NULL)
+                    agent_append(
+                        (int)kry_json_number(kry_json_get(root, "kind")),
+                        msg_text);
+                kry_json_free(root);
+            }
+        }
+        if(nl == NULL)
+            break;
+        p = nl + 1;
+    }
+    free(text);
+}
+
+static void
+agent_remember(int kind, const char *text)
+{
+    agent_append(kind, text);
+    agent_persist_msg(kind, text);
+}
+
+static int
+agent_path_safe(const char *rel)
+{
+    if(rel == NULL || rel[0] == '\0' || rel[0] == '/')
+        return 0;
+    if(strstr(rel, "..") != NULL)
+        return 0;
+    return 1;
+}
+
+/* Execute one parsed action; appends a compact result line to out. */
+static void
+agent_tool_list(char *out, size_t out_size)
+{
+    size_t used = strlen(out);
+
+    used += (size_t)snprintf(out + used, out_size - used, "[list]\n");
+    {
+        int exit_status = krait_run_capture(agent_project,
+            "find . -type f -not -path './.git/*' -not -path './out/*' "
+            "| LC_ALL=C sort | head -200", 10,
+            out + used, out_size - used);
+
+        if(exit_status != 0 && used + 16 < out_size)
+            snprintf(out + used, out_size - used, "(find failed: %d)\n",
+                     exit_status);
+    }
+    krait_trim(out);
+}
+
+static void
+agent_tool_read(const char *path, char *out, size_t out_size)
+{
+    char full[KRAIT_PATH_MAX * 2];
+    char *text = NULL;
+    long len;
+    size_t used = strlen(out);
+
+    if(!agent_path_safe(path)) {
+        snprintf(out + used, out_size - used, "[read] refused: %s\n",
+                 path != NULL ? path : "");
+        return;
+    }
+    snprintf(full, sizeof(full), "%s/%s", agent_project, path);
+    if(!krait_read_file_alloc(full, &text, &len) || text == NULL) {
+        snprintf(out + used, out_size - used, "[read] no such file: %s\n",
+                 path);
+        free(text);
+        return;
+    }
+    if(len > AGENT_READ_CAP)
+        text[AGENT_READ_CAP] = '\0';
+    snprintf(out + used, out_size - used, "[read %s]\n%s\n", path, text);
+    free(text);
+}
+
+static int
+agent_tool_write(const char *path, const char *content)
+{
+    char full[KRAIT_PATH_MAX * 2];
+    char bak[KRAIT_PATH_MAX * 2];
+    char *orig = NULL;
+    long len;
+
+    if(!agent_path_safe(path))
+        return 0;
+    snprintf(full, sizeof(full), "%s/%s", agent_project, path);
+    snprintf(bak, sizeof(bak), "%s.bak", full);
+    krait_ensure_parent_dir(full);
+    if(krait_read_file_alloc(full, &orig, &len))
+        krait_write_text_file(bak, orig);
+    free(orig);
+    if(!krait_write_text_file(full, content != NULL ? content : ""))
+        return 0;
+    agent_files_changed = 1;
+    return 1;
+}
+
+static void
+agent_tool_compile(char *out, size_t out_size)
+{
+    char err[256];
+    int rc = krait_compile_gate(agent_project, NULL, NULL, 0, err,
+                                sizeof(err));
+    size_t used = strlen(out);
+
+    if(rc == 0)
+        snprintf(out + used, out_size - used, "[compile] ok\n");
+    else
+        snprintf(out + used, out_size - used,
+                 "[compile] FAILED: %s\n", err[0] != '\0' ? err : "unknown");
+}
+
+static void
+agent_tool_run(const char *cmd, char *out, size_t out_size)
+{
+    char buf[AGENT_RUN_OUT_CAP];
+    int exit_status;
+    size_t used = strlen(out);
+
+    if(cmd == NULL || cmd[0] == '\0') {
+        snprintf(out + used, out_size - used, "[run] refused: empty cmd\n");
+        return;
+    }
+    if(strstr(cmd, "rm -rf /") != NULL || system(NULL) == 0) {
+        snprintf(out + used, out_size - used, "[run] refused: %s\n", cmd);
+        return;
+    }
+    exit_status = krait_run_capture(agent_project, cmd, 60, buf, sizeof(buf));
+    if(exit_status < 0) {
+        snprintf(out + used, out_size - used, "[run] spawn failed: %s\n", cmd);
+        return;
+    }
+    snprintf(out + used, out_size - used, "[run '%s'] exit %d\n%s\n", cmd,
+             exit_status, buf);
+}
+
+/* Parse and execute a JSON array of tool actions. Returns the compact
+ * TOOL RESULTS text (malloc'd). */
+static char *
+agent_run_tools(const char *json)
+{
+    KryJson *root = kry_json_parse(json);
+    char *out;
+    int i;
+    int count;
+    int wrote = 0;
+
+    out = malloc(AGENT_TOOL_OUT_CAP);
+    if(out == NULL) {
+        kry_json_free(root);
+        return NULL;
+    }
+    out[0] = '\0';
+    if(root == NULL) {
+        snprintf(out, AGENT_TOOL_OUT_CAP, "TOOL RESULTS: bad action json\n");
+        return out;
+    }
+    count = kry_json_count(root);
+    for(i = 0; i < count; i++) {
+        KryJson *action = kry_json_at(root, i);
+        const char *tool = kry_json_string(kry_json_get(action, "tool"));
+
+        if(tool == NULL)
+            continue;
+        if(strcmp(tool, "list") == 0)
+            agent_tool_list(out, AGENT_TOOL_OUT_CAP);
+        else if(strcmp(tool, "read") == 0)
+            agent_tool_read(kry_json_string(kry_json_get(action, "path")),
+                            out, AGENT_TOOL_OUT_CAP);
+        else if(strcmp(tool, "write") == 0) {
+            const char *path = kry_json_string(kry_json_get(action, "path"));
+            const char *content = kry_json_string(kry_json_get(action,
+                                                                "content"));
+
+            if(agent_tool_write(path, content)) {
+                size_t used = strlen(out);
+
+                snprintf(out + used, AGENT_TOOL_OUT_CAP - used,
+                         "[write %s] ok\n",
+                         path != NULL ? path : "");
+                wrote = 1;
+            } else {
+                size_t used = strlen(out);
+
+                snprintf(out + used, AGENT_TOOL_OUT_CAP - used,
+                         "[write] refused: %s\n",
+                         path != NULL ? path : "");
+            }
+        } else if(strcmp(tool, "compile") == 0)
+            agent_tool_compile(out, AGENT_TOOL_OUT_CAP);
+        else if(strcmp(tool, "run") == 0)
+            agent_tool_run(kry_json_string(kry_json_get(action, "cmd")),
+                           out, AGENT_TOOL_OUT_CAP);
+    }
+    kry_json_free(root);
+    if(wrote)
+        agent_tool_compile(out, AGENT_TOOL_OUT_CAP);
+    return out;
+}
+
+/* Is the reply a tool-action array? An array whose first element has a
+ * "tool" key. */
+static int
+agent_reply_is_actions(const char *text)
+{
+    KryJson *root = kry_json_parse(text);
+    int is_actions = 0;
+
+    if(root != NULL && kry_json_count(root) > 0) {
+        KryJson *first = kry_json_at(root, 0);
+
+        if(first != NULL && kry_json_get(first, "tool") != NULL)
+            is_actions = 1;
+    }
+    kry_json_free(root);
+    return is_actions;
+}
+
+/* Strip one markdown fence pair and surrounding whitespace, in place. */
+static char *
+agent_strip_reply(char *text)
+{
+    char *json = text;
+    size_t n;
+
+    while(*json == '\n' || *json == ' ')
+        json++;
+    n = strlen(json);
+    while(n > 0 && (json[n - 1] == '\n' || json[n - 1] == ' '))
+        json[--n] = '\0';
+    if(strncmp(json, "```", 3) == 0) {
+        char *end;
+
+        json += 3;
+        while(*json != '\0' && *json != '\n')
+            json++;
+        if(*json == '\n')
+            json++;
+        end = strstr(json, "```");
+        if(end != NULL)
+            *end = '\0';
+    }
+    return json;
+}
+
+/* Build the message list for the next request: system prompt plus the
+ * newest transcript messages that fit the context budget. Tool results
+ * get a "TOOL RESULTS" prefix as user-role text (the API has no tool
+ * role); prefixed copies are malloc'd into temps and must be freed by
+ * the caller after krait_ai_chat has copied the body. */
+static int
+agent_build_context(KraitAiMessage *msgs, int max, char *temps[], int *temp_count)
+{
+    int count = 0;
+    int i;
+    size_t used = 0;
+
+    *temp_count = 0;
+    msgs[count].role = "system";
+    msgs[count].content = agent_system_prompt;
+    count++;
+    for(i = agent_msg_count - 1; i >= 0 && count < max; i--) {
+        AgentMsg *m = &agent_msgs[i];
+        const char *role = "user";
+        char *content = NULL;
+
+        if(m->kind == AGENT_MSG_ASSISTANT || m->kind == AGENT_MSG_ACTIONS)
+            role = "assistant";
+        if(m->kind == AGENT_MSG_TOOL) {
+            size_t need = strlen(m->text) + 32;
+
+            content = malloc(need);
+            if(content == NULL)
+                continue;
+            snprintf(content, need, "TOOL RESULTS:\n%s", m->text);
+            temps[(*temp_count)++] = content;
+        }
+        used += strlen(m->text) + 32;
+        if(used > AGENT_CONTEXT_CHARS && count > 1) {
+            if(content != NULL)
+                (*temp_count)--;
+            free(content);
+            break;
+        }
+        msgs[count].role = role;
+        msgs[count].content = content != NULL ? content : m->text;
+        count++;
+    }
+    /* reverse the tail so the conversation reads chronologically */
+    {
+        int first = 1;
+        int last = count - 1;
+
+        while(first < last) {
+            KraitAiMessage tmp = msgs[first];
+
+            msgs[first] = msgs[last];
+            msgs[last] = tmp;
+            first++;
+            last--;
+        }
+    }
+    return count;
+}
+
+static void
+agent_start_request(void)
+{
+    KraitAiMessage msgs[AGENT_MAX_MSGS + 2];
+    char *temps[AGENT_MAX_MSGS + 2];
+    int temp_count = 0;
+    int count = agent_build_context(msgs, AGENT_MAX_MSGS + 2, temps,
+                                    &temp_count);
+    int i;
+
+    agent_req = krait_ai_chat(msgs, count, 180);
+    for(i = 0; i < temp_count; i++)
+        free(temps[i]);
+    if(agent_req == NULL) {
+        agent_busy = 0;
+        agent_set_status("agent request failed to start");
+        agent_remember(AGENT_MSG_ERROR, "agent request failed to start");
+        return;
+    }
+    snprintf(agent_status, sizeof(agent_status), "thinking (round %d/%d)...",
+             agent_round + 1, AGENT_MAX_ROUNDS);
+}
+
+static void
+agent_finish(const char *text)
+{
+    agent_busy = 0;
+    agent_round = 0;
+    agent_set_status("");
+    if(text != NULL && text[0] != '\0')
+        agent_remember(AGENT_MSG_ASSISTANT, text);
+}
+
+void
+krait_agent_bind(const char *project_dir)
+{
+    char dir[KRAIT_PATH_MAX * 2];
+    int i;
+
+    if(project_dir == NULL)
+        project_dir = "";
+    if(strcmp(agent_project, project_dir) == 0)
+        return;
+    if(agent_req != NULL) {
+        krait_ai_free(agent_req);
+        agent_req = NULL;
+    }
+    for(i = 0; i < agent_msg_count; i++)
+        agent_msg_free(&agent_msgs[i]);
+    agent_msg_count = 0;
+    agent_busy = 0;
+    agent_round = 0;
+    agent_stop_requested = 0;
+    agent_set_status("");
+    snprintf(agent_project, sizeof(agent_project), "%s", project_dir);
+    agent_history_dir(dir, sizeof(dir));
+    snprintf(agent_history_path, sizeof(agent_history_path), "%s/history.jsonl",
+             dir);
+    krait_mkdir_p(dir);
+    if(getenv("KRAIT_AGENT_DEBUG") != NULL)
+        fprintf(stderr, "agent-bind: project='%s' history='%s'\n",
+                agent_project, agent_history_path);
+    agent_load_history();
+}
+
+int
+krait_agent_count(void)
+{
+    return agent_msg_count;
+}
+
+int
+krait_agent_kind(int index)
+{
+    if(index < 0 || index >= agent_msg_count)
+        return AGENT_MSG_ERROR;
+    return agent_msgs[index].kind;
+}
+
+const char *
+krait_agent_text(int index)
+{
+    if(index < 0 || index >= agent_msg_count)
+        return "";
+    return agent_msgs[index].text != NULL ? agent_msgs[index].text : "";
+}
+
+const char *
+krait_agent_status_text(void)
+{
+    return agent_status;
+}
+
+int
+krait_agent_busy(void)
+{
+    return agent_busy;
+}
+
+int
+krait_agent_files_changed(void)
+{
+    int changed = agent_files_changed;
+
+    agent_files_changed = 0;
+    return changed;
+}
+
+int
+krait_agent_send(const char *text)
+{
+    if(text == NULL || text[0] == '\0')
+        return 0;
+    if(agent_busy)
+        return 0;
+    if(!krait_ai_configured()) {
+        agent_remember(AGENT_MSG_ERROR, "AI off: set ZAI_API_KEY");
+        return 0;
+    }
+    agent_remember(AGENT_MSG_USER, text);
+    agent_busy = 1;
+    agent_round = 0;
+    agent_stop_requested = 0;
+    agent_start_request();
+    return 1;
+}
+
+void
+krait_agent_stop(void)
+{
+    if(agent_busy)
+        agent_stop_requested = 1;
+}
+
+void
+krait_agent_clear(void)
+{
+    char cmd[KRAIT_PATH_MAX * 8];
+    int i;
+
+    if(agent_req != NULL) {
+        krait_ai_free(agent_req);
+        agent_req = NULL;
+    }
+    for(i = 0; i < agent_msg_count; i++)
+        agent_msg_free(&agent_msgs[i]);
+    agent_msg_count = 0;
+    agent_busy = 0;
+    agent_round = 0;
+    agent_set_status("");
+    if(agent_history_path[0] != '\0') {
+        snprintf(cmd, sizeof(cmd), "rm -f '%s'", agent_history_path);
+        system(cmd);
+    }
+}
+
+int
+krait_agent_poll(void)
+{
+    KraitAiStatus s;
+    char *reply;
+
+    if(!agent_busy || agent_req == NULL)
+        return agent_busy;
+    s = krait_ai_poll(agent_req);
+    if(s == KRAIT_AI_RUNNING || s == KRAIT_AI_PENDING)
+        return 1;
+    if(s != KRAIT_AI_DONE) {
+        const char *err = krait_ai_error(agent_req);
+
+        krait_ai_free(agent_req);
+        agent_req = NULL;
+        agent_busy = 0;
+        agent_set_status("request failed");
+        agent_remember(AGENT_MSG_ERROR, err != NULL ? err : "request failed");
+        return 0;
+    }
+    reply = agent_strip_reply(strdup(krait_ai_text(agent_req) != NULL ?
+                                     krait_ai_text(agent_req) : ""));
+    krait_ai_free(agent_req);
+    agent_req = NULL;
+    if(agent_stop_requested) {
+        agent_busy = 0;
+        agent_set_status("stopped");
+        agent_remember(AGENT_MSG_ASSISTANT,
+                       reply[0] != '\0' ? reply : "(stopped)");
+        free(reply);
+        return 0;
+    }
+    if(agent_reply_is_actions(reply)) {
+        char *results;
+
+        agent_round++;
+        agent_remember(AGENT_MSG_ACTIONS, reply);
+        agent_set_status("running tools (round %d/%d)...", agent_round,
+                         AGENT_MAX_ROUNDS);
+        results = agent_run_tools(reply);
+        free(reply);
+        if(results == NULL) {
+            agent_busy = 0;
+            agent_set_status("tool failure");
+            return 0;
+        }
+        agent_remember(AGENT_MSG_TOOL, results);
+        free(results);
+        if(agent_round >= AGENT_MAX_ROUNDS) {
+            agent_busy = 0;
+            agent_set_status("stopped: too many tool rounds");
+            agent_remember(AGENT_MSG_ERROR, "stopped: too many tool rounds");
+            return 0;
+        }
+        agent_start_request();
+        return 1;
+    }
+    agent_finish(reply);
+    free(reply);
+    return 0;
+}
+
+void
+krait_agent_shutdown(void)
+{
+    int i;
+
+    if(agent_req != NULL) {
+        krait_ai_free(agent_req);
+        agent_req = NULL;
+    }
+    for(i = 0; i < agent_msg_count; i++)
+        agent_msg_free(&agent_msgs[i]);
+    agent_msg_count = 0;
+}
