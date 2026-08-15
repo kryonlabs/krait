@@ -16,9 +16,12 @@ mods :: #import "ide/modules"
 	widgets :: #import "ide/widgets"
 	meta :: #import "ide/project_meta"
 	krb :: #import "ide/cartridge"
+	kb :: #import "ide/kanban"
 
 	krait_load_ui_font :: () -> int #extern
 krait_scaffold_project :: (path: const char*, status: char*, status_size: int) -> int #extern
+krait_kanban_create :: (col: int, title: const char*) -> int #extern
+krait_kanban_new_project :: (col: int, index: int, path: const char*) -> int #extern
 krait_layout_load :: (st: state.IdeState*) -> int #extern
 krait_layout_save :: (st: state.IdeState*) -> int #extern
 krait_settings_defaults :: (st: state.IdeState*) #extern
@@ -695,6 +698,7 @@ pane_layout_default :: (st: state.IdeState*) {
     st->pane_groups[state.IDE_PANE_LEFT].active = 2
     pane_add(&st->pane_groups[state.IDE_PANE_CENTER], state.IDE_PANE_VIEW_EDITOR)
     pane_add(&st->pane_groups[state.IDE_PANE_CENTER], state.IDE_PANE_VIEW_PREVIEW)
+    pane_add(&st->pane_groups[state.IDE_PANE_CENTER], state.IDE_PANE_VIEW_KANBAN)
     st->pane_groups[state.IDE_PANE_CENTER].active = 1
     pane_add(&st->pane_groups[state.IDE_PANE_RIGHT], state.IDE_PANE_VIEW_INSPECTOR)
     pane_add(&st->pane_groups[state.IDE_PANE_BOTTOM], state.IDE_PANE_VIEW_CONSOLE)
@@ -765,6 +769,9 @@ pane_view_label :: (view: int) -> const char* {
     }
     if view == state.IDE_PANE_VIEW_CARTRIDGE {
         return "Cartridge"
+    }
+    if view == state.IDE_PANE_VIEW_KANBAN {
+        return "Kanban"
     }
     return "Search"
 }
@@ -1127,6 +1134,8 @@ draw_pane_view :: (bounds: Rectangle, st: state.IdeState*, view: int) {
         srch.draw_search(bounds, st)
     } else if view == state.IDE_PANE_VIEW_CARTRIDGE {
         krb.draw_cartridge(bounds, st)
+    } else if view == state.IDE_PANE_VIEW_KANBAN {
+        kb.draw_kanban(bounds, st)
     } else {
         DrawRectangleRec(bounds, GetThemeSurface())
         DrawUIText(st->output, (int)bounds.x + ScaleUIPx(10),
@@ -1167,6 +1176,23 @@ update_dialog :: (st: state.IdeState*) {
             }
         } else {
             state.project_set_status(st, "New project cancelled")
+        }
+        project_dialog.confirmed = 0
+        project_dialog.result_path[0] = 0
+        st->dialog_mode = state.IDE_DIALOG_NONE
+    } else if st->dialog_mode == state.IDE_DIALOG_KANBAN_PROJECT {
+        SetFileDialogCurrentDir(&project_dialog,
+                                st->project.loaded ? st->project.path : GetWorkingDirectory())
+        BeginSelectFileDialogFolder(&project_dialog, "New Kanban Project")
+        result := UpdateFileDialog(&project_dialog)
+        if result == 1 {
+            path := GetFileDialogPath(&project_dialog)
+            index := krait_kanban_create(0, "Project card")
+            if index >= 0 && krait_kanban_new_project(0, index, path) {
+                state.project_set_status(st, "Kanban project scaffolded")
+            } else {
+                state.project_set_status(st, "Scaffold failed")
+            }
         }
         project_dialog.confirmed = 0
         project_dialog.result_path[0] = 0

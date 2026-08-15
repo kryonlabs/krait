@@ -51,6 +51,9 @@ typedef struct {
     int value;
 } KraitLiveVar;
 
+/* ---- native_scaffold.c ---- */
+int krait_scaffold_project(const char *dir, char *status, int status_size);
+
 /* ---- native_util.c: shared string/filesystem helpers ---- */
 void krait_join(char *dst, size_t dst_size, const char *a, const char *b);
 const char *krait_basename(const char *path);

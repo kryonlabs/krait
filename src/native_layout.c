@@ -30,7 +30,7 @@ krait_layout_file(char *path, size_t path_size)
 static int
 krait_valid_pane_view(int view)
 {
-    return view >= IDE_PANE_VIEW_EXPLORER && view <= IDE_PANE_VIEW_ASSETS;
+    return view >= IDE_PANE_VIEW_EXPLORER && view <= IDE_PANE_VIEW_KANBAN;
 }
 
 static void
@@ -95,7 +95,7 @@ krait_layout_clear_node(PaneNode *node)
 static void
 krait_layout_remove_duplicates(IdeState *st)
 {
-    int seen[IDE_PANE_VIEW_ASSETS + 1] = {0};
+    int seen[IDE_PANE_VIEW_KANBAN + 1] = {0};
 
     if(st == NULL)
         return;
@@ -166,6 +166,7 @@ krait_layout_enforce_studio(IdeState *st)
     static const int center_views[] = {
         IDE_PANE_VIEW_PREVIEW,
         IDE_PANE_VIEW_EDITOR,
+        IDE_PANE_VIEW_KANBAN,
     };
     static const int right_views[] = {
         IDE_PANE_VIEW_INSPECTOR,
