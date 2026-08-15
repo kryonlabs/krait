@@ -532,6 +532,22 @@ agent_tool_compile(char *out, size_t out_size)
     }
 }
 
+static char agent_console_pending[AGENT_RUN_OUT_CAP + 512];
+
+/* Run-tool output queued for the Console pane; the UI drains it per
+ * frame and prints it into the live terminal. */
+const char *
+krait_agent_consume_console(void)
+{
+    return agent_console_pending;
+}
+
+void
+krait_agent_clear_console(void)
+{
+    agent_console_pending[0] = '\0';
+}
+
 static void
 agent_tool_run(const char *cmd, char *out, size_t out_size)
 {
@@ -554,6 +570,20 @@ agent_tool_run(const char *cmd, char *out, size_t out_size)
     }
     snprintf(out + used, out_size - used, "[run '%s'] exit %d\n%s\n", cmd,
              exit_status, buf);
+    {
+        size_t curlen = strlen(agent_console_pending);
+
+        if(curlen < sizeof(agent_console_pending) - 1) {
+            size_t room = sizeof(agent_console_pending) - curlen;
+
+            curlen += (size_t)snprintf(agent_console_pending + curlen, room,
+                                       "$ %s\n%s[exit %d]\n", cmd, buf,
+                                       exit_status);
+            if(curlen >= sizeof(agent_console_pending))
+                agent_console_pending[sizeof(agent_console_pending) - 1] =
+                    '\0';
+        }
+    }
 }
 
 /* Render the project's screen offscreen, encode the PNG, and hold it for

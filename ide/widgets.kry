@@ -3,6 +3,7 @@
 #import <string.h>
 #import <stdlib.h>
 state :: #import "ide/state"
+sfsb :: #import "ide/sfs_browser"
 ed :: #import "ide/editor"
 
 krait_scene_scan :: (root: const char*, rel_path: const char*) -> int #extern
@@ -501,11 +502,24 @@ scan_scene :: (st: state.IdeState*) {
 }
 
 draw_hierarchy :: (bounds: Rectangle, st: state.IdeState*) {
+    if sfsb.sfs_browser_open != 0 {
+        sfsb.draw_sfs_browser(bounds, st)
+        return
+    }
     scan_scene(st)
     DrawRectangleRec(bounds, GetThemeSurface())
     pad := ScaleUIPx(8)
     DrawUIText("Hierarchy", (int)bounds.x + pad, (int)bounds.y + pad,
                ScaleUIPx(15), GetThemeText())
+    tab_w := ScaleUIPx(52)
+    if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - tab_w,
+                           (int)bounds.y + ScaleUIPx(4), tab_w,
+                           ScaleUIPx(20), "SFS",
+                           UI_BUTTON_STYLE_TAB, 0, NULL) {
+        sfsb.sfs_browser_open = 1
+        sfsb.sfs_browser_reset()
+        return
+    }
     list := (Rectangle){bounds.x, bounds.y + (float)ScaleUIPx(32),
                         bounds.width, bounds.height - (float)ScaleUIPx(32)}
     if st->scene_node_count <= 0 {

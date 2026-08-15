@@ -5,7 +5,10 @@ state :: #import "ide/state"
 tree :: #import "ide/tree"
 ed :: #import "ide/editor"
 prob :: #import "ide/problems"
+con :: #import "ide/console"
 
+krait_agent_consume_console :: () -> const char* #extern
+krait_agent_clear_console :: () #extern
 krait_agent_streaming_text :: () -> const char* #extern
 krait_agent_compile_errors :: () -> const char* #extern
 krait_agent_bind :: (project_dir: const char*) #extern
@@ -175,6 +178,7 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
         }
     }
     agent_route_problems(st)
+    agent_mirror_console(st)
     if ed.mod_key_down() && IsKeyPressed(KEY_L) {
         if agent_input_focused == 0 {
             agent_reset(st)
@@ -239,6 +243,15 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     }
     if agent_input_focused != 0 && IsKeyPressed(KEY_ENTER) && busy == 0 {
         agent_send_input()
+    }
+}
+
+/* Run-tool output mirrors into the Console pane's live terminal. */
+agent_mirror_console :: (st: state.IdeState*) {
+    pending := krait_agent_consume_console()
+    if strlen(pending) > 0 {
+        con.console_feed(st, pending)
+        krait_agent_clear_console()
     }
 }
 

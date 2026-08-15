@@ -38,6 +38,17 @@ console_send :: (st: state.IdeState*, text: const char*) {
     KryTermWrite(&st->term, text, (int)strlen(text))
 }
 
+KryTermFeedOutput :: (t: KryTerm*, data: const void*, n: int) #extern
+
+# harness-printed text (agent command output) shown like process output
+console_feed :: (st: state.IdeState*, text: const char*) {
+    if text == NULL || text[0] == 0 {
+        return
+    }
+    console_ensure(st, 80, 24)
+    KryTermFeedOutput(&st->term, text, (int)strlen(text))
+}
+
 console_run_build :: (st: state.IdeState*) {
     console_send(st, "make\n")
 }

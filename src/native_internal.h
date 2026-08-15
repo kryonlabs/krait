@@ -167,6 +167,8 @@ void krait_agent_clear(void);
 int krait_agent_poll(void);
 void krait_agent_shutdown(void);
 char *krait_agent_run_tools(const char *json);
+const char *krait_agent_consume_console(void);
+void krait_agent_clear_console(void);
 int krait_agent_bridge_card(int col, int index);
 int krait_agent_written_count(void);
 const char *krait_agent_written_path(int index);

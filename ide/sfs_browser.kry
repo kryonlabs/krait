@@ -1,0 +1,226 @@
+#module "ide.sfs_browser"
+#import "kryon.h"
+#import "kry_sfs.h"
+#import <string.h>
+state :: #import "ide/state"
+
+KrySfsList :: (path: const char*, entries: KrySfsEntry*, cap: int) -> int #extern
+KrySfsRead :: (path: const char*, buf: char*, size: size_t) -> int #extern
+KrySfsWrite :: (path: const char*, value: const char*) -> int #extern
+
+sfs_browser_open :: int #global
+sfs_browser_cwd :: [256] char #global
+sfs_browser_scroll :: int #global
+sfs_browser_selected :: int #global
+sfs_browser_entries :: [128] KrySfsEntry #global
+sfs_browser_count :: int #global
+sfs_browser_value :: [512] char #global
+
+sfs_browser_reset :: () {
+    sfs_browser_cwd[0] = 0
+    sfs_browser_scroll = 0
+    sfs_browser_selected = -1
+    sfs_browser_value[0] = 0
+    sfs_browser_count = 0
+}
+
+sfs_join_path :: (base: const char*, name: const char*, out: char*, out_size: int) {
+    blen := strlen(base)
+    if blen == 0 {
+        snprintf(out, out_size, "/%s", name)
+    } else if base[blen - 1] == '/' {
+        snprintf(out, out_size, "%s%s", base, name)
+    } else {
+        snprintf(out, out_size, "%s/%s", base, name)
+    }
+}
+
+sfs_parent_path :: (path: const char*, out: char*, out_size: int) {
+    len := strlen(path)
+    if len <= 1 {
+        out[0] = 0
+        return
+    }
+    copy: [256] char
+    if len > 255 {
+        len = 255
+    }
+    memcpy(copy, path, len)
+    copy[len] = 0
+    i := len - 1
+    while i > 0 && copy[i] != '/' {
+        i = i - 1
+    }
+    copy[i] = 0
+    snprintf(out, out_size, "%s", copy)
+}
+
+sfs_refresh :: () {
+    sfs_browser_count = KrySfsList(sfs_browser_cwd, &sfs_browser_entries[0], 128)
+    if sfs_browser_count < 0 {
+        sfs_browser_count = 0
+    }
+    if sfs_browser_selected >= sfs_browser_count {
+        sfs_browser_selected = -1
+        sfs_browser_value[0] = 0
+    }
+}
+
+# files whose writes do something interactive; they get action buttons
+sfs_is_action_path :: (path: const char*) -> int {
+    n := strlen(path)
+    if n >= 4 && strcmp(path + n - 4, "/tap") == 0 {
+        return 1
+    }
+    if strncmp(path, "/input/mouse/button/", 21) == 0 {
+        return 1
+    }
+    if strncmp(path, "/input/keys/", 12) == 0 {
+        return 1
+    }
+    if strcmp(path, "/input/mouse/x") == 0 || strcmp(path, "/input/mouse/y") == 0 {
+        return 1
+    }
+    if strcmp(path, "/input/text") == 0 || strcmp(path, "/input/wheel") == 0 {
+        return 1
+    }
+    return 0
+}
+
+draw_sfs_browser :: (bounds: Rectangle, st: state.IdeState*) {
+    DrawRectangleRec(bounds, GetThemeSurface())
+    pad := ScaleUIPx(8)
+    if sfs_browser_cwd[0] == 0 {
+        sfs_browser_cwd[0] = '/'
+        sfs_browser_cwd[1] = 0
+    }
+    sfs_refresh()
+
+    tab_w := ScaleUIPx(64)
+    if DrawUIGenericButton((int)bounds.x + pad, (int)bounds.y + ScaleUIPx(4),
+                           tab_w, ScaleUIPx(20), "Scene",
+                           UI_BUTTON_STYLE_TAB, 0, NULL) {
+        sfs_browser_open = 0
+        return
+    }
+    DrawUIText(sfs_browser_cwd, (int)bounds.x + pad + tab_w + ScaleUIPx(8),
+               (int)bounds.y + ScaleUIPx(8), ScaleUIPx(12), GetThemeText())
+
+    list := (Rectangle){bounds.x, bounds.y + (float)ScaleUIPx(30),
+                        bounds.width, bounds.height - (float)ScaleUIPx(30)}
+    row_h := ScaleUIPx(22)
+    visible := (int)list.height / row_h
+    if visible < 1 {
+        visible = 1
+    }
+    max_scroll := sfs_browser_count * row_h - (int)list.height
+    if max_scroll < 0 {
+        max_scroll = 0
+    }
+    if CheckCollisionPointRec(GetMousePosition(), list) {
+        sfs_browser_scroll = sfs_browser_scroll +
+                             (int)(GetMouseWheelMove() * 3.0 * (float)row_h)
+    }
+    if sfs_browser_scroll > max_scroll {
+        sfs_browser_scroll = max_scroll
+    }
+    if sfs_browser_scroll < 0 {
+        sfs_browser_scroll = 0
+    }
+
+    up_w := ScaleUIPx(56)
+    if strlen(sfs_browser_cwd) > 1 {
+        if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - up_w,
+                               (int)bounds.y + ScaleUIPx(28), up_w,
+                               ScaleUIPx(20), "Up",
+                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            sfs_parent_path(sfs_browser_cwd, sfs_browser_cwd,
+                            sizeof(sfs_browser_cwd))
+            sfs_browser_selected = -1
+            sfs_browser_value[0] = 0
+            sfs_browser_scroll = 0
+            sfs_refresh()
+        }
+    }
+
+    y := (int)list.y - sfs_browser_scroll
+    i := 0
+    BeginScissorMode((int)list.x, (int)list.y, (int)list.width,
+                     (int)list.height)
+    while i < sfs_browser_count {
+        entry := &sfs_browser_entries[i]
+        row := (Rectangle){list.x + (float)ScaleUIPx(2), (float)y,
+                           list.width - (float)ScaleUIPx(4), (float)row_h}
+        if y + row_h < (int)list.y {
+            y = y + row_h
+            i = i + 1
+            continue
+        }
+        if y > (int)(list.y + list.height) {
+            break
+        }
+        path: [256] char
+        sfs_join_path(sfs_browser_cwd, entry->name, path, sizeof(path))
+        label: [128] char
+        snprintf(label, sizeof(label), "%s%s", entry->name,
+                 entry->is_dir != 0 ? "/" : "")
+        if i == sfs_browser_selected {
+            DrawRectangleRec(row, GetThemeButton())
+        }
+        DrawUIText(label, (int)row.x + ScaleUIPx(8),
+                   (int)row.y + ScaleUIPx(4), ScaleUIPx(12), GetThemeText())
+        if CheckCollisionPointRec(GetMousePosition(), row) &&
+           IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
+            sfs_browser_selected = i
+            if entry->is_dir != 0 {
+                snprintf(sfs_browser_cwd, sizeof(sfs_browser_cwd), "%s", path)
+                sfs_browser_scroll = 0
+                sfs_browser_selected = -1
+                sfs_browser_value[0] = 0
+                sfs_refresh()
+            } else {
+                sfs_browser_value[0] = 0
+                KrySfsRead(path, sfs_browser_value, sizeof(sfs_browser_value))
+            }
+        }
+        y = y + row_h
+        i = i + 1
+    }
+    EndScissorMode()
+
+    value_h := ScaleUIPx(52)
+    value := (Rectangle){bounds.x + (float)pad,
+                          bounds.y + bounds.height - value_h - (float)pad,
+                          bounds.width - (float)(pad * 2), (float)value_h}
+    DrawRectangleRec(value, GetThemeBackground())
+    DrawRectangleLinesEx(value, 1, GetThemeButton())
+    if sfs_browser_selected >= 0 && sfs_browser_selected < sfs_browser_count {
+        path: [256] char
+        sfs_join_path(sfs_browser_cwd,
+                      sfs_browser_entries[sfs_browser_selected].name, path,
+                      sizeof(path))
+        DrawUIText(path, (int)value.x + ScaleUIPx(8),
+                   (int)value.y + ScaleUIPx(4), ScaleUIPx(11), GetThemeLink())
+        BeginScissorMode((int)value.x, (int)value.y + ScaleUIPx(18),
+                         (int)value.width, (int)value.height - ScaleUIPx(18))
+        DrawUIText(sfs_browser_value, (int)value.x + ScaleUIPx(8),
+                   (int)value.y + ScaleUIPx(20), ScaleUIPx(11), GetThemeText())
+        EndScissorMode()
+        if sfs_is_action_path(path) != 0 {
+            if DrawUIGenericButton((int)value.x + (int)value.width -
+                                   ScaleUIPx(62),
+                                   (int)value.y + ScaleUIPx(2), ScaleUIPx(56),
+                                   ScaleUIPx(18), "Tap",
+                                   UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+                if KrySfsWrite(path, "tap") == 1 {
+                    sfs_browser_value[0] = 0
+                    KrySfsRead(path, sfs_browser_value,
+                               sizeof(sfs_browser_value))
+                }
+            }
+        }
+    } else {
+        DrawUIText("select an entry", (int)value.x + ScaleUIPx(8),
+                   (int)value.y + ScaleUIPx(4), ScaleUIPx(11), GetThemeIcon())
+    }
+}
