@@ -18,6 +18,8 @@
 #include "kry_json.h"
 #include "kry_sfs.h"
 
+#include "platform.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,6 +36,7 @@
 #define AGENT_MAX_MSGS 512
 #define AGENT_MAX_ROUNDS 12
 #define AGENT_CONTEXT_CHARS 24000
+#define AGENT_CONTEXT_KEEP_TOOLS 6
 #define AGENT_READ_CAP 16384
 #define AGENT_RUN_OUT_CAP 8192
 #define AGENT_TOOL_OUT_CAP 16384
@@ -50,6 +53,7 @@ static char agent_history_path[KRAIT_PATH_MAX * 2];
 static KraitAiRequest *agent_req;
 static int agent_round;
 static int agent_stop_requested;
+static int agent_http_retries;
 static int agent_busy;
 static char agent_status[160];
 static int agent_files_changed;
@@ -58,6 +62,67 @@ static int agent_files_changed;
  * as a multimodal turn so the model can see the running UI */
 static char *agent_pending_image;
 static int agent_image_count;
+
+/* tool batches run on a worker thread so compile/run no longer freeze
+ * the UI; screenshot batches stay on the GL thread (offscreen render). */
+typedef struct AgentToolJob {
+    char *json;
+    char *result;
+    volatile int done;
+} AgentToolJob;
+static AgentToolJob agent_job;
+static KryThread agent_tool_thread;
+static int agent_tool_thread_running;
+
+static void *
+agent_tool_worker(void *userdata)
+{
+    AgentToolJob *job = userdata;
+
+    job->result = krait_agent_run_tools(job->json);
+    job->done = 1;
+    return NULL;
+}
+
+/* 1 when the batch needs the GL thread (offscreen render) */
+static int
+agent_batch_needs_gl(const char *json)
+{
+    return json != NULL && strstr(json, "\"tool\":\"screenshot\"") != NULL;
+}
+
+/* Kick a tool batch: sync for GL-needing batches, threaded otherwise.
+ * Returns 1 when the result is already available in *result. */
+static int
+agent_start_tools(const char *json, char **result)
+{
+    if(agent_batch_needs_gl(json)) {
+        *result = krait_agent_run_tools(json);
+        return 1;
+    }
+    free(agent_job.json);
+    free(agent_job.result);
+    agent_job.json = strdup(json);
+    agent_job.result = NULL;
+    agent_job.done = 0;
+    if(!KryThreadStart(&agent_tool_thread, agent_tool_worker, &agent_job))
+        return 0;
+    agent_tool_thread_running = 1;
+    return 0;
+}
+
+/* 1 with *result set when the threaded batch finished */
+static int
+agent_poll_tools(char **result)
+{
+    if(!agent_tool_thread_running || !agent_job.done)
+        return 0;
+    KryThreadJoin(&agent_tool_thread);
+    agent_tool_thread_running = 0;
+    *result = agent_job.result;
+    agent_job.result = NULL;
+    return 1;
+}
 
 /* files the current (or most recent) agent batch wrote, so the UI can
  * reload open editors and Revert can restore the .bak copies */
@@ -303,6 +368,55 @@ agent_tool_read(const char *path, char *out, size_t out_size)
     free(text);
 }
 
+/* rough +/- line counts between the backup and the new content, shown
+ * with every write so the transcript reads like a changelog */
+static void
+agent_diff_counts(const char *orig, const char *next, int *added, int *removed)
+{
+    const char *p = orig != NULL ? orig : "";
+    const char *q = next != NULL ? next : "";
+    const char *pe;
+    const char *qe;
+
+    *added = 0;
+    *removed = 0;
+    for(;;) {
+        pe = strchr(p, '\n');
+        qe = strchr(q, '\n');
+        if(pe == NULL && qe == NULL) {
+            if(strcmp(p, q) != 0 && (*p != '\0' || *q != '\0')) {
+                (*added)++;
+                (*removed)++;
+            }
+            break;
+        }
+        if(pe == NULL) {
+            (*added)++;
+            q = qe + 1;
+            continue;
+        }
+        if(qe == NULL) {
+            (*removed)++;
+            p = pe + 1;
+            continue;
+        }
+        {
+            size_t plen = (size_t)(pe - p);
+            size_t qlen = (size_t)(qe - q);
+
+            if(plen != qlen || memcmp(p, q, plen) != 0) {
+                (*added)++;
+                (*removed)++;
+            }
+        }
+        p = pe + 1;
+        q = qe + 1;
+    }
+}
+
+static int agent_last_write_added;
+static int agent_last_write_removed;
+
 static int
 agent_tool_write(const char *path, const char *content)
 {
@@ -310,17 +424,26 @@ agent_tool_write(const char *path, const char *content)
     char bak[KRAIT_PATH_MAX * 2];
     char *orig = NULL;
     long len;
+    int had_orig;
 
     if(!agent_path_safe(path))
         return 0;
     snprintf(full, sizeof(full), "%s/%s", agent_project, path);
     snprintf(bak, sizeof(bak), "%s.bak", full);
     krait_ensure_parent_dir(full);
-    if(krait_read_file_alloc(full, &orig, &len))
+    had_orig = krait_read_file_alloc(full, &orig, &len);
+    if(had_orig)
         krait_write_text_file(bak, orig);
-    free(orig);
-    if(!krait_write_text_file(full, content != NULL ? content : ""))
+    if(!krait_write_text_file(full, content != NULL ? content : "")) {
+        free(orig);
         return 0;
+    }
+    agent_diff_counts(had_orig ? orig : NULL,
+                      content != NULL ? content : "",
+                      &agent_last_write_added, &agent_last_write_removed);
+    if(!had_orig)
+        agent_last_write_removed = 0;
+    free(orig);
     if(agent_written_count < AGENT_MAX_WRITTEN)
         snprintf(agent_written[agent_written_count++],
                  sizeof(agent_written[0]), "%s", path);
@@ -521,8 +644,9 @@ krait_agent_run_tools(const char *json)
                 size_t used = strlen(out);
 
                 snprintf(out + used, AGENT_TOOL_OUT_CAP - used,
-                         "[write %s] ok\n",
-                         path != NULL ? path : "");
+                         "[write %s] ok (+%d -%d lines)\n",
+                         path != NULL ? path : "", agent_last_write_added,
+                         agent_last_write_removed);
                 wrote = 1;
             } else {
                 size_t used = strlen(out);
@@ -654,6 +778,7 @@ agent_build_context(KraitAiMessage *msgs, int max, char *temps[], int *temp_coun
     size_t used = 0;
 
     const char *pending_image = agent_pending_image;
+    int tool_seen = 0;
 
     *temp_count = 0;
     msgs[count].role = "system";
@@ -665,6 +790,14 @@ agent_build_context(KraitAiMessage *msgs, int max, char *temps[], int *temp_coun
         const char *role = "user";
         char *content = NULL;
         const char *image = NULL;
+
+        /* compaction: bulky tool output older than the newest few
+         * rounds drops out of context; the conversation stays */
+        if(m->kind == AGENT_MSG_TOOL || m->kind == AGENT_MSG_ACTIONS) {
+            if(tool_seen >= AGENT_CONTEXT_KEEP_TOOLS)
+                continue;
+            tool_seen++;
+        }
 
         /* the newest user/tool turn carries the screenshot */
         if(pending_image != NULL &&
@@ -872,48 +1005,24 @@ krait_agent_clear(void)
     }
 }
 
+#define AGENT_MAX_HTTP_RETRIES 2
+
 int
 krait_agent_poll(void)
 {
     KraitAiStatus s;
     char *reply;
+    char *results;
 
-    if(!agent_busy || agent_req == NULL)
-        return agent_busy;
-    s = krait_ai_poll(agent_req);
-    if(s == KRAIT_AI_RUNNING || s == KRAIT_AI_PENDING)
+    if(!agent_busy)
         return 1;
-    if(s != KRAIT_AI_DONE) {
-        const char *err = krait_ai_error(agent_req);
 
-        krait_ai_free(agent_req);
-        agent_req = NULL;
-        agent_busy = 0;
-        agent_set_status("request failed");
-        agent_remember(AGENT_MSG_ERROR, err != NULL ? err : "request failed");
-        return 0;
-    }
-    reply = agent_strip_reply(strdup(krait_ai_text(agent_req) != NULL ?
-                                     krait_ai_text(agent_req) : ""));
-    krait_ai_free(agent_req);
-    agent_req = NULL;
-    if(agent_stop_requested) {
-        agent_busy = 0;
-        agent_set_status("stopped");
-        agent_remember(AGENT_MSG_ASSISTANT,
-                       reply[0] != '\0' ? reply : "(stopped)");
-        free(reply);
-        return 0;
-    }
-    if(agent_reply_is_actions(reply)) {
-        char *results;
-
-        agent_round++;
-        agent_remember(AGENT_MSG_ACTIONS, reply);
-        agent_set_status("running tools (round %d/%d)...", agent_round,
-                         AGENT_MAX_ROUNDS);
-        results = krait_agent_run_tools(reply);
-        free(reply);
+    /* a threaded tool batch is in flight */
+    if(agent_req == NULL) {
+        if(!agent_tool_thread_running)
+            return 1;   /* defensive: nothing to do */
+        if(!agent_poll_tools(&results))
+            return 1;
         if(results == NULL) {
             agent_busy = 0;
             agent_set_status("tool failure");
@@ -928,6 +1037,67 @@ krait_agent_poll(void)
             return 0;
         }
         agent_start_request();
+        return 1;
+    }
+
+    s = krait_ai_poll(agent_req);
+    if(s == KRAIT_AI_RUNNING || s == KRAIT_AI_PENDING)
+        return 1;
+    if(s != KRAIT_AI_DONE) {
+        const char *err = krait_ai_error(agent_req);
+
+        krait_ai_free(agent_req);
+        agent_req = NULL;
+        if(agent_http_retries < AGENT_MAX_HTTP_RETRIES) {
+            agent_http_retries++;
+            agent_set_status("network hiccup, retry %d/%d...",
+                             agent_http_retries, AGENT_MAX_HTTP_RETRIES);
+            agent_start_request();
+            return 1;
+        }
+        agent_busy = 0;
+        agent_set_status("request failed");
+        agent_remember(AGENT_MSG_ERROR, err != NULL ? err : "request failed");
+        return 0;
+    }
+    agent_http_retries = 0;
+    reply = agent_strip_reply(strdup(krait_ai_text(agent_req) != NULL ?
+                                     krait_ai_text(agent_req) : ""));
+    krait_ai_free(agent_req);
+    agent_req = NULL;
+    if(agent_stop_requested) {
+        agent_busy = 0;
+        agent_set_status("stopped");
+        agent_remember(AGENT_MSG_ASSISTANT,
+                       reply[0] != '\0' ? reply : "(stopped)");
+        free(reply);
+        return 0;
+    }
+    if(agent_reply_is_actions(reply)) {
+        agent_round++;
+        agent_remember(AGENT_MSG_ACTIONS, reply);
+        agent_set_status("running tools (round %d/%d)...", agent_round,
+                         AGENT_MAX_ROUNDS);
+        if(agent_start_tools(reply, &results)) {
+            /* synchronous batch (or spawn failure): result is ready */
+            free(reply);
+            if(results == NULL) {
+                agent_busy = 0;
+                agent_set_status("tool failure");
+                return 0;
+            }
+            agent_remember(AGENT_MSG_TOOL, results);
+            free(results);
+            if(agent_round >= AGENT_MAX_ROUNDS) {
+                agent_busy = 0;
+                agent_set_status("stopped: too many tool rounds");
+                agent_remember(AGENT_MSG_ERROR, "stopped: too many tool rounds");
+                return 0;
+            }
+            agent_start_request();
+            return 1;
+        }
+        free(reply);   /* threaded batch: poll picks up the result */
         return 1;
     }
     agent_finish(reply);

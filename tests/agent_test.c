@@ -127,7 +127,7 @@ test_tools(void)
     results = krait_agent_run_tools(
         "[{\"tool\":\"write\",\"path\":\"notes.txt\",\"content\":\"v2\"}]");
     CHECK(results != NULL);
-    CHECK(strstr(results, "[write notes.txt] ok") != NULL);
+    CHECK(strstr(results, "[write notes.txt] ok (+1 -1 lines)") != NULL);
     CHECK(strstr(results, "[compile]") != NULL);   /* auto gate after write */
     free(results);
     CHECK(krait_agent_written_count() == 2);
