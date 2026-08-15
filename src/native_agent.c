@@ -16,6 +16,7 @@
 #include "native_internal.h"
 
 #include "kry_json.h"
+#include "kry_sfs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,6 +54,13 @@ static int agent_busy;
 static char agent_status[160];
 static int agent_files_changed;
 
+/* files the current (or most recent) agent batch wrote, so the UI can
+ * reload open editors and Revert can restore the .bak copies */
+#define AGENT_MAX_WRITTEN 32
+static char agent_written[AGENT_MAX_WRITTEN][256];
+static int agent_written_count;
+static int agent_batch_start;
+
 static const char *const agent_system_prompt =
     "You are a coding agent working inside the Krait IDE on a Kryon "
     "project. Kry (.kry) is a Python-indented UI language lowered to C. "
@@ -67,13 +75,20 @@ static const char *const agent_system_prompt =
     "copy its idioms exactly; write complete file contents, never diffs. "
     "TOOLS: reply EITHER with plain text for the user OR with ONLY a "
     "JSON array of actions, executed in order: "
-    "[{\"tool\":\"list\"}, {\"tool\":\"read\",\"path\":\"main.kry\"}, "
+    "[{\"tool\":\"list\"}, {\"tool\":\"search\",\"query\":\"button\"}, "
+    "{\"tool\":\"read\",\"path\":\"main.kry\"}, "
     "{\"tool\":\"write\",\"path\":\"ui.kry\",\"content\":\"...\"}, "
-    "{\"tool\":\"compile\"}, {\"tool\":\"run\",\"cmd\":\"make\"}]. "
+    "{\"tool\":\"compile\"}, {\"tool\":\"run\",\"cmd\":\"make\"}, "
+    "{\"tool\":\"sfs_list\",\"path\":\"/widgets\"}, "
+    "{\"tool\":\"sfs_read\",\"path\":\"/widgets/0/bounds\"}, "
+    "{\"tool\":\"sfs_write\",\"path\":\"/widgets/0/tap\",\"value\":\"1\"}]. "
     "Writes are applied to the project immediately and a compile check "
     "runs after every write batch - fix any errors it reports before "
-    "finishing. Messages beginning with TOOL RESULTS contain tool "
-    "output. Finish with a short plain-text summary of what you changed.";
+    "finishing. The sfs_* tools address the RUNNING app through kryon's "
+    "synthetic file system: /widgets lists the live widget tree, and "
+    "writing /widgets/<i>/tap clicks that widget. Messages beginning "
+    "with TOOL RESULTS contain tool output. Finish with a short "
+    "plain-text summary of what you changed.";
 
 static void
 agent_set_status(const char *fmt, ...)
@@ -298,8 +313,62 @@ agent_tool_write(const char *path, const char *content)
     free(orig);
     if(!krait_write_text_file(full, content != NULL ? content : ""))
         return 0;
+    if(agent_written_count < AGENT_MAX_WRITTEN)
+        snprintf(agent_written[agent_written_count++],
+                 sizeof(agent_written[0]), "%s", path);
     agent_files_changed = 1;
     return 1;
+}
+
+/* The UI reloads open editors from disk when the agent reports written
+ * files; Revert restores the .bak backups of the latest batch. */
+int
+krait_agent_written_count(void)
+{
+    return agent_written_count;
+}
+
+const char *
+krait_agent_written_path(int index)
+{
+    if(index < 0 || index >= agent_written_count)
+        return "";
+    return agent_written[index];
+}
+
+int
+krait_agent_can_revert(void)
+{
+    return agent_written_count > agent_batch_start && !agent_busy;
+}
+
+int
+krait_agent_revert(void)
+{
+    int i;
+    int restored = 0;
+
+    if(!krait_agent_can_revert())
+        return 0;
+    for(i = agent_batch_start; i < agent_written_count; i++) {
+        char full[KRAIT_PATH_MAX * 2];
+        char bak[KRAIT_PATH_MAX * 2];
+        char *orig = NULL;
+        long len;
+
+        snprintf(full, sizeof(full), "%s/%s", agent_project,
+                 agent_written[i]);
+        snprintf(bak, sizeof(bak), "%s.bak", full);
+        if(krait_read_file_alloc(bak, &orig, &len) && orig != NULL) {
+            if(krait_write_text_file(full, orig))
+                restored++;
+            free(orig);
+        }
+    }
+    agent_written_count = agent_batch_start;
+    agent_files_changed = 1;
+    agent_set_status("reverted %d file(s)", restored);
+    return restored;
 }
 
 static void
@@ -341,10 +410,33 @@ agent_tool_run(const char *cmd, char *out, size_t out_size)
              exit_status, buf);
 }
 
+/* content search over the project through the same engine the studio
+ * search pane uses */
+static void
+agent_tool_search(const char *query, char *out, size_t out_size)
+{
+    SearchResult results[24];
+    size_t used = strlen(out);
+    int found;
+
+    if(query == NULL || query[0] == '\0') {
+        snprintf(out + used, out_size - used, "[search] refused: no query\n");
+        return;
+    }
+    found = krait_search_project(agent_project, query, results, 24);
+    used += (size_t)snprintf(out + used, out_size - used,
+                             "[search '%s'] %d match(es)\n", query, found);
+    for(int i = 0; i < found && i < 24; i++)
+        used += (size_t)snprintf(out + used, out_size - used, "  %s:%d: %s\n",
+                                 results[i].path, results[i].line,
+                                 results[i].excerpt);
+}
+
 /* Parse and execute a JSON array of tool actions. Returns the compact
- * TOOL RESULTS text (malloc'd). */
-static char *
-agent_run_tools(const char *json)
+ * TOOL RESULTS text (malloc'd). Public so tests drive the exact tool
+ * path the live loop uses. */
+char *
+krait_agent_run_tools(const char *json)
 {
     KryJson *root = kry_json_parse(json);
     char *out;
@@ -362,6 +454,7 @@ agent_run_tools(const char *json)
         snprintf(out, AGENT_TOOL_OUT_CAP, "TOOL RESULTS: bad action json\n");
         return out;
     }
+    agent_batch_start = agent_written_count;
     count = kry_json_count(root);
     for(i = 0; i < count; i++) {
         KryJson *action = kry_json_at(root, i);
@@ -371,6 +464,9 @@ agent_run_tools(const char *json)
             continue;
         if(strcmp(tool, "list") == 0)
             agent_tool_list(out, AGENT_TOOL_OUT_CAP);
+        else if(strcmp(tool, "search") == 0)
+            agent_tool_search(kry_json_string(kry_json_get(action, "query")),
+                              out, AGENT_TOOL_OUT_CAP);
         else if(strcmp(tool, "read") == 0)
             agent_tool_read(kry_json_string(kry_json_get(action, "path")),
                             out, AGENT_TOOL_OUT_CAP);
@@ -398,6 +494,55 @@ agent_run_tools(const char *json)
         else if(strcmp(tool, "run") == 0)
             agent_tool_run(kry_json_string(kry_json_get(action, "cmd")),
                            out, AGENT_TOOL_OUT_CAP);
+        else if(strcmp(tool, "sfs_list") == 0 ||
+                strcmp(tool, "sfs_read") == 0 ||
+                strcmp(tool, "sfs_write") == 0) {
+            const char *path = kry_json_string(kry_json_get(action, "path"));
+
+            if(strcmp(tool, "sfs_list") == 0) {
+                KrySfsEntry entries[32];
+                int n = path != NULL ? KrySfsList(path, entries, 32) : -1;
+                size_t used = strlen(out);
+
+                if(n < 0) {
+                    snprintf(out + used, AGENT_TOOL_OUT_CAP - used,
+                             "[sfs_list %s] failed\n",
+                             path != NULL ? path : "");
+                } else {
+                    snprintf(out + used, AGENT_TOOL_OUT_CAP - used,
+                             "[sfs_list %s] %d entries\n",
+                             path != NULL ? path : "", n);
+                    for(int e = 0; e < n; e++)
+                        snprintf(out + strlen(out),
+                                 AGENT_TOOL_OUT_CAP - strlen(out), "  %s%s\n",
+                                 entries[e].name,
+                                 entries[e].is_dir ? "/" : "");
+                }
+            } else if(strcmp(tool, "sfs_read") == 0) {
+                char buf[512];
+                int n = path != NULL ? KrySfsRead(path, buf, sizeof(buf))
+                                     : KRY_SFS_ENOENT;
+                size_t used = strlen(out);
+
+                if(n < 0)
+                    snprintf(out + used, AGENT_TOOL_OUT_CAP - used,
+                             "[sfs_read %s] not found\n",
+                             path != NULL ? path : "");
+                else
+                    snprintf(out + used, AGENT_TOOL_OUT_CAP - used,
+                             "[sfs_read %s] %s", path, buf);
+            } else {
+                const char *value = kry_json_string(kry_json_get(action,
+                                                                 "value"));
+                int rc = KrySfsWrite(path != NULL ? path : "",
+                                     value != NULL ? value : "");
+                size_t used = strlen(out);
+
+                snprintf(out + used, AGENT_TOOL_OUT_CAP - used,
+                         "[sfs_write %s] %s\n", path != NULL ? path : "",
+                         rc == 1 ? "ok" : "failed");
+            }
+        }
     }
     kry_json_free(root);
     if(wrote)
@@ -706,7 +851,7 @@ krait_agent_poll(void)
         agent_remember(AGENT_MSG_ACTIONS, reply);
         agent_set_status("running tools (round %d/%d)...", agent_round,
                          AGENT_MAX_ROUNDS);
-        results = agent_run_tools(reply);
+        results = krait_agent_run_tools(reply);
         free(reply);
         if(results == NULL) {
             agent_busy = 0;

@@ -269,21 +269,3 @@ krait_trim(char *s)
     return s;
 }
 
-
-/* mkdir -p for deep trees (~/.kryon/krait/agent/<dir> may not exist). */
-void
-krait_mkdir_p(const char *path)
-{
-    char tmp[KRAIT_PATH_MAX];
-    char *p;
-
-    snprintf(tmp, sizeof(tmp), "%s", path);
-    for(p = tmp + 1; *p != '\0'; p++) {
-        if(*p == '/') {
-            *p = '\0';
-            mkdir(tmp, 0755);
-            *p = '/';
-        }
-    }
-    mkdir(tmp, 0755);
-}

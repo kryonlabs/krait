@@ -115,7 +115,7 @@ int krait_path_exists(const char *path);
 int krait_path_has_suffix(const char *path, const char *suffix);
 int krait_ignored_dir(const char *name);
 void krait_ensure_parent_dir(const char *path);
-void krait_mkdir_p(const char *path);
+int krait_mkdir_p(const char *dir);
 int krait_read_file_alloc(const char *path, char **out, long *out_len);
 int krait_write_text_file(const char *path, const char *text);
 int krait_file_is_text(const char *path);
@@ -124,6 +124,10 @@ int krait_ident_start(int ch);
 int krait_ident_char(int ch);
 void krait_title_from_file(char *dst, size_t dst_size, const char *file);
 void krait_kryon_tool_path(char *out, size_t out_size, const char *tool);
+
+/* ---- native_project.c: in-project content search ---- */
+int krait_search_project(const char *root, const char *query,
+                         SearchResult *results, int cap);
 
 /* ---- native_compile.c: shared compile gate + bounded command runner ---- */
 int krait_compile_gate(const char *project_dir,
@@ -146,6 +150,11 @@ void krait_agent_stop(void);
 void krait_agent_clear(void);
 int krait_agent_poll(void);
 void krait_agent_shutdown(void);
+char *krait_agent_run_tools(const char *json);
+int krait_agent_written_count(void);
+const char *krait_agent_written_path(int index);
+int krait_agent_can_revert(void);
+int krait_agent_revert(void);
 
 /* ---- native_live_eval.c: pure parser/eval helpers (shared by scene + live) ---- */
 const char *krait_live_skip_space(const char *p);

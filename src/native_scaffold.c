@@ -14,7 +14,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-static int
+int
 krait_mkdir_p(const char *dir)
 {
     char tmp[KRAIT_PATH_MAX];

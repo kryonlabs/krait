@@ -86,6 +86,80 @@ test_run_capture(void)
     CHECK(krait_run_capture("/tmp", "", 5, out, sizeof(out)) == -1);
 }
 
+/* Tools execute through the same public entry the live loop uses. */
+static void
+test_tools(void)
+{
+    char *results;
+    char status[256];
+    char full[KRAIT_PATH_MAX * 2];
+
+    system("rm -rf /tmp/krait-agent-tools-proj");
+    CHECK(krait_scaffold_project("/tmp/krait-agent-tools-proj", status,
+                                 sizeof(status)) == 1);
+    krait_agent_bind("/tmp/krait-agent-tools-proj");
+
+    results = krait_agent_run_tools(
+        "[{\"tool\":\"search\",\"query\":\"screen\"}]");
+    CHECK(results != NULL);
+    CHECK(strstr(results, "[search 'screen']") != NULL);
+    CHECK(strstr(results, "main.kry") != NULL);
+    free(results);
+
+    results = krait_agent_run_tools(
+        "[{\"tool\":\"sfs_read\",\"path\":\"/info\"}]");
+    CHECK(results != NULL);
+    CHECK(strstr(results, "kryon") != NULL);
+    free(results);
+
+    results = krait_agent_run_tools(
+        "[{\"tool\":\"sfs_list\",\"path\":\"/\"}]");
+    CHECK(results != NULL);
+    CHECK(strstr(results, "widgets/") != NULL);
+    free(results);
+
+    /* write + backup + revert round-trip: first write creates the file,
+     * the second backs it up, revert restores the first content */
+    results = krait_agent_run_tools(
+        "[{\"tool\":\"write\",\"path\":\"notes.txt\",\"content\":\"v1\"}]");
+    CHECK(results != NULL);
+    free(results);
+    results = krait_agent_run_tools(
+        "[{\"tool\":\"write\",\"path\":\"notes.txt\",\"content\":\"v2\"}]");
+    CHECK(results != NULL);
+    CHECK(strstr(results, "[write notes.txt] ok") != NULL);
+    CHECK(strstr(results, "[compile]") != NULL);   /* auto gate after write */
+    free(results);
+    CHECK(krait_agent_written_count() == 2);
+    CHECK(strcmp(krait_agent_written_path(1), "notes.txt") == 0);
+    snprintf(full, sizeof(full), "%s/notes.txt",
+             "/tmp/krait-agent-tools-proj");
+    {
+        char *text = NULL;
+        long len;
+
+        CHECK(krait_read_file_alloc(full, &text, &len));
+        CHECK(text != NULL && strcmp(text, "v2") == 0);
+        free(text);
+    }
+    CHECK(krait_agent_can_revert());
+    CHECK(krait_agent_revert() == 1);
+    {
+        char *text = NULL;
+        long len;
+
+        CHECK(krait_read_file_alloc(full, &text, &len));
+        CHECK(text != NULL && strcmp(text, "v1") == 0);   /* restored */
+        free(text);
+    }
+    CHECK(!krait_agent_can_revert());
+
+    results = krait_agent_run_tools("[{\"tool\":\"nope\"}]");
+    CHECK(results != NULL);
+    free(results);
+    system("rm -rf /tmp/krait-agent-tools-proj");
+}
+
 /* Live: user message -> GLM -> tool actions (read/write) -> compile
  * feedback -> final text, with the file really on disk. */
 static void
@@ -134,6 +208,7 @@ main(void)
     test_history_roundtrip();
     test_compile_gate();
     test_run_capture();
+    test_tools();
     test_live_agent_gated();
     krait_agent_shutdown();
 

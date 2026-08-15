@@ -3,6 +3,7 @@
 #import <string.h>
 state :: #import "ide/state"
 tree :: #import "ide/tree"
+ed :: #import "ide/editor"
 
 krait_agent_bind :: (project_dir: const char*) #extern
 krait_agent_count :: () -> int #extern
@@ -11,6 +12,10 @@ krait_agent_text :: (index: int) -> const char* #extern
 krait_agent_status_text :: () -> const char* #extern
 krait_agent_busy :: () -> int #extern
 krait_agent_files_changed :: () -> int #extern
+krait_agent_written_count :: () -> int #extern
+krait_agent_written_path :: (index: int) -> const char* #extern
+krait_agent_can_revert :: () -> int #extern
+krait_agent_revert :: () -> int #extern
 krait_agent_send :: (text: const char*) -> int #extern
 krait_agent_stop :: () #extern
 krait_agent_clear :: () #extern
@@ -38,6 +43,16 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     krait_agent_poll()
     if krait_agent_files_changed() != 0 {
         tree.refresh_tree(st)
+        i := 0
+        while i < krait_agent_written_count() {
+            ed.editor_reload_if_open(st, krait_agent_written_path(i))
+            i = i + 1
+        }
+    }
+    if ed.mod_key_down() && IsKeyPressed(KEY_L) {
+        if agent_input_focused == 0 {
+            agent_reset(st)
+        }
     }
     DrawRectangleRec(bounds, GetThemeBackground())
     pad := ScaleUIPx(10)
@@ -76,6 +91,15 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
                                input_y, send_w, row_h, "Send",
                                UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
             agent_send_input()
+        }
+    }
+    if krait_agent_can_revert() != 0 {
+        rev_w := ScaleUIPx(70)
+        if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad -
+                               stop_w - ScaleUIPx(6) - rev_w,
+                               input_y, rev_w, row_h, "Revert",
+                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            krait_agent_revert()
         }
     }
     if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - stop_w,
