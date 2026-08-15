@@ -80,6 +80,9 @@ frame :: () {
     BeginDrawing()
     ClearBackground(GetThemeBackground())
     BeginUIFrame(w, h, GetUIScale())
+    if kb.kanban_detail_open != 0 && kb.kanban_valid_selection() != 0 {
+        BeginUIModalLayer()
+    }
     draw_chrome(w, h)
     content := (Rectangle){0, (float)top_bar_height(),
                            (float)w, (float)(h - top_bar_height() - status_bar_height())}
@@ -90,6 +93,9 @@ frame :: () {
     } else {
         sync_preview_pane(&istate)
         draw_project_view(content, &istate)
+        if kb.kanban_detail_open != 0 && kb.kanban_valid_selection() != 0 {
+            kb.draw_card_modal(content, &istate)
+        }
     }
     if istate.project.loaded {
         prev.preview_maybe_reload(&istate)

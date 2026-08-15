@@ -69,31 +69,35 @@ draw_kanban :: (bounds: Rectangle, st: state.IdeState*) {
         krait_kanban_ai_poll(kanban_sel_col, kanban_sel_card)
     }
     pad := ScaleUIPx(8)
-    if kanban_detail_open != 0 && kanban_valid_selection() {
-        draw_card_detail(bounds, st, pad)
-        return
+    modal := 0
+    if kanban_detail_open != 0 {
+        if kanban_valid_selection() {
+            modal = 1
+        } else {
+            kanban_reset_selection()
+        }
     }
-    draw_board(bounds, st, pad)
+    draw_board(bounds, st, pad, modal)
 }
 
-draw_board :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
+draw_board :: (bounds: Rectangle, st: state.IdeState*, pad: int, modal: int) {
     row_h := ScaleUIPx(30)
     if DrawUIGenericButton((int)bounds.x + pad, (int)bounds.y + ScaleUIPx(6),
                            ScaleUIPx(80), row_h, "+ Card",
-                           UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+                           UI_BUTTON_STYLE_PRIMARY, modal, NULL) {
         krait_kanban_create(0, "New card")
         krait_kanban_rescan()
     }
     if DrawUIGenericButton((int)bounds.x + pad + ScaleUIPx(88),
                            (int)bounds.y + ScaleUIPx(6),
                            ScaleUIPx(110), row_h, "+ Project",
-                           UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+                           UI_BUTTON_STYLE_PRIMARY, modal, NULL) {
         st->dialog_mode = state.IDE_DIALOG_KANBAN_PROJECT
     }
     if DrawUIGenericButton((int)bounds.x + pad + ScaleUIPx(206),
                            (int)bounds.y + ScaleUIPx(6),
                            ScaleUIPx(80), row_h, "Rescan",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                           UI_BUTTON_STYLE_SECONDARY, modal, NULL) {
         krait_kanban_rescan()
     }
     if krait_kanban_ai_configured() == 0 {
@@ -110,12 +114,12 @@ draw_board :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
         x := bounds.x + (float)pad + (col_w + (float)gap) * (float)col
         col_bounds := (Rectangle){x, (float)top, col_w,
                                   bounds.height - (float)(top - (int)bounds.y)}
-        draw_column(col_bounds, col)
+        draw_column(col_bounds, col, 1 - modal)
         col = col + 1
     }
 }
 
-draw_column :: (bounds: Rectangle, col: int) {
+draw_column :: (bounds: Rectangle, col: int, interactive: int) {
     DrawRectangleRec(bounds, GetThemeBackground())
     DrawRectangleLinesEx(bounds, 1, GetThemeButton())
     header: [64] char
@@ -152,7 +156,8 @@ draw_column :: (bounds: Rectangle, col: int) {
                        GetThemeLink())
         }
         EndScissorMode()
-        if CheckCollisionPointRec(GetMousePosition(), row) &&
+        if interactive != 0 &&
+           CheckCollisionPointRec(GetMousePosition(), row) &&
            IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
             kanban_sel_col = col
             kanban_sel_card = i
@@ -165,12 +170,42 @@ draw_column :: (bounds: Rectangle, col: int) {
     }
 }
 
+draw_card_modal :: (bounds: Rectangle, st: state.IdeState*) {
+    w := (int)bounds.width - ScaleUIPx(160)
+    if w > ScaleUIPx(760) {
+        w = ScaleUIPx(760)
+    }
+    if w < ScaleUIPx(360) {
+        w = ScaleUIPx(360)
+    }
+    h := (int)bounds.height - ScaleUIPx(120)
+    if h > ScaleUIPx(640) {
+        h = ScaleUIPx(640)
+    }
+    if h < ScaleUIPx(420) {
+        h = ScaleUIPx(420)
+    }
+    frame := DrawUIModalFrame(w, h, kanban_detail_title,
+                              (Texture2D){0}, (Texture2D){0})
+    if IsKeyPressed(KEY_ESCAPE) ||
+       (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+        !CheckCollisionPointRec(GetMousePosition(),
+                                (Rectangle){(float)frame.x, (float)frame.y,
+                                            (float)frame.w, (float)frame.h})) {
+        kanban_reset_selection()
+        return
+    }
+    panel := (Rectangle){(float)frame.content_x, (float)frame.content_y,
+                         (float)frame.content_w, (float)frame.content_h}
+    draw_card_detail(panel, st, ScaleUIPx(8))
+}
+
 draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
     col := kanban_sel_col
     index := kanban_sel_card
     row_h := ScaleUIPx(30)
     if DrawUIGenericButton((int)bounds.x + pad, (int)bounds.y + ScaleUIPx(6),
-                           ScaleUIPx(60), row_h, "< Back",
+                           ScaleUIPx(60), row_h, "Close",
                            UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
         kanban_reset_selection()
         return
