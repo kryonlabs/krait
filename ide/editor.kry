@@ -314,7 +314,13 @@ editor_open_mode :: (st: state.IdeState*, name: const char*, preview: int) {
             st->open_files[existing].preview = 0
         }
         state.project_set_status(st, st->open_files[existing].path)
+        if preview != 0 {
+            st->focus_preview_pane = 1
+        }
         return
+    }
+    if preview != 0 {
+        st->focus_preview_pane = 1
     }
     if preview != 0 {
         preview_idx := find_preview_file(st)
@@ -672,11 +678,12 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
         artifact_generate(st, f, f->artifact_tab)
         before_artifact_len := strlen(f->artifact_source)
         if f->artifact_tab == state.IDE_ARTIFACT_KRB {
-            DrawUIReadonlyTextBox((ReadonlyTextBoxProps){
-                body, f->artifact_source, ScaleUIPx(14), artifact_style,
-                ScaleUIPx(6)
-            })
+            hx.draw_hex_artifact(body, st, f)
             f->artifact_focused = 0
+            if mod_key_down() && IsKeyPressed(KEY_S) {
+                hx.hex_save(st)
+                editor_save_artifact(st, f)
+            }
         } else {
             changed := DrawUITextArea((TextAreaProps){
                 body, f->artifact_source, sizeof(f->artifact_source),
@@ -694,7 +701,8 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
         if f->artifact_focused != 0 {
             st->console_focused = 0
         }
-        if mod_key_down() && IsKeyPressed(KEY_S) {
+        if mod_key_down() && IsKeyPressed(KEY_S) &&
+           f->artifact_tab != state.IDE_ARTIFACT_KRB {
             editor_save_artifact(st, f)
         }
         return

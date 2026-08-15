@@ -104,6 +104,12 @@ frame :: () {
         }
     } else {
         sync_preview_pane(&istate)
+        if istate.focus_preview_pane != 0 {
+            istate.focus_preview_pane = 0
+            if pane_view_exists(&istate, state.IDE_PANE_VIEW_PREVIEW) {
+                pane_focus_view(&istate, state.IDE_PANE_VIEW_PREVIEW)
+            }
+        }
         draw_project_view(content, &istate)
         if kb.kanban_detail_open != 0 && kb.kanban_valid_selection() != 0 {
             kb.draw_card_modal(content, &istate)

@@ -22,12 +22,12 @@ is_krb_file :: (name: const char*) -> int {
     return len >= 4 && strcmp(name + len - 4, ".krb") == 0
 }
 
-hex_ensure_open :: (st: state.IdeState*, f: state.OpenFile*) {
+hex_ensure_open :: (st: state.IdeState*, file_path: const char*) {
     path := krait_hex_path()
-    if strlen(path) > 0 && strcmp(path, f->path) == 0 {
+    if strlen(path) > 0 && strcmp(path, file_path) == 0 {
         return
     }
-    if krait_hex_open(f->path) != 0 {
+    if krait_hex_open(file_path) != 0 {
         hex_cursor = 0
         hex_nibble = 0
         hex_scroll = 0
@@ -161,7 +161,18 @@ hex_nibble_char :: (byte: int, nibble: int) -> char {
 }
 
 draw_hex_editor :: (bounds: Rectangle, st: state.IdeState*, f: state.OpenFile*) {
-    hex_ensure_open(st, f)
+    draw_hex_view(bounds, st, f->name, f->path)
+}
+
+# the .krb artifact tab: same grid, but on the generated cartridge and
+# Ctrl+S also lands the bytes in the project via the artifact save flow
+draw_hex_artifact :: (bounds: Rectangle, st: state.IdeState*, f: state.OpenFile*) {
+    draw_hex_view(bounds, st, f->name, f->artifact_path)
+}
+
+draw_hex_view :: (bounds: Rectangle, st: state.IdeState*, display: const char*,
+                  file_path: const char*) {
+    hex_ensure_open(st, file_path)
     size0 := krait_hex_size()
     if size0 == 0 {
         DrawUIText("hex: file empty or not loaded", (int)bounds.x + ScaleUIPx(16),
@@ -176,7 +187,7 @@ draw_hex_editor :: (bounds: Rectangle, st: state.IdeState*, f: state.OpenFile*) 
     size := krait_hex_size()
 
     head: [256] char
-    snprintf(head, sizeof(head), "%s  %d bytes", f->name, size)
+    snprintf(head, sizeof(head), "%s  %d bytes", display, size)
     DrawUIText(head, (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(6),
                font, GetThemeText())
     if krait_hex_dirty() != 0 {

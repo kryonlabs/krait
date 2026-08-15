@@ -214,6 +214,7 @@ IdeState :: struct {
     bottom_height: int
     resizing_pane: int
     layout_dirty: int
+    focus_preview_pane: int
     mobile_active_view: int
     mobile_sheet: int
     force_mobile_layout: int
