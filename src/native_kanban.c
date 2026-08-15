@@ -573,7 +573,7 @@ static int
 kb_ai_start(KbCard *c, const char *retry_error)
 {
     char prompt[24576];
-    KraitAiMessage msgs[2];
+    KraitAiMessage msgs[2] = {0};
 
     kb_build_prompt(c, prompt, sizeof(prompt));
     if(retry_error != NULL && retry_error[0] != '\0') {

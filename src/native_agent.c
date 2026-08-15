@@ -875,8 +875,8 @@ agent_build_context(KraitAiMessage *msgs, int max, char *temps[], int *temp_coun
 static void
 agent_start_request(void)
 {
-    KraitAiMessage msgs[AGENT_MAX_MSGS + 2];
-    char *temps[AGENT_MAX_MSGS + 2];
+    KraitAiMessage msgs[AGENT_MAX_MSGS + 2] = {0};
+    char *temps[AGENT_MAX_MSGS + 2] = {0};
     int temp_count = 0;
     int count = agent_build_context(msgs, AGENT_MAX_MSGS + 2, temps,
                                     &temp_count);
