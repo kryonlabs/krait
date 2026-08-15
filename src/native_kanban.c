@@ -13,7 +13,6 @@
 #include "native_internal.h"
 
 #include "kry_json.h"
-#include "kry_zai.h"
 #include "kry_process.h"
 
 #include <dirent.h>
@@ -41,7 +40,7 @@ typedef struct {
     int proposal_count;
     char proposal_paths[KB_MAX_PROPOSAL_FILES][256];
     char *proposal_bodies[KB_MAX_PROPOSAL_FILES];
-    KryZaiRequest *ai;   /* in-flight request, or NULL */
+    KraitAiRequest *ai;   /* in-flight request, or NULL */
 } KbCard;
 
 typedef struct {
@@ -91,7 +90,7 @@ kb_card_free(KbCard *c)
         free(c->proposal_bodies[i]);
     c->proposal_count = 0;
     if(c->ai != NULL) {
-        kry_zai_free(c->ai);
+        krait_ai_free(c->ai);
         c->ai = NULL;
     }
 }
@@ -489,7 +488,7 @@ krait_kanban_new_project(int col, int index, const char *dir_path)
 int
 krait_kanban_ai_configured(void)
 {
-    return kry_zai_configured();
+    return krait_ai_configured();
 }
 
 /* Build the user prompt: the card task plus enough project context for the
@@ -563,9 +562,9 @@ krait_kanban_ai_run(int col, int index)
 {
     KbCard *c = kb_card_at(col, index);
     char prompt[16384];
-    KryZaiMessage msgs[2];
+    KraitAiMessage msgs[2];
 
-    if(c == NULL || !kry_zai_configured())
+    if(c == NULL || !krait_ai_configured())
         return 0;
     if(c->ai != NULL)
         return 1;   /* already running */
@@ -574,7 +573,7 @@ krait_kanban_ai_run(int col, int index)
     msgs[0].content = kb_system_prompt;
     msgs[1].role = "user";
     msgs[1].content = prompt;
-    c->ai = kry_zai_chat(msgs, 2, 180);
+    c->ai = krait_ai_chat(msgs, 2, 180);
     if(c->ai == NULL) {
         snprintf(c->status, sizeof(c->status), "AI start failed");
         return 0;
@@ -822,18 +821,18 @@ int
 krait_kanban_ai_poll(int col, int index)
 {
     KbCard *c = kb_card_at(col, index);
-    KryZaiStatus s;
+    KraitAiStatus s;
     const char *text;
 
     if(c == NULL)
         return 0;
     if(c->ai == NULL)
         return kb_ai_state(c);
-    s = kry_zai_poll(c->ai);
-    if(s == KRY_ZAI_RUNNING || s == KRY_ZAI_PENDING)
+    s = krait_ai_poll(c->ai);
+    if(s == KRAIT_AI_RUNNING || s == KRAIT_AI_PENDING)
         return 1;
-    text = kry_zai_text(c->ai);
-    if(s == KRY_ZAI_DONE && text != NULL) {
+    text = krait_ai_text(c->ai);
+    if(s == KRAIT_AI_DONE && text != NULL) {
         /* models sometimes wrap JSON in fences; strip one pair */
         char *json = text;
         size_t n;
@@ -894,12 +893,12 @@ krait_kanban_ai_poll(int col, int index)
             }
         }
     } else {
-        const char *err = kry_zai_error(c->ai);
+        const char *err = krait_ai_error(c->ai);
 
         snprintf(c->status, sizeof(c->status), "%s",
                  err != NULL ? err : "AI request failed");
     }
-    kry_zai_free(c->ai);
+    krait_ai_free(c->ai);
     c->ai = NULL;
     return kb_ai_state(c);
 }
@@ -1001,7 +1000,7 @@ krait_kanban_shutdown(void)
     for(col = 0; col < 4; col++)
         for(i = 0; i < kb_board[col].count; i++)
             if(kb_board[col].cards[i].ai != NULL) {
-                kry_zai_free(kb_board[col].cards[i].ai);
+                krait_ai_free(kb_board[col].cards[i].ai);
                 kb_board[col].cards[i].ai = NULL;
             }
     kb_free_all();

@@ -51,6 +51,32 @@ typedef struct {
     int value;
 } KraitLiveVar;
 
+/* ---- native_ai.c: z.ai GLM chat client (krait is the harness; kryon
+ * supplies only the provider-neutral kry_http + kry_json transport) ---- */
+typedef struct KraitAiRequest KraitAiRequest;
+
+typedef enum {
+    KRAIT_AI_PENDING,
+    KRAIT_AI_RUNNING,
+    KRAIT_AI_DONE,
+    KRAIT_AI_FAILED,
+} KraitAiStatus;
+
+typedef struct {
+    const char *role;     /* "system" | "user" | "assistant" */
+    const char *content;
+} KraitAiMessage;
+
+void krait_ai_set_key(const char *api_key);
+int krait_ai_configured(void);
+KraitAiRequest *krait_ai_chat(const KraitAiMessage *messages, int count,
+                              int timeout_s);
+KraitAiStatus krait_ai_poll(KraitAiRequest *request);
+const char *krait_ai_text(KraitAiRequest *request);
+const char *krait_ai_error(KraitAiRequest *request);
+const char *krait_ai_request_body(KraitAiRequest *request);
+void krait_ai_free(KraitAiRequest *request);
+
 /* ---- native_scaffold.c ---- */
 int krait_scaffold_project(const char *dir, char *status, int status_size);
 
