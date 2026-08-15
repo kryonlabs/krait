@@ -77,6 +77,33 @@ const char *krait_ai_error(KraitAiRequest *request);
 const char *krait_ai_request_body(KraitAiRequest *request);
 void krait_ai_free(KraitAiRequest *request);
 
+/* ---- native_kanban.c: agentic board (files under ~/.kryon/krait/kanban) ---- */
+int krait_kanban_rescan(void);
+int krait_kanban_count(int col);
+const char *krait_kanban_column_name(int col);
+const char *krait_kanban_card_id(int col, int index);
+const char *krait_kanban_card_title(int col, int index);
+const char *krait_kanban_card_project(int col, int index);
+const char *krait_kanban_card_body(int col, int index);
+const char *krait_kanban_card_path(int col, int index);
+const char *krait_kanban_card_status(int col, int index);
+int krait_kanban_create(int col, const char *title);
+int krait_kanban_set_title(int col, int index, const char *title);
+int krait_kanban_set_body(int col, int index, const char *body);
+int krait_kanban_set_project(int col, int index, const char *project);
+int krait_kanban_move(int col, int index, int to_col);
+int krait_kanban_delete(int col, int index);
+int krait_kanban_new_project(int col, int index, const char *path);
+int krait_kanban_ai_configured(void);
+int krait_kanban_ai_run(int col, int index);
+int krait_kanban_ai_poll(int col, int index);
+int krait_kanban_proposal_count(int col, int index);
+const char *krait_kanban_proposal_path(int col, int index, int file_index);
+const char *krait_kanban_proposal_content(int col, int index, int file_index);
+int krait_kanban_apply(int col, int index);
+int krait_kanban_reject(int col, int index);
+void krait_kanban_shutdown(void);
+
 /* ---- native_scaffold.c ---- */
 int krait_scaffold_project(const char *dir, char *status, int status_size);
 

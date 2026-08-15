@@ -84,7 +84,7 @@ else
 KRYON_PLATFORM_LDLIBS ?=
 endif
 
-.PHONY: all krait run dev test smoke clean install uninstall kryon-deps boundary-check docs-site android-debug android-install android-clean
+.PHONY: all krait run dev test smoke kanban-test clean install uninstall kryon-deps boundary-check docs-site android-debug android-install android-clean
 
 all: krait
 
@@ -168,7 +168,23 @@ android-install: android-debug
 android-clean:
 	rm -rf build/android-arm64
 
-test: krait boundary-check
+KANBAN_TEST = $(BUILD_DIR)/tests/kanban_test
+
+test: krait boundary-check kanban-test
+
+kanban-test: $(KANBAN_TEST)
+	$(KANBAN_TEST)
+
+$(KANBAN_TEST): tests/kanban_test.c $(BUILD_DIR)/src/native_kanban.o $(BUILD_DIR)/src/native_ai.o $(BUILD_DIR)/src/native_util.o $(BUILD_DIR)/src/native_scaffold.o $(KRYON_LIB) $(RAYLIB_A) $(KRYON_CURL_A) | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc -I$(KRAIT_GEN) -I$(KRYON_DIR)/include -o $@ tests/kanban_test.c \
+		$(BUILD_DIR)/src/native_kanban.o $(BUILD_DIR)/src/native_ai.o \
+		$(BUILD_DIR)/src/native_util.o $(BUILD_DIR)/src/native_scaffold.o \
+		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
+		$(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) \
+		$(KRYON_CURL_LDLIBS) $(KRYON_MARKDOWN_LDLIBS) $(RAY_LDLIBS) \
+		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) \
+			-lbrotlidec -lbrotlicommon -lzstd -lz -lpthread -lm
 
 smoke: test
 	@kryon_dir=$$(cd "$(KRYON_DIR)" && pwd); \
