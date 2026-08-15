@@ -202,6 +202,35 @@ krait_ai_poll(KraitAiRequest *r)
     }
 }
 
+/* last response's usage line, e.g. "in 1234 / out 567 tokens" */
+static char g_krait_ai_usage[96];
+
+const char *
+krait_ai_last_usage(void)
+{
+    return g_krait_ai_usage;
+}
+
+static void
+krait_ai_extract_usage(const char *response)
+{
+    KryJson *root = kry_json_parse(response);
+    KryJson *usage;
+    double in;
+    double out;
+
+    g_krait_ai_usage[0] = '\0';
+    if(root == NULL)
+        return;
+    usage = kry_json_get(root, "usage");
+    in = kry_json_number(kry_json_get(usage, "prompt_tokens"));
+    out = kry_json_number(kry_json_get(usage, "completion_tokens"));
+    if(in > 0 || out > 0)
+        snprintf(g_krait_ai_usage, sizeof(g_krait_ai_usage),
+                 "%.0f in / %.0f out tokens", in, out);
+    kry_json_free(root);
+}
+
 static int
 krait_ai_extract_text(const char *response, char **out)
 {
@@ -235,6 +264,7 @@ krait_ai_text(KraitAiRequest *r)
         return NULL;
     if(r->text != NULL)
         return r->text;
+    krait_ai_extract_usage(kry_http_response(r->http));
     if(krait_ai_extract_text(kry_http_response(r->http), &text)) {
         r->text = text;
         return r->text;

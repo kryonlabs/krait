@@ -71,6 +71,7 @@ typedef struct {
 void krait_ai_set_key(const char *api_key);
 char *krait_ai_base64_file(const char *path);
 char *krait_ai_build_body(const KraitAiMessage *messages, int count);
+const char *krait_ai_last_usage(void);
 int krait_ai_configured(void);
 KraitAiRequest *krait_ai_chat(const KraitAiMessage *messages, int count,
                               int timeout_s);
@@ -154,6 +155,7 @@ void krait_agent_clear(void);
 int krait_agent_poll(void);
 void krait_agent_shutdown(void);
 char *krait_agent_run_tools(const char *json);
+int krait_agent_bridge_card(int col, int index);
 int krait_agent_written_count(void);
 const char *krait_agent_written_path(int index);
 int krait_agent_can_revert(void);

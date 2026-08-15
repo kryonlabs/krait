@@ -154,6 +154,18 @@ test_tools(void)
     }
     CHECK(!krait_agent_can_revert());
 
+    /* the agent files a kanban card in Backlog */
+    results = krait_agent_run_tools(
+        "[{\"tool\":\"card\",\"title\":\"From agent\","
+        "\"body\":\"check the go button\"}]");
+    CHECK(results != NULL);
+    CHECK(strstr(results, "[card 'From agent'] created in Backlog") != NULL);
+    free(results);
+    CHECK(krait_kanban_count(0) > 0);
+    CHECK(strcmp(krait_kanban_card_title(0, krait_kanban_count(0) - 1),
+                 "From agent") == 0);
+    krait_kanban_delete(0, krait_kanban_count(0) - 1);
+
     results = krait_agent_run_tools("[{\"tool\":\"nope\"}]");
     CHECK(results != NULL);
     free(results);

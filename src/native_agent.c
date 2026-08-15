@@ -150,13 +150,15 @@ static const char *const agent_system_prompt =
     "{\"tool\":\"write\",\"path\":\"ui.kry\",\"content\":\"...\"}, "
     "{\"tool\":\"compile\"}, {\"tool\":\"run\",\"cmd\":\"make\"}, "
     "{\"tool\":\"screenshot\",\"path\":\"main.kry\"}, "
+    "{\"tool\":\"card\",\"title\":\"Follow up\",\"body\":\"notes\"}, "
     "{\"tool\":\"sfs_list\",\"path\":\"/widgets\"}, "
     "{\"tool\":\"sfs_read\",\"path\":\"/widgets/0/bounds\"}, "
     "{\"tool\":\"sfs_write\",\"path\":\"/widgets/0/tap\",\"value\":\"1\"}]. "
     "Writes are applied to the project immediately and a compile check "
     "runs after every write batch - fix any errors it reports before "
     "finishing. screenshot renders a .kry screen offscreen and shows the "
-    "image to you on the next turn - use it to check layout work. "
+    "image to you on the next turn - use it to check layout work. card "
+    "files a kanban card in Backlog for follow-up work. "
     "The sfs_* tools address the RUNNING app through kryon's "
     "synthetic file system: /widgets lists the live widget tree, and "
     "writing /widgets/<i>/tap clicks that widget. Messages beginning "
@@ -575,6 +577,27 @@ agent_tool_screenshot(const char *path, char *out, size_t out_size)
              "before answering\n", rel, strlen(agent_pending_image));
 }
 
+/* create a kanban card from the agent: the two agentic surfaces connect */
+static void
+agent_tool_card(const char *title, const char *body, char *out, size_t out_size)
+{
+    size_t used = strlen(out);
+    int index;
+
+    if(title == NULL || title[0] == '\0') {
+        snprintf(out + used, out_size - used, "[card] refused: no title\n");
+        return;
+    }
+    index = krait_kanban_create(0, title);
+    if(index < 0) {
+        snprintf(out + used, out_size - used, "[card] failed\n");
+        return;
+    }
+    krait_kanban_set_body(0, index, body != NULL ? body : "");
+    snprintf(out + strlen(out), out_size - strlen(out),
+             "[card '%s'] created in Backlog\n", title);
+}
+
 /* content search over the project through the same engine the studio
  * search pane uses */
 static void
@@ -655,7 +678,11 @@ krait_agent_run_tools(const char *json)
                          "[write] refused: %s\n",
                          path != NULL ? path : "");
             }
-        } else if(strcmp(tool, "screenshot") == 0)
+        } else if(strcmp(tool, "card") == 0)
+            agent_tool_card(kry_json_string(kry_json_get(action, "title")),
+                            kry_json_string(kry_json_get(action, "body")),
+                            out, AGENT_TOOL_OUT_CAP);
+        else if(strcmp(tool, "screenshot") == 0)
             agent_tool_screenshot(kry_json_string(kry_json_get(action,
                                                                "path")),
                                   out, AGENT_TOOL_OUT_CAP);
@@ -873,9 +900,11 @@ agent_start_request(void)
 static void
 agent_finish(const char *text)
 {
+    const char *usage = krait_ai_last_usage();
+
     agent_busy = 0;
     agent_round = 0;
-    agent_set_status("");
+    agent_set_status("%s", usage[0] != '\0' ? usage : "");
     if(text != NULL && text[0] != '\0')
         agent_remember(AGENT_MSG_ASSISTANT, text);
 }
@@ -955,6 +984,30 @@ krait_agent_files_changed(void)
 
     agent_files_changed = 0;
     return changed;
+}
+
+/* Kanban bridge: hand a card to the agent as a user prompt. The card
+ * body plus its project context becomes the next conversation turn. */
+int
+krait_agent_bridge_card(int col, int index)
+{
+    char prompt[8192];
+    const char *title;
+    const char *body;
+    const char *project;
+
+    if(!krait_ai_configured() || agent_busy)
+        return 0;
+    title = krait_kanban_card_title(col, index);
+    body = krait_kanban_card_body(col, index);
+    project = krait_kanban_card_project(col, index);
+    if(title == NULL || title[0] == '\0')
+        return 0;
+    snprintf(prompt, sizeof(prompt), "Kanban card: %s\n\n%s",
+             title, body != NULL ? body : "");
+    if(project != NULL && project[0] != '\0')
+        krait_agent_bind(project);
+    return krait_agent_send(prompt);
 }
 
 int

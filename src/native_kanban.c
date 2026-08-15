@@ -811,6 +811,19 @@ krait_kanban_proposal_content(int col, int index, int file_index)
                ? c->proposal_bodies[file_index] : "";
 }
 
+/* Agent bridge hooks: exposed here so kanban UI code stays in kanban. */
+int
+krait_kanban_agent_ready(void)
+{
+    return krait_ai_configured() && !krait_agent_busy();
+}
+
+int
+krait_kanban_agent_bridge(int col, int index)
+{
+    return krait_agent_bridge_card(col, index);
+}
+
 int
 krait_kanban_apply(int col, int index)
 {

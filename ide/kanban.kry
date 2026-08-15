@@ -27,6 +27,8 @@ krait_kanban_proposal_count :: (col: int, index: int) -> int #extern
 krait_kanban_proposal_path :: (col: int, index: int, file_index: int) -> const char* #extern
 krait_kanban_proposal_content :: (col: int, index: int, file_index: int) -> const char* #extern
 krait_kanban_apply :: (col: int, index: int) -> int #extern
+krait_kanban_agent_ready :: () -> int #extern
+krait_kanban_agent_bridge :: (col: int, index: int) -> int #extern
 krait_kanban_reject :: (col: int, index: int) -> int #extern
 
 kanban_sel_col :: int #global
@@ -340,6 +342,15 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
                                row_h, "Open",
                                UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
             kanban_open_selected(st)
+        }
+    }
+    if krait_kanban_agent_ready() != 0 {
+        if DrawUIGenericButton((int)bounds.x + pad + ScaleUIPx(78), btn_y,
+                               ScaleUIPx(110), row_h, "Run in Agent",
+                               UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+            krait_kanban_agent_bridge(kanban_sel_col, kanban_sel_card)
+            kanban_reset_selection()
+            st->view = state.IDE_VIEW_AGENT
         }
     }
     if krait_kanban_ai_configured() != 0 {
