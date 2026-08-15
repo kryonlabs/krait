@@ -18,6 +18,7 @@ mods :: #import "ide/modules"
 	krb :: #import "ide/cartridge"
 	kb :: #import "ide/kanban"
 	ag :: #import "ide/agent"
+	txt :: #import "ide/text_view"
 
 	krait_load_ui_font :: () -> int #extern
 krait_scaffold_project :: (path: const char*, status: char*, status_size: int) -> int #extern
@@ -92,6 +93,8 @@ frame :: () {
                            (float)w, (float)(h - top_bar_height() - status_bar_height())}
     if istate.view == state.IDE_VIEW_START {
         start.draw_start_page(content, &istate)
+    } else if istate.view == state.IDE_VIEW_TEXT {
+        txt.draw_text_view(content, &istate)
     } else if istate.view == state.IDE_VIEW_SETTINGS {
         sett.draw_settings(content, &istate)
     } else if istate.view == state.IDE_VIEW_AGENT {
@@ -232,6 +235,17 @@ draw_top_actions :: (view_w: int, top_h: int) {
     if istate.project.loaded {
         gap := ScaleUIPx(6)
         view_w := ScaleUIPx(64)
+        x = x - gap - view_w
+        if DrawUIGenericButton(x, y, view_w, btn_h,
+                               istate.view == state.IDE_VIEW_TEXT ?
+                                   "Studio" : "Text",
+                               istate.view == state.IDE_VIEW_TEXT ?
+                                   UI_BUTTON_STYLE_TAB_SELECTED :
+                                   UI_BUTTON_STYLE_TAB,
+                               0, NULL) {
+            istate.view = istate.view == state.IDE_VIEW_TEXT ?
+                          state.IDE_VIEW_PROJECT : state.IDE_VIEW_TEXT
+        }
         x = x - gap - view_w
         if DrawUIGenericButton(x, y, view_w, btn_h,
                                istate.view == state.IDE_VIEW_AGENT ?

@@ -37,6 +37,7 @@
     IDE_VIEW_PROJECT,
     IDE_VIEW_SETTINGS,
     IDE_VIEW_AGENT,
+    IDE_VIEW_TEXT,
 }
 
 #enum {

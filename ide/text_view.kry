@@ -1,0 +1,84 @@
+#module "ide.text_view"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+ed :: #import "ide/editor"
+mods :: #import "ide/modules"
+
+# Notepad mode: the active file as one plain full-window text area - no
+# panes, no tabs, no toolbars. Esc returns to the studio; Ctrl+S saves
+# through the normal editor path so dirty state and reloads stay honest.
+
+draw_text_view :: (bounds: Rectangle, st: state.IdeState*) {
+    text_view_ensure_file(st)
+    DrawRectangleRec(bounds, GetThemeBackground())
+    f := state.active_file(st)
+    if f == NULL {
+        DrawUIText("Open a file from the studio tree first", 
+                   (int)bounds.x + ScaleUIPx(16),
+                   (int)bounds.y + ScaleUIPx(16), ScaleUIPx(14),
+                   GetThemeIcon())
+        return
+    }
+
+    footer_h := ScaleUIPx(24)
+    body := (Rectangle){bounds.x, bounds.y, bounds.width,
+                        bounds.height - (float)footer_h}
+    style := (UITextInputStyle){
+        GetThemeBackground(), GetThemeBackground(), GetThemeLink(),
+        GetThemeText(), GetThemeText(), 0, ScaleUIPx(16), ScaleUIPx(10)
+    }
+    before_len := strlen(f->source)
+    changed := DrawUITextArea((TextAreaProps){
+        body, f->source, sizeof(f->source),
+        &f->cursor, &f->focused, &f->scroll,
+        sizeof(f->source) - 1, ScaleUIPx(14), ScaleUIPx(6), 7701,
+        "Type", UI_SYNTAX_NONE, style, (UITextInputFilter){0}, NULL
+    })
+    if changed != 0 || strlen(f->source) != before_len {
+        if f->dirty == 0 {
+            f->dirty = 1
+        }
+        f->revision = f->revision + 1
+    }
+    if f->focused != 0 {
+        st->console_focused = 0
+    }
+
+    mod := IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL) ||
+           IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER)
+    if mod && IsKeyPressed(KEY_S) {
+        ed.editor_save_active(st)
+    }
+    if IsKeyPressed(KEY_ESCAPE) && f->focused == 0 {
+        st->view = state.IDE_VIEW_PROJECT
+        return
+    }
+    if IsKeyPressed(KEY_ESCAPE) && f->focused != 0 {
+        f->focused = 0
+    }
+
+    DrawRectangle((int)bounds.x, (int)(bounds.y + bounds.height) - footer_h,
+                  (int)bounds.width, footer_h, GetThemeSurface())
+    foot: [300] char
+    snprintf(foot, sizeof(foot), "%s%s  -  Esc: studio  Ctrl+S: save",
+             f->name, f->dirty != 0 ? " *" : "")
+    DrawUIText(foot, (int)bounds.x + ScaleUIPx(10),
+               (int)(bounds.y + bounds.height) - footer_h + ScaleUIPx(5),
+               ScaleUIPx(11), GetThemeIcon())
+}
+
+# entering text mode with nothing open: fall back to the project's
+# preferred startup file so the view is never empty
+text_view_ensure_file :: (st: state.IdeState*) {
+    if st->project.loaded == 0 {
+        return
+    }
+    if state.active_file(st) != NULL {
+        return
+    }
+    startup: [1024] char
+    if mods.preferred_startup_file(st, startup, sizeof(startup)) {
+        ed.editor_open(st, startup)
+    }
+}
