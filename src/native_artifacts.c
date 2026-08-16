@@ -235,7 +235,9 @@ krait_artifact_generate(const char *root, const char *rel_source, int kind,
     else if(kind == KRAIT_ARTIFACT_C)
         snprintf(artifact_path, (size_t)artifact_path_size, "%s/%s.c", temp, stem);
     else
-        snprintf(artifact_path, (size_t)artifact_path_size, "%s/%s.krb", temp, base);
+        /* k2b mirrors the source tree under -o, like k2c/k2ir: nested
+         * sources land at <temp>/<rel-stem>.krb, not beside the root */
+        snprintf(artifact_path, (size_t)artifact_path_size, "%s/%s.krb", temp, stem);
 
     if(kind == KRAIT_ARTIFACT_KRB) {
         if(!read_hex(artifact_path, out, out_size))

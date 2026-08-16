@@ -80,9 +80,39 @@ krait_kryon_tool_path(char *out, size_t out_size, const char *tool)
     const char *plat = "linux";
     const char *arch = "x86_64";
     struct utsname u;
+    char exe[KRAIT_PATH_MAX];
+    char root[KRAIT_PATH_MAX];
+    static char candidate[KRAIT_PATH_MAX];   /* must outlive the block:
+                                                dir aliases it until the
+                                                final snprintf below */
+    ssize_t n;
 
     if(dir == NULL || dir[0] == '\0')
         dir = "vendor/kryon";
+    /* cwd-relative tool lookup breaks when krait launches from anywhere
+     * but its own checkout; derive the kryon dir from the binary instead:
+     * <krait>/build/<plat>-<arch>/bin/krait -> <krait>/vendor/kryon */
+    n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if(n <= 0)
+        n = readlink("/proc/curproc/file", exe, sizeof(exe) - 1);
+    if(n > 0) {
+        char *p;
+        int up;
+
+        exe[n] = '\0';
+        snprintf(root, sizeof(root), "%s", exe);
+        for(up = 0; up < 4; up++) {
+            p = strrchr(root, '/');
+            if(p == NULL)
+                break;
+            *p = '\0';
+        }
+        if(p != NULL) {
+            snprintf(candidate, sizeof(candidate), "%s/vendor/kryon", root);
+            if(krait_path_exists(candidate))
+                dir = candidate;
+        }
+    }
     if(uname(&u) == 0) {
         if(strcmp(u.sysname, "FreeBSD") == 0)
             plat = "freebsd";
