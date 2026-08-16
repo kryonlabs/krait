@@ -149,6 +149,11 @@ frame :: () {
         start.draw_start_page(content, &istate)
     } else if istate.view == state.IDE_VIEW_TEXT {
         txt.draw_text_view(content, &istate)
+    } else if istate.view == state.IDE_VIEW_KANBAN {
+        kb.draw_kanban(content, &istate)
+        if kb.kanban_detail_open != 0 && kb.kanban_valid_selection() != 0 {
+            kb.draw_card_modal(content, &istate)
+        }
     } else if istate.view == state.IDE_VIEW_SETTINGS {
         sett.draw_settings(content, &istate)
     } else if istate.view == state.IDE_VIEW_AGENT {
@@ -290,20 +295,24 @@ draw_top_actions :: (view_w: int, top_h: int) {
         gap := ScaleUIPx(6)
         view_w := ScaleUIPx(96)
         x = x - gap - view_w
-        view_options: [3] const char* = {"Studio", "Agent", "Text"}
+        view_options: [4] const char* = {"Studio", "Agent", "Text", "Kanban"}
         view_selected := 0
         if istate.view == state.IDE_VIEW_AGENT {
             view_selected = 1
         } else if istate.view == state.IDE_VIEW_TEXT {
             view_selected = 2
+        } else if istate.view == state.IDE_VIEW_KANBAN {
+            view_selected = 3
         }
         picked := view_selected
-        DrawUIDropdown(7800, x, y, view_w, btn_h, view_options, 3, &picked)
+        DrawUIDropdown(7800, x, y, view_w, btn_h, view_options, 4, &picked)
         if picked != view_selected {
             if picked == 1 {
                 istate.view = state.IDE_VIEW_AGENT
             } else if picked == 2 {
                 istate.view = state.IDE_VIEW_TEXT
+            } else if picked == 3 {
+                istate.view = state.IDE_VIEW_KANBAN
             } else {
                 istate.view = state.IDE_VIEW_PROJECT
             }
@@ -801,7 +810,6 @@ pane_layout_default :: (st: state.IdeState*) {
     st->pane_groups[state.IDE_PANE_LEFT].active = 2
     pane_add(&st->pane_groups[state.IDE_PANE_CENTER], state.IDE_PANE_VIEW_EDITOR)
     pane_add(&st->pane_groups[state.IDE_PANE_CENTER], state.IDE_PANE_VIEW_PREVIEW)
-    pane_add(&st->pane_groups[state.IDE_PANE_CENTER], state.IDE_PANE_VIEW_KANBAN)
     st->pane_groups[state.IDE_PANE_CENTER].active = 1
     pane_add(&st->pane_groups[state.IDE_PANE_RIGHT], state.IDE_PANE_VIEW_INSPECTOR)
     pane_add(&st->pane_groups[state.IDE_PANE_BOTTOM], state.IDE_PANE_VIEW_CONSOLE)
@@ -872,9 +880,6 @@ pane_view_label :: (view: int) -> const char* {
     }
     if view == state.IDE_PANE_VIEW_CARTRIDGE {
         return "Cartridge"
-    }
-    if view == state.IDE_PANE_VIEW_KANBAN {
-        return "Kanban"
     }
     return "Search"
 }
@@ -1251,8 +1256,6 @@ draw_pane_view :: (bounds: Rectangle, st: state.IdeState*, view: int) {
         srch.draw_search(bounds, st)
     } else if view == state.IDE_PANE_VIEW_CARTRIDGE {
         krb.draw_cartridge(bounds, st)
-    } else if view == state.IDE_PANE_VIEW_KANBAN {
-        kb.draw_kanban(bounds, st)
     } else {
         DrawRectangleRec(bounds, GetThemeSurface())
         DrawUIText(st->output, (int)bounds.x + ScaleUIPx(10),
