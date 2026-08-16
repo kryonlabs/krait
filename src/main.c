@@ -221,6 +221,8 @@ run_artifact_smoke(const char *kind_str, const char *project, const char *rel)
     }
     fprintf(stderr, "krait artifact smoke OK (%s): %zu bytes <- %s\n",
             kind_str, strlen(out), artifact_path);
+    if(status[0] != '\0' && strstr(status, "Generated (krb") != NULL)
+        fprintf(stderr, "krait artifact smoke status: %s\n", status);
     return 0;
 }
 

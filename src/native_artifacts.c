@@ -216,11 +216,16 @@ krait_artifact_generate(const char *root, const char *rel_source, int kind,
             snprintf(status, (size_t)status_size, "Artifact path too long");
         return 0;
     }
-    snprintf(cmd, sizeof(cmd), "rm -rf %s && mkdir -p %s && %s --no-main --root %s -o %s %s",
-             qtemp, qtemp, qtool, qroot, qtemp, qinput);
     if(kind == KRAIT_ARTIFACT_KIR)
         snprintf(cmd, sizeof(cmd), "rm -rf %s && mkdir -p %s && %s --root %s -o %s %s",
                  qtemp, qtemp, qtool, qroot, qtemp, qinput);
+    else
+        /* k2b reports which call kinds it cannot express; keep it so the
+         * artifact tab can explain a thin cartridge */
+        snprintf(cmd, sizeof(cmd),
+                 "rm -rf %s && mkdir -p %s && %s --no-main --root %s -o %s %s"
+                 " 2> %s/k2b.err",
+                 qtemp, qtemp, qtool, qroot, qtemp, qinput, qtemp);
     rc = system(cmd);
     if(rc != 0) {
         if(status != NULL && status_size > 0)
@@ -245,8 +250,31 @@ krait_artifact_generate(const char *root, const char *rel_source, int kind,
     } else if(!read_text(artifact_path, out, out_size)) {
         return 0;
     }
-    if(status != NULL && status_size > 0)
+    if(status != NULL && status_size > 0) {
+        char errpath[KRAIT_PATH_MAX * 2];
+        char *errtext = NULL;
+        long errlen;
+
+        snprintf(errpath, sizeof(errpath), "%s/k2b.err", temp);
+        if(kind == KRAIT_ARTIFACT_KRB &&
+           krait_read_file_alloc(errpath, &errtext, &errlen) &&
+           errtext != NULL) {
+            char *nl = strchr(errtext, '\n');
+
+            if(nl != NULL)
+                *nl = '\0';
+            if(strstr(errtext, "not in KRB") != NULL) {
+                char *colon = strstr(errtext, ":");
+                snprintf(status, (size_t)status_size, "Generated (krb drops:%s",
+                         colon != NULL ? colon : "");
+                strncat(status, ")", (size_t)status_size - strlen(status) - 1);
+                free(errtext);
+                return 1;
+            }
+        }
+        free(errtext);
         snprintf(status, (size_t)status_size, "Generated");
+    }
     return 1;
 }
 
