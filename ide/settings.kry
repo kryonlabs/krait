@@ -49,7 +49,7 @@ apply_settings_theme :: (st: state.IdeState*) {
         st->theme_id = THEME_MONO
     }
     if st->theme_style < THEME_STYLE_SYSTEM || st->theme_style > THEME_STYLE_MATERIAL {
-        st->theme_style = THEME_STYLE_SYSTEM
+        st->theme_style = THEME_STYLE_RETRO
     }
     SetThemeSource((ThemeSource)st->theme_source)
     SetThemeMode((ThemeMode)st->theme_mode)

@@ -39,7 +39,7 @@ krait_settings_sanitize(IdeState *st)
     if(st->theme_id < 0 || st->theme_id >= THEME_COUNT)
         st->theme_id = THEME_MONO;
     if(st->theme_style < THEME_STYLE_SYSTEM || st->theme_style > THEME_STYLE_MATERIAL)
-        st->theme_style = THEME_STYLE_SYSTEM;
+        st->theme_style = THEME_STYLE_RETRO;
     if(st->settings_tab < 0 || st->settings_tab > 4)
         st->settings_tab = 0;
     if(st->settings_scroll < 0)
@@ -79,7 +79,7 @@ krait_settings_defaults(IdeState *st)
     st->theme_source = THEME_SOURCE_APP;
     st->theme_mode = THEME_MODE_DARK;
     st->theme_id = THEME_MONO;
-    st->theme_style = THEME_STYLE_SYSTEM;
+    st->theme_style = THEME_STYLE_RETRO;
     st->settings_tab = 0;
     st->settings_scroll = 0;
     st->force_mobile_layout = 0;

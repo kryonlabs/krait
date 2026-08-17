@@ -6,6 +6,7 @@
 #include "native_internal.h"
 #include "ui_icons.h"
 #include "ui_inspect.h"
+#include "theme_style.h"
 
 #if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
 #include <SDL2/SDL.h>
@@ -380,6 +381,11 @@ main(int argc, char **argv)
     SetKeyPlatformCallbacks(krait_update_logical_keys,
                               krait_logical_key_pressed,
                               krait_logical_key_down);
+    /* Krait is a dense desktop IDE: pin the crisp bevelled style instead of
+     * riding the global default (MATERIAL since the theme-default change)
+     * -- pill-shaped controls and inflated field chrome do not fit a
+     * text-heavy tool. */
+    SetThemeStyle(THEME_STYLE_RETRO);
     SetCurrentTheme(THEME_MONO, 0);
     ide_app_init();
     open_startup_project(project_arg);
