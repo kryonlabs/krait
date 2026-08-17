@@ -1,0 +1,226 @@
+#module "ide.inspect"
+#import "kryon.h"
+
+krait_inspect_tick :: () #extern
+krait_inspect_connected :: () -> int #extern
+krait_inspect_port :: () -> int #extern
+krait_inspect_set_port :: (port: int) #extern
+krait_inspect_node_count :: () -> int #extern
+krait_inspect_node_id :: (index: int) -> int #extern
+krait_inspect_node_parent :: (index: int) -> int #extern
+krait_inspect_node_name :: (index: int) -> const char* #extern
+krait_inspect_node_kind :: (index: int) -> const char* #extern
+krait_inspect_node_x :: (index: int) -> float #extern
+krait_inspect_node_y :: (index: int) -> float #extern
+krait_inspect_selected :: () -> int #extern
+krait_inspect_select :: (node_id: int) #extern
+krait_inspect_prop_count :: () -> int #extern
+krait_inspect_prop_label :: (index: int) -> const char* #extern
+krait_inspect_prop_value :: (index: int) -> const char* #extern
+
+#private
+
+node_depth :: (index: int) -> int {
+    depth := 0
+    i := index
+
+    while depth < 32 {
+        parent := krait_inspect_node_parent(i)
+        if parent < 0 {
+            return depth
+        }
+        j := 0
+        while j < krait_inspect_node_count() {
+            if krait_inspect_node_id(j) == parent {
+                break
+            }
+            j += 1
+        }
+        if j >= krait_inspect_node_count() {
+            return depth
+        }
+        i = j
+        depth += 1
+    }
+    return depth
+}
+
+draw_inspect_header :: (bounds: Rectangle) {
+    status: const char*
+    status_color: Color
+
+    if krait_inspect_connected() != 0 {
+        status = "live"
+        status_color = (Color){ 96, 200, 120, 255 }
+    } else {
+        status = "offline"
+        status_color = (Color){ 220, 120, 100, 255 }
+    }
+    DrawUIText("Scene Inspector", (int)bounds.x + ScaleUIPx(12),
+               (int)bounds.y + ScaleUIPx(10), ScaleUIPx(14), GetThemeText())
+    DrawUIText(status, (int)(bounds.x + bounds.width) - ScaleUIPx(58),
+               (int)bounds.y + ScaleUIPx(10), ScaleUIPx(14), status_color)
+    port_text: [32] char
+    snprintf(&port_text[0], 32, "127.0.0.1:%d  (%d nodes)",
+             krait_inspect_port(), krait_inspect_node_count())
+    DrawUIText(&port_text[0], (int)bounds.x + ScaleUIPx(12),
+               (int)bounds.y + ScaleUIPx(28), ScaleUIPx(12), GetThemeIcon())
+}
+
+draw_inspect_tree :: (bounds: Rectangle) {
+    count := krait_inspect_node_count()
+    mouse := GetMousePosition()
+
+    if count <= 0 {
+        DrawUIText("No scene served. Start the app with its inspect port",
+                   (int)bounds.x + ScaleUIPx(12), (int)bounds.y + ScaleUIPx(12),
+                   ScaleUIPx(12), GetThemeIcon())
+        DrawUIText("(KASAIVAL_INSPECT_PORT=8642) and select its tab here.",
+                   (int)bounds.x + ScaleUIPx(12), (int)bounds.y + ScaleUIPx(30),
+                   ScaleUIPx(12), GetThemeIcon())
+        return
+    }
+    row_h := ScaleUIPx(20)
+    max_scroll := count * row_h - (int)bounds.height
+    if max_scroll < 0 {
+        max_scroll = 0
+    }
+    if CheckCollisionPointRec(mouse, bounds) {
+        wheel := GetMouseWheelMove()
+        if wheel > 0.0 {
+            g_scroll = g_scroll - row_h
+        } else if wheel < 0.0 {
+            g_scroll = g_scroll + row_h
+        }
+        if g_scroll < 0 {
+            g_scroll = 0
+        }
+        if g_scroll > max_scroll {
+            g_scroll = max_scroll
+        }
+    }
+    BeginUIClip((int)bounds.x, (int)bounds.y,
+                (int)bounds.width, (int)bounds.height)
+    i := 0
+    while i < count {
+        y := (int)bounds.y + i * row_h - g_scroll
+        if y + row_h < (int)bounds.y || y > (int)(bounds.y + bounds.height) {
+            i += 1
+            continue
+        }
+        indent := node_depth(i) * ScaleUIPx(12)
+        row := (Rectangle){bounds.x, (float)y, bounds.width, (float)row_h}
+        id := krait_inspect_node_id(i)
+        hot := CheckCollisionPointRec(mouse, row)
+        selected := krait_inspect_selected() == id
+        if selected {
+            DrawRectangleRec(row, GetThemeButton())
+        } else if hot {
+            DrawRectangleRec(row, GetThemeButtonHover())
+        }
+        if hot {
+            MarkUIClickable()
+        }
+        label: [128] char
+        snprintf(&label[0], 128, "%s  (%s)",
+                 krait_inspect_node_name(i), krait_inspect_node_kind(i))
+        DrawUIText(&label[0], (int)row.x + ScaleUIPx(8) + indent,
+                   (int)row.y + ScaleUIPx(3), ScaleUIPx(13), GetThemeText())
+        if hot && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
+            krait_inspect_select(id)
+        }
+        i += 1
+    }
+    EndUIClip()
+}
+
+draw_inspect_props :: (bounds: Rectangle) {
+    count := krait_inspect_prop_count()
+    row_h := ScaleUIPx(20)
+
+    DrawRectangleRec((Rectangle){bounds.x, bounds.y, bounds.width,
+                                 (float)ScaleUIPx(1)},
+                     GetThemeButton())
+    if krait_inspect_selected() < 0 {
+        DrawUIText("Select a node to inspect its properties",
+                   (int)bounds.x + ScaleUIPx(12), (int)bounds.y + ScaleUIPx(12),
+                   ScaleUIPx(12), GetThemeIcon())
+        return
+    }
+    if count <= 0 {
+        DrawUIText("No properties on this node",
+                   (int)bounds.x + ScaleUIPx(12), (int)bounds.y + ScaleUIPx(12),
+                   ScaleUIPx(12), GetThemeIcon())
+        return
+    }
+    max_scroll := count * row_h - (int)bounds.height
+    if max_scroll < 0 {
+        max_scroll = 0
+    }
+    if g_prop_scroll > max_scroll {
+        g_prop_scroll = max_scroll
+    }
+    mouse := GetMousePosition()
+    if CheckCollisionPointRec(mouse, bounds) {
+        wheel := GetMouseWheelMove()
+        if wheel > 0.0 {
+            g_prop_scroll = g_prop_scroll - row_h
+        } else if wheel < 0.0 {
+            g_prop_scroll = g_prop_scroll + row_h
+        }
+        if g_prop_scroll < 0 {
+            g_prop_scroll = 0
+        }
+        if g_prop_scroll > max_scroll {
+            g_prop_scroll = max_scroll
+        }
+    }
+    BeginUIClip((int)bounds.x, (int)bounds.y,
+                (int)bounds.width, (int)bounds.height)
+    i := 0
+    while i < count {
+        y := (int)bounds.y + i * row_h - g_prop_scroll
+        if y + row_h < (int)bounds.y || y > (int)(bounds.y + bounds.height) {
+            i += 1
+            continue
+        }
+        row := (Rectangle){bounds.x, (float)y, bounds.width, (float)row_h}
+        if i % 2 == 0 {
+            DrawRectangleRec(row, GetThemeSurface())
+        }
+        DrawUIText(krait_inspect_prop_label(i),
+                   (int)row.x + ScaleUIPx(12), (int)row.y + ScaleUIPx(3),
+                   ScaleUIPx(13), GetThemeText())
+        DrawUIText(krait_inspect_prop_value(i),
+                   (int)row.x + (int)bounds.width / 2, (int)row.y + ScaleUIPx(3),
+                   ScaleUIPx(13), GetThemeLink())
+        i += 1
+    }
+    EndUIClip()
+}
+
+state {
+    g_scroll: int
+    g_prop_scroll: int
+}
+
+#global
+
+draw_inspector :: (bounds: Rectangle) {
+    krait_inspect_tick()
+    DrawRectangleRec(bounds, GetThemeBackground())
+    draw_inspect_header(bounds)
+    header_h := ScaleUIPx(48)
+    tree_h := (int)(bounds.height * 0.55f) - header_h
+    if tree_h < ScaleUIPx(80) {
+        tree_h = ScaleUIPx(80)
+    }
+    tree_bounds := (Rectangle){bounds.x, bounds.y + (float)header_h,
+                               bounds.width, (float)tree_h}
+    prop_bounds := (Rectangle){bounds.x, tree_bounds.y + tree_bounds.height,
+                               bounds.width,
+                               bounds.height - tree_bounds.height -
+                               (float)header_h}
+    draw_inspect_tree(tree_bounds)
+    draw_inspect_props(prop_bounds)
+}

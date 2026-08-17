@@ -441,3 +441,17 @@ krait_wrap_line(const char *text, int width, int font, int max_lines, int row,
     }
     return 1;
 }
+
+int
+krait_scratch_path(char *out, size_t out_size)
+{
+    const char *home = getenv("HOME");
+
+    if(out == NULL || out_size == 0)
+        return 0;
+    if(home == NULL || home[0] == '\0')
+        snprintf(out, out_size, ".kryon/scratch.txt");
+    else
+        snprintf(out, out_size, "%s/.kryon/scratch.txt", home);
+    return 1;
+}

@@ -3,6 +3,7 @@
 state :: #import "ide/state"
 ed :: #import "ide/editor"
 tree :: #import "ide/tree"
+ins :: #import "ide/inspect"
 
 krait_scan_screens :: (root: const char*, out: state.ScreenEntry*, cap: int) -> int #extern
 
@@ -154,16 +155,19 @@ draw_navigator :: (bounds: Rectangle, st: state.IdeState*) {
         st->navigator_tab = state.IDE_NAV_FILES
     }
     x = x + ScaleUIPx(68)
-    if DrawUIGenericButton(x, y, ScaleUIPx(86), ScaleUIPx(22), "Scenes",
-                           st->navigator_tab == state.IDE_NAV_SCREENS ?
+    x = x + ScaleUIPx(90)
+    if DrawUIGenericButton(x, y, ScaleUIPx(80), ScaleUIPx(22), "Inspect",
+                           st->navigator_tab == state.IDE_NAV_INSPECT ?
                            UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB,
                            0, NULL) {
-        st->navigator_tab = state.IDE_NAV_SCREENS
+        st->navigator_tab = state.IDE_NAV_INSPECT
     }
     body := (Rectangle){bounds.x, bounds.y + (float)tab_h,
                         bounds.width, bounds.height - (float)tab_h}
     if st->navigator_tab == state.IDE_NAV_FILES {
         tree.draw_tree(body, st)
+    } else if st->navigator_tab == state.IDE_NAV_INSPECT {
+        ins.draw_inspector(body)
     } else {
         draw_screen_list(body, st)
     }

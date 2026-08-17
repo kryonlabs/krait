@@ -84,6 +84,7 @@
 #enum {
     IDE_NAV_SCREENS,
     IDE_NAV_FILES,
+    IDE_NAV_INSPECT,
 }
 
 #enum {
@@ -228,6 +229,8 @@ IdeState :: struct {
     status: [256] char
     project: Project
     dialog_mode: int
+    # modal project picker (recents/examples/open/new)
+    picker_open: int
     # file tree
     entries: [1024] FileTreeEntry
     entry_count: int

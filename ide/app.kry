@@ -5,6 +5,7 @@ state :: #import "ide/state"
 start :: #import "ide/start_page"
 proj :: #import "ide/project"
 tree :: #import "ide/tree"
+ins :: #import "ide/inspect"
 screens :: #import "ide/screens"
 ed :: #import "ide/editor"
 prev :: #import "ide/preview"
@@ -51,7 +52,7 @@ init :: () {
     mods.register_builtins(&istate)
     krait_settings_load(&istate)
     apply_krait_theme()
-    istate.view = state.IDE_VIEW_START
+    istate.view = state.IDE_VIEW_TEXT
     istate.layout_mode = state.IDE_LAYOUT_SPLIT
     init_panes(&istate)
     krait_layout_load(&istate)
@@ -142,6 +143,9 @@ frame :: () {
     if kb.kanban_detail_open != 0 && kb.kanban_valid_selection() != 0 {
         BeginUIModalLayer()
     }
+    if istate.picker_open != 0 {
+        BeginUIModalLayer()
+    }
     draw_chrome(w, h)
     content := (Rectangle){0, (float)top_bar_height(),
                            (float)w, (float)(h - top_bar_height() - status_bar_height())}
@@ -192,6 +196,9 @@ frame :: () {
             srch.search_focus(&istate, 1)
             show_tool_bottom(&istate, state.IDE_PANE_VIEW_SEARCH)
         }
+    }
+    if istate.picker_open != 0 {
+        start.draw_project_picker_modal(content, &istate)
     }
     update_dialog(&istate)
     if istate.layout_dirty != 0 {
@@ -286,15 +293,23 @@ draw_top_actions :: (view_w: int, top_h: int) {
     }) {
         if istate.view == state.IDE_VIEW_SETTINGS {
             istate.view = istate.project.loaded ?
-                          state.IDE_VIEW_PROJECT : state.IDE_VIEW_START
+                          state.IDE_VIEW_PROJECT : state.IDE_VIEW_TEXT
         } else {
             istate.view = state.IDE_VIEW_SETTINGS
         }
     }
-    if istate.project.loaded {
+    {
         gap := ScaleUIPx(6)
         view_w := ScaleUIPx(96)
+        open_w := ScaleUIPx(104)
         x = x - gap - view_w
+        if !istate.project.loaded {
+            x = x - gap - open_w
+            if DrawUIGenericButton(x, y, open_w, btn_h, "Open Project",
+                                   UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                istate.picker_open = istate.picker_open == 0 ? 1 : 0
+            }
+        }
         view_options: [4] const char* = {"Studio", "Agent", "Text", "Kanban"}
         view_selected := 0
         if istate.view == state.IDE_VIEW_AGENT {
@@ -313,8 +328,11 @@ draw_top_actions :: (view_w: int, top_h: int) {
                 istate.view = state.IDE_VIEW_TEXT
             } else if picked == 3 {
                 istate.view = state.IDE_VIEW_KANBAN
-            } else {
+            } else if istate.project.loaded {
                 istate.view = state.IDE_VIEW_PROJECT
+            } else {
+                # studio with no project: let the picker modal provide one
+                istate.picker_open = 1
             }
         }
         if istate.view == state.IDE_VIEW_PROJECT {

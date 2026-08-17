@@ -971,50 +971,50 @@ krait_scene_nudge(const char *root, const char *rel_path, int index,
 typedef struct KraitPropSpec {
     char id[32];
     char label[48];
-    int kind; /* KRYON_PROPERTY_* */
+    int kind; /* PROPERTY_* */
 } KraitPropSpec;
 
 static const KraitPropSpec kry_props_text[] = {
-    {"label", "Text", KRYON_PROPERTY_STRING},
-    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
-    {"font_size", "Font Size", KRYON_PROPERTY_INT},
+    {"label", "Text", PROPERTY_STRING},
+    {"position", "Position", PROPERTY_RECTANGLE},
+    {"font_size", "Font Size", PROPERTY_INT},
 };
 
 static const KraitPropSpec kry_props_rect[] = {
-    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+    {"position", "Position", PROPERTY_RECTANGLE},
 };
 
 static const KraitPropSpec kry_props_button[] = {
-    {"label", "Label", KRYON_PROPERTY_STRING},
-    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+    {"label", "Label", PROPERTY_STRING},
+    {"position", "Position", PROPERTY_RECTANGLE},
 };
 
 static const KraitPropSpec kry_props_sprite[] = {
-    {"asset_path", "Asset", KRYON_PROPERTY_ASSET_PATH},
-    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+    {"asset_path", "Asset", PROPERTY_ASSET_PATH},
+    {"position", "Position", PROPERTY_RECTANGLE},
 };
 
 static const KraitPropSpec kry_props_group[] = {
-    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+    {"position", "Position", PROPERTY_RECTANGLE},
 };
 
 static const KraitPropSpec kry_props_game[] = {
-    {"label", "Label", KRYON_PROPERTY_STRING},
-    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+    {"label", "Label", PROPERTY_STRING},
+    {"position", "Position", PROPERTY_RECTANGLE},
 };
 
 static const KraitPropSpec kry_props_text_field[] = {
-    {"label", "Text", KRYON_PROPERTY_STRING},
-    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+    {"label", "Text", PROPERTY_STRING},
+    {"position", "Position", PROPERTY_RECTANGLE},
 };
 
 static const KraitPropSpec kry_props_toggle[] = {
-    {"label", "Label", KRYON_PROPERTY_STRING},
-    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+    {"label", "Label", PROPERTY_STRING},
+    {"position", "Position", PROPERTY_RECTANGLE},
 };
 
 static const KraitPropSpec kry_props_slider[] = {
-    {"position", "Position", KRYON_PROPERTY_RECTANGLE},
+    {"position", "Position", PROPERTY_RECTANGLE},
 };
 
 static const KraitPropSpec *
