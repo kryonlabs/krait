@@ -38,7 +38,7 @@ krait_settings_sanitize(IdeState *st)
         st->theme_mode = THEME_MODE_DARK;
     if(st->theme_id < 0 || st->theme_id >= THEME_COUNT)
         st->theme_id = THEME_MONO;
-    if(st->theme_style < THEME_STYLE_SYSTEM || st->theme_style > THEME_STYLE_MATERIAL)
+    if(st->theme_style < THEME_STYLE_SYSTEM || st->theme_style > THEME_STYLE_AERO)
         st->theme_style = THEME_STYLE_RETRO;
     if(st->settings_tab < 0 || st->settings_tab > 4)
         st->settings_tab = 0;
