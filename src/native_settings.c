@@ -76,8 +76,8 @@ krait_settings_defaults(IdeState *st)
 {
     if(st == NULL)
         return;
-    st->theme_source = THEME_SOURCE_APP;
-    st->theme_mode = THEME_MODE_DARK;
+    st->theme_source = THEME_SOURCE_SYSTEM;
+    st->theme_mode = THEME_MODE_SYSTEM;
     st->theme_id = THEME_MONO;
     st->theme_style = THEME_STYLE_RETRO;
     st->settings_tab = 0;
