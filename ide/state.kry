@@ -285,7 +285,7 @@ IdeState :: struct {
     last_edit_time: float
     preview_host_ready: int
     # terminal (PTY)
-    term: KryTerm
+    term: Terminal
     console_focused: int
     # problems
     diagnostics: [64] Diagnostic
