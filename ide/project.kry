@@ -77,6 +77,7 @@ project_open :: (st: state.IdeState*, path: const char*) -> int {
     path_basename(st->project.name, sizeof(st->project.name), project_path)
     st->project.loaded = 1
     st->view = state.IDE_VIEW_PROJECT
+    st->picker_open = 0
     tree.refresh_tree(st)
     st->selected_entry = 0
     st->activated_entry = 0

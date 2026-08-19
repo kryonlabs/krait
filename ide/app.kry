@@ -18,8 +18,9 @@ mods :: #import "ide/modules"
 	meta :: #import "ide/project_meta"
 	krb :: #import "ide/cartridge"
 	kb :: #import "ide/kanban"
-	ag :: #import "ide/agent"
-	txt :: #import "ide/text_view"
+		ag :: #import "ide/agent"
+		mdv :: #import "ide/mdview"
+		txt :: #import "ide/text_view"
 
 	krait_load_ui_font :: () -> int #extern
 krait_scaffold_project :: (path: const char*, status: char*, status_size: int) -> int #extern
@@ -153,6 +154,8 @@ frame :: () {
         start.draw_start_page(content, &istate)
     } else if istate.view == state.IDE_VIEW_TEXT {
         txt.draw_text_view(content, &istate)
+    } else if istate.view == state.IDE_VIEW_MD {
+        mdv.draw_md_view(content, &istate)
     } else if istate.view == state.IDE_VIEW_KANBAN {
         kb.draw_kanban(content, &istate)
         if kb.kanban_detail_open != 0 && kb.kanban_valid_selection() != 0 {

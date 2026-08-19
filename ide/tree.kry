@@ -2,8 +2,10 @@
 #import "kryon.h"
 state :: #import "ide/state"
 ed :: #import "ide/editor"
+mdv :: #import "ide/mdview"
 
 krait_build_tree :: (root: const char*, out: state.FileTreeEntry*, cap: int) -> int #extern
+krait_path_has_suffix :: (path: const char*, suffix: const char*) -> int #extern
 
 #private
 
@@ -42,7 +44,11 @@ handle_activation :: (st: state.IdeState*) {
                 now := GetTime()
                 if st->last_file_click_id == activated &&
                    now - st->last_file_click_time < 0.45 {
-                    ed.editor_open(st, st->entries[i].path)
+                    if krait_path_has_suffix(st->entries[i].path, ".md") != 0 {
+                        mdv.mdview_open_file(st->entries[i].path, st)
+                    } else {
+                        ed.editor_open(st, st->entries[i].path)
+                    }
                     st->last_file_click_id = 0
                     st->last_file_click_time = 0.0
                 } else {

@@ -5,6 +5,8 @@ state :: #import "ide/state"
 ed :: #import "ide/editor"
 mods :: #import "ide/modules"
 
+krait_scratch_path :: (out: char*, cap: int) -> int #extern
+
 # Notepad mode: the active file as one plain full-window text area - no
 # panes, no tabs, no toolbars. Esc returns to the studio; Ctrl+S saves
 # through the normal editor path so dirty state and reloads stay honest.
@@ -51,7 +53,11 @@ draw_text_view :: (bounds: Rectangle, st: state.IdeState*) {
         ed.editor_save_active(st)
     }
     if IsKeyPressed(KEY_ESCAPE) && f->focused == 0 {
-        st->view = state.IDE_VIEW_PROJECT
+        if st->project.loaded != 0 {
+            st->view = state.IDE_VIEW_PROJECT
+        } else {
+            st->picker_open = 1
+        }
         return
     }
     if IsKeyPressed(KEY_ESCAPE) && f->focused != 0 {
@@ -61,24 +67,47 @@ draw_text_view :: (bounds: Rectangle, st: state.IdeState*) {
     DrawRectangle((int)bounds.x, (int)(bounds.y + bounds.height) - footer_h,
                   (int)bounds.width, footer_h, GetThemeSurface())
     foot: [300] char
-    snprintf(foot, sizeof(foot), "%s%s  -  Esc: studio  Ctrl+S: save",
-             f->name, f->dirty != 0 ? " *" : "")
+    snprintf(foot, sizeof(foot), "%s%s  -  Esc: %s  Ctrl+S: save",
+             f->name, f->dirty != 0 ? " *" : "",
+             st->project.loaded != 0 ? "studio" : "projects")
     DrawUIText(foot, (int)bounds.x + ScaleUIPx(10),
                (int)(bounds.y + bounds.height) - footer_h + ScaleUIPx(5),
                ScaleUIPx(11), GetThemeIcon())
 }
 
-# entering text mode with nothing open: fall back to the project's
-# preferred startup file so the view is never empty
+# entering text mode with nothing open: with a project, fall back to its
+# preferred startup file; without one, edit a persistent scratch buffer so
+# krait works as a fresh text editor out of the box
 text_view_ensure_file :: (st: state.IdeState*) {
-    if st->project.loaded == 0 {
-        return
-    }
     if state.active_file(st) != NULL {
         return
     }
-    startup: [1024] char
-    if mods.preferred_startup_file(st, startup, sizeof(startup)) {
-        ed.editor_open(st, startup)
+    if st->project.loaded != 0 {
+        startup: [1024] char
+        if mods.preferred_startup_file(st, startup, sizeof(startup)) {
+            ed.editor_open(st, startup)
+        }
+        return
     }
+    if st->open_count >= 12 {
+        return
+    }
+    scratch: [1024] char
+    if krait_scratch_path(scratch, sizeof(scratch)) == 0 {
+        return
+    }
+    slot := &st->open_files[st->open_count]
+    memset(slot, 0, sizeof(state.OpenFile))
+    slot->source[0] = 0
+    n := kry_fs_read_file(scratch, slot->source, sizeof(slot->source))
+    if n < 0 {
+        slot->source[0] = 0
+    }
+    snprintf(slot->name, sizeof(slot->name), "Untitled")
+    snprintf(slot->path, sizeof(slot->path), "%s", scratch)
+    slot->used = 1
+    slot->artifact_tab = state.IDE_ARTIFACT_KRY
+    slot->artifact_kind = state.IDE_ARTIFACT_KRY
+    st->active_open = st->open_count
+    st->open_count = st->open_count + 1
 }

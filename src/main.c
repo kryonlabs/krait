@@ -123,6 +123,24 @@ open_startup_project(const char *path)
 }
 
 static int
+krait_view_from_name(const char *name)
+{
+    if(strcmp(name, "start") == 0)
+        return IDE_VIEW_START;
+    if(strcmp(name, "studio") == 0 || strcmp(name, "project") == 0)
+        return IDE_VIEW_PROJECT;
+    if(strcmp(name, "text") == 0)
+        return IDE_VIEW_TEXT;
+    if(strcmp(name, "kanban") == 0)
+        return IDE_VIEW_KANBAN;
+    if(strcmp(name, "agent") == 0)
+        return IDE_VIEW_AGENT;
+    if(strcmp(name, "settings") == 0)
+        return IDE_VIEW_SETTINGS;
+    return -1;
+}
+
+static int
 save_screen_image(const char *path)
 {
     Image image;
@@ -244,6 +262,7 @@ main(int argc, char **argv)
     const char *artifact_project = NULL;
     const char *artifact_rel = NULL;
     const char *project_arg = NULL;
+    const char *view_arg = NULL;
     const char *live_rel_path = NULL;
     const char *smoke_screenshot_path = "/tmp/krait-ide-smoke.png";
     int result = 0;
@@ -335,6 +354,16 @@ main(int argc, char **argv)
             }
             break;
         }
+        if(strcmp(argv[argi], "--view") == 0) {
+            if(argc <= argi + 1) {
+                fprintf(stderr, "krait: --view requires a view name "
+                        "(start|studio|text|kanban|agent|settings)\n");
+                return 2;
+            }
+            view_arg = argv[argi + 1];
+            argi += 2;
+            continue;
+        }
         project_arg = argv[argi];
         break;
     }
@@ -389,6 +418,21 @@ main(int argc, char **argv)
     SetCurrentTheme(THEME_MONO, 0);
     ide_app_init();
     open_startup_project(project_arg);
+    if(view_arg != NULL) {
+        int view = krait_view_from_name(view_arg);
+        if(view < 0) {
+            fprintf(stderr, "krait: unknown view '%s' (expected "
+                    "start|studio|text|kanban|agent|settings)\n", view_arg);
+            return 2;
+        }
+        if(view == IDE_VIEW_PROJECT && istate.project.loaded == 0) {
+            /* studio without a project has nothing to show: open the
+             * project picker modal instead */
+            istate.picker_open = 1;
+        } else {
+            istate.view = view;
+        }
+    }
 
     if(smoke_live_reload) {
         result = run_live_reload_smoke(project_arg, live_rel_path);

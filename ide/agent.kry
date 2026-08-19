@@ -6,6 +6,7 @@ tree :: #import "ide/tree"
 ed :: #import "ide/editor"
 prob :: #import "ide/problems"
 con :: #import "ide/console"
+mdv :: #import "ide/mdview"
 
 krait_wrap_lines :: (text: const char*, width: int, font: int, max_lines: int) -> int #extern
 krait_wrap_line :: (text: const char*, width: int, font: int, max_lines: int, row: int, dst: char*, dst_size: int) -> int #extern
@@ -28,6 +29,19 @@ krait_agent_send :: (text: const char*) -> int #extern
 krait_agent_stop :: () #extern
 krait_agent_clear :: () #extern
 krait_agent_poll :: () -> int #extern
+krait_agent_tool_name :: (index: int) -> const char* #extern
+krait_agent_tool_arg :: (index: int) -> const char* #extern
+krait_agent_tool_status :: (index: int) -> int #extern
+krait_agent_tool_dur :: (index: int) -> int #extern
+krait_agent_permission_pending :: () -> int #extern
+krait_agent_permission_count :: () -> int #extern
+krait_agent_permission_line :: (index: int) -> const char* #extern
+krait_agent_permission_respond :: (allow: int, always: int) #extern
+krait_agent_retry :: (index: int) -> int #extern
+krait_agent_session_count :: () -> int #extern
+krait_agent_session_name :: (index: int) -> const char* #extern
+krait_agent_session_project :: (index: int) -> const char* #extern
+krait_agent_open_session :: (index: int) -> int #extern
 
 agent_input :: [2048] char #global
 agent_input_cursor :: int #global
@@ -35,6 +49,8 @@ agent_input_focused :: int #global
 agent_scroll :: int #global
 agent_bound :: int #global
 agent_expanded :: int #global
+agent_pinned :: int #global
+agent_sessions_open :: int #global
 
 
 agent_bind :: (st: state.IdeState*) {
@@ -48,87 +64,7 @@ agent_bind :: (st: state.IdeState*) {
     agent_bound = 1
 }
 
-draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
-    agent_bind(st)
-    krait_agent_poll()
-    if krait_agent_files_changed() != 0 {
-        tree.refresh_tree(st)
-        i := 0
-        while i < krait_agent_written_count() {
-            ed.editor_reload_if_open(st, krait_agent_written_path(i))
-            i = i + 1
-        }
-    }
-    agent_route_problems(st)
-    agent_mirror_console(st)
-    if ed.mod_key_down() && IsKeyPressed(KEY_L) {
-        if agent_input_focused == 0 {
-            agent_reset(st)
-        }
-    }
-    DrawRectangleRec(bounds, GetThemeBackground())
-    pad := ScaleUIPx(10)
-    row_h := ScaleUIPx(32)
-    input_y := (int)bounds.y + (int)bounds.height - row_h - pad
-    status := krait_agent_status_text()
-    busy := krait_agent_busy()
-    transcript_h := (float)(input_y - (int)bounds.y)
-    if strlen(status) > 0 {
-        transcript_h = transcript_h - (float)ScaleUIPx(22)
-    }
-    transcript := (Rectangle){bounds.x, bounds.y, bounds.width, transcript_h}
-    draw_transcript(transcript, busy)
-    if strlen(status) > 0 {
-        DrawUIText(status, (int)bounds.x + pad,
-                   input_y - ScaleUIPx(20), ScaleUIPx(12), GetThemeLink())
-    }
-
-    style := (UITextInputStyle){
-        GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
-        GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
-    }
-    send_w := ScaleUIPx(64)
-    stop_w := ScaleUIPx(58)
-    field_w := bounds.width - (float)(pad * 2 + send_w + stop_w + ScaleUIPx(12))
-    DrawUITextField((TextFieldProps){
-        (Rectangle){bounds.x + (float)pad, (float)input_y,
-                    field_w, (float)row_h},
-        agent_input, sizeof(agent_input),
-        &agent_input_cursor, &agent_input_focused,
-        sizeof(agent_input) - 1, ScaleUIPx(13), 7601,
-        style, (UITextInputFilter){0}, NULL, NULL
-    })
-    if strlen(agent_input) > 0 && busy == 0 {
-        if DrawUIGenericButton((int)bounds.x + pad + (int)field_w + ScaleUIPx(6),
-                               input_y, send_w, row_h, "Send",
-                               UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
-            agent_send_input()
-        }
-    }
-    if krait_agent_can_revert() != 0 {
-        rev_w := ScaleUIPx(70)
-        if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad -
-                               stop_w - ScaleUIPx(6) - rev_w,
-                               input_y, rev_w, row_h, "Revert",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-            krait_agent_revert()
-        }
-    }
-    if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - stop_w,
-                           input_y, stop_w, row_h, busy != 0 ? "Stop" : "Clear",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-        if busy != 0 {
-            krait_agent_stop()
-        } else {
-            agent_reset(st)
-        }
-    }
-    if agent_input_focused != 0 && IsKeyPressed(KEY_ENTER) && busy == 0 {
-        agent_send_input()
-    }
-}
-
-/* Run-tool output mirrors into the Console pane's live terminal. */
+# Run-tool output mirrors into the Console pane's live terminal.
 agent_mirror_console :: (st: state.IdeState*) {
     pending := krait_agent_consume_console()
     if strlen(pending) > 0 {
@@ -137,7 +73,7 @@ agent_mirror_console :: (st: state.IdeState*) {
     }
 }
 
-/* Compile failures land in the Problems pane, same as studio builds. */
+# Compile failures land in the Problems pane, same as studio builds.
 agent_route_problems :: (st: state.IdeState*) {
     errors := krait_agent_compile_errors()
     if strlen(errors) == 0 {
@@ -178,32 +114,266 @@ agent_send_input :: () {
     agent_input_cursor = 0
 }
 
-draw_transcript :: (bounds: Rectangle, busy: int) {
+# ZCode-style approval: the pending tool batch lists its calls, the user * allows once, allows for the session, or denies.
+draw_permission_bar :: (bounds: Rectangle) {
+    DrawRectangleRec(bounds, GetThemeSurface())
+    DrawUIText("Agent wants to run tools:", (int)bounds.x + ScaleUIPx(10),
+               (int)bounds.y + ScaleUIPx(6), ScaleUIPx(12), GetThemeLink())
+    n := krait_agent_permission_count()
+    if n > 6 {
+        n = 6
+    }
+    i := 0
+    while i < n {
+        DrawUIText(krait_agent_permission_line(i),
+                   (int)bounds.x + ScaleUIPx(18),
+                   (int)bounds.y + ScaleUIPx(24) + i * ScaleUIPx(16),
+                   ScaleUIPx(12), GetThemeText())
+        i = i + 1
+    }
+    bh := ScaleUIPx(22)
+    by := (int)bounds.y + (int)bounds.height - bh - ScaleUIPx(6)
+    bw := ScaleUIPx(64)
+    bx := (int)bounds.x + (int)bounds.width - bw - ScaleUIPx(8)
+    if DrawUIGenericButton(bx, by, bw, bh, "Deny",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        krait_agent_permission_respond(0, 0)
+    }
+    bx = bx - bw - ScaleUIPx(40)
+    if DrawUIGenericButton(bx, by, bw + ScaleUIPx(34), bh, "Always allow",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        krait_agent_permission_respond(1, 1)
+    }
+    bx = bx - bw - ScaleUIPx(40)
+    if DrawUIGenericButton(bx, by, bw, bh, "Allow",
+                           UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+        krait_agent_permission_respond(1, 0)
+    }
+}
+
+# Stored agent histories under ~/.kryon/krait/agent, one per project.
+draw_sessions :: (bounds: Rectangle, st: state.IdeState*) {
+    DrawRectangleRec(bounds, GetThemeSurface())
+    pad := ScaleUIPx(10)
+    DrawUIText("Agent sessions (per project)", (int)bounds.x + pad,
+               (int)bounds.y + ScaleUIPx(8), ScaleUIPx(12), GetThemeLink())
+    n := krait_agent_session_count()
+    if n > 8 {
+        n = 8
+    }
+    row := ScaleUIPx(20)
+    i := 0
+    while i < n {
+        y := (int)bounds.y + ScaleUIPx(26) + i * row
+        line: [320] char
+        proj := krait_agent_session_project(i)
+        if strlen(proj) == 0 {
+            proj = "?"
+        }
+        snprintf(line, sizeof(line), "%s  %s",
+                 krait_agent_session_name(i), proj)
+        if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - ScaleUIPx(60),
+                               y - ScaleUIPx(2), ScaleUIPx(60), row, "Open",
+                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            if krait_agent_open_session(i) != 0 {
+                agent_bound = 1
+                agent_scroll = 0
+                agent_expanded = 0
+                agent_sessions_open = 0
+            }
+        }
+        DrawUIText(line, (int)bounds.x + pad, y, ScaleUIPx(11), GetThemeText())
+        i = i + 1
+    }
+    if n == 0 {
+        DrawUIText("no stored sessions yet", (int)bounds.x + pad,
+                   (int)bounds.y + ScaleUIPx(30), ScaleUIPx(11), GetThemeIcon())
+    }
+}
+
+# Message height in px, matching agent_draw_msg below. ACTIONS rows are * invisible: the per-tool cards that follow carry the information.
+agent_msg_height :: (i: int, wrap_w: int, fnt: int, line_h: int) -> int {
+    kind := krait_agent_kind(i)
+    if kind == 4 {
+        return 0
+    }
+    if kind == 2 {
+        h := line_h + ScaleUIPx(10)
+        if agent_expanded == i + 1 {
+            text := krait_agent_text(i)
+            lines := krait_wrap_lines(text, wrap_w - ScaleUIPx(20), fnt, 60)
+            h = h + lines * line_h + ScaleUIPx(4)
+        }
+        return h
+    }
+    text := krait_agent_text(i)
+    body := mdv.md_height(text, wrap_w - ScaleUIPx(20), fnt, line_h)
+    if body < line_h {
+        body = line_h
+    }
+    return body + line_h + ScaleUIPx(12)
+}
+
+# One collapsible card per executed tool call: name, arg, status, * duration on the header; click expands the full result text.
+agent_draw_tool_card :: (i: int, x: int, y: int, wrap_w: int, fnt: int,
+                         line_h: int) -> int {
+    tool := krait_agent_tool_name(i)
+    if strlen(tool) == 0 {
+        tool = "tools"
+    }
+    arg := krait_agent_tool_arg(i)
+    status := krait_agent_tool_status(i)
+    dur := krait_agent_tool_dur(i)
+    mark := "ok"
+    scolor := GetThemeLink()
+    if status == 2 {
+        mark = "ERR"
+        scolor = GetThemeIcon()
+    }
+    head: [320] char
+    snprintf(head, sizeof(head), "[%s] %s  %s  (%d ms)", mark, tool, arg, dur)
+    card := (Rectangle){(float)x, (float)y, (float)wrap_w,
+                        (float)(line_h + ScaleUIPx(8))}
+    DrawRectangleRec(card, GetThemeSurface())
+    if CheckCollisionPointRec(GetMousePosition(), card) &&
+       IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
+        agent_expanded = agent_expanded == i + 1 ? 0 : i + 1
+    }
+    DrawUIText(head, x + ScaleUIPx(8), y + ScaleUIPx(4), ScaleUIPx(11),
+               scolor)
+    yy := y + line_h + ScaleUIPx(8)
+    if agent_expanded == i + 1 {
+        text := krait_agent_text(i)
+        lines := krait_wrap_lines(text, wrap_w - ScaleUIPx(20), fnt, 60)
+        BeginScissorMode((int)card.x, (int)yy, (int)card.width,
+                         lines * line_h + ScaleUIPx(4))
+        row := 0
+        while row < lines {
+            lb: [512] char
+            krait_wrap_line(text, wrap_w - ScaleUIPx(20), fnt, 60, row,
+                            lb, sizeof(lb))
+            DrawUIText(lb, x + ScaleUIPx(12), yy + row * line_h, fnt,
+                       GetThemeText())
+            row = row + 1
+        }
+        EndScissorMode()
+        yy = yy + lines * line_h + ScaleUIPx(4)
+    }
+    return yy
+}
+
+agent_draw_msg :: (i: int, x: int, y: int, wrap_w: int, fnt: int,
+                   line_h: int, st: state.IdeState*) -> int {
+    kind := krait_agent_kind(i)
+    if kind == 4 {
+        return y
+    }
+    text := krait_agent_text(i)
+    if kind == 2 {
+        return agent_draw_tool_card(i, x, y, wrap_w, fnt, line_h)
+    }
+    label := "you"
+    if kind == 1 {
+        label = "agent"
+    } else if kind == 3 {
+        label = "error"
+    }
+    head: [64] char
+    snprintf(head, sizeof(head), "%s:", label)
+    DrawUIText(head, x, y, ScaleUIPx(11), GetThemeLink())
+
+    bh := ScaleUIPx(18)
+    bw := ScaleUIPx(42)
+    bx := x + wrap_w - bw
+    if kind == 1 {
+        if DrawUIGenericButton(bx - bw - ScaleUIPx(4), y - ScaleUIPx(2), bw, bh,
+                               "view", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            mdv.mdview_open(text, "agent message", st)
+        }
+    }
+    if kind == 0 {
+        if DrawUIGenericButton(bx - bw - ScaleUIPx(4), y - ScaleUIPx(2), bw, bh,
+                               "retry", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            if krait_agent_retry(i) != 0 {
+                agent_scroll = 0
+                agent_expanded = 0
+            }
+        }
+    }
+    if DrawUIGenericButton(bx, y - ScaleUIPx(2), bw, bh, "copy",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        SetClipboardText(text)
+    }
+    body_y := y + line_h
+    if kind == 3 {
+        eh := mdv.md_height(text, wrap_w - ScaleUIPx(20), fnt, line_h)
+        DrawRectangleRec((Rectangle){(float)x, (float)body_y,
+                                     (float)wrap_w,
+                                     (float)(eh + ScaleUIPx(6))},
+                         GetThemeSurface())
+    }
+    h := mdv.md_draw(text, x + ScaleUIPx(10), body_y,
+                     wrap_w - ScaleUIPx(20), fnt, line_h)
+    if h < line_h {
+        h = line_h
+    }
+    return body_y + h + ScaleUIPx(12)
+}
+
+draw_transcript :: (bounds: Rectangle, busy: int, st: state.IdeState*) {
     count := krait_agent_count()
     pad := ScaleUIPx(12)
     line_h := ScaleUIPx(17)
-    content_h := count * (line_h * 3 + ScaleUIPx(14))
-    max_scroll := content_h - (int)bounds.height
+    fnt := ScaleUIPx(13)
+    wrap_w := (int)bounds.width - pad * 2
+
+    heights: [512] int
+    content_h := 0
+    i := 0
+    while i < count && i < 512 {
+        heights[i] = agent_msg_height(i, wrap_w, fnt, line_h)
+        content_h = content_h + heights[i]
+        i = i + 1
+    }
+    stream_h := 0
+    if busy != 0 {
+        if strlen(krait_agent_streaming_text()) > 0 {
+            stream_h = mdv.md_height(krait_agent_streaming_text(),
+                                     wrap_w - ScaleUIPx(20), fnt,
+                                     line_h) + line_h + ScaleUIPx(8)
+        } else {
+            stream_h = line_h + ScaleUIPx(8)
+        }
+    }
+    max_scroll := content_h + stream_h - (int)bounds.height
     if max_scroll < 0 {
         max_scroll = 0
     }
-    if agent_scroll > max_scroll {
-        agent_scroll = max_scroll
-    }
-    if agent_scroll < 0 {
+    if max_scroll <= 0 {
         agent_scroll = 0
-    }
-    if max_scroll > 0 {
+        agent_pinned = 1
+    } else {
+        if agent_scroll >= max_scroll - line_h {
+            agent_pinned = 1
+        }
         wheel := (int)(GetMouseWheelMove() * (float)line_h * 3.0)
-        agent_scroll = agent_scroll + wheel
+        if wheel != 0 {
+            agent_scroll = agent_scroll + wheel
+            agent_pinned = 0
+        }
         if agent_scroll > max_scroll {
             agent_scroll = max_scroll
+            agent_pinned = 1
         }
         if agent_scroll < 0 {
             agent_scroll = 0
         }
+        if agent_pinned != 0 {
+            agent_scroll = max_scroll
+        }
     }
-    if count == 0 {
+
+    if count == 0 && busy == 0 {
         hint := "Ask the agent to change the project: describe what you want,"
         hint2 := "it reads, edits, compiles, and reports back."
         DrawUIText(hint, (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(14),
@@ -215,84 +385,152 @@ draw_transcript :: (bounds: Rectangle, busy: int) {
     }
     BeginScissorMode((int)bounds.x, (int)bounds.y, (int)bounds.width,
                      (int)bounds.height)
-    i := 0
     y := (int)bounds.y + ScaleUIPx(8) - agent_scroll
-    while i < count {
-        kind := krait_agent_kind(i)
-        text := krait_agent_text(i)
-        label := "you"
-        color := GetThemeText()
-        if kind == 1 {
-            label = "agent"
-        } else if kind == 2 {
-            label = "tools"
-        } else if kind == 4 {
-            label = "actions"
-        } else if kind == 3 {
-            label = "error"
+    i = 0
+    while i < count && i < 512 {
+        h := agent_msg_height(i, wrap_w, fnt, line_h)
+        if h > 0 && y + h > (int)bounds.y - line_h * 4 &&
+           y < (int)(bounds.y + bounds.height) {
+            agent_draw_msg(i, (int)bounds.x + pad, y, wrap_w, fnt, line_h, st)
         }
-        head: [64] char
-        snprintf(head, sizeof(head), "%s:", label)
-        DrawUIText(head, (int)bounds.x + pad, y, ScaleUIPx(11),
-                   GetThemeLink())
-        wrap_w := (int)bounds.width - pad * 2 - ScaleUIPx(16)
-        max_lines := 3
-        if agent_expanded == i {
-            max_lines = 60
-        }
-        lines := krait_wrap_lines(text, wrap_w, ScaleUIPx(12), max_lines)
-        block := (Rectangle){bounds.x + (float)pad, (float)(y + line_h),
-                             bounds.width - (float)(pad * 2),
-                             (float)(line_h * lines + ScaleUIPx(8))}
-        if kind == 2 || kind == 3 {
-            DrawRectangleRec(block, GetThemeSurface())
-        }
-        hit := CheckCollisionPointRec(GetMousePosition(), block) &&
-               IsMouseButtonReleased(MOUSE_BUTTON_LEFT)
-        if hit {
-            agent_expanded = agent_expanded == i ? -1 : i
-        }
-        BeginScissorMode((int)block.x, (int)block.y, (int)block.width,
-                         (int)block.height)
-        row := 0
-        while row < lines {
-            line_buf: [512] char
-            krait_wrap_line(text, wrap_w, ScaleUIPx(12), max_lines, row,
-                            line_buf, sizeof(line_buf))
-            DrawUIText(line_buf, (int)block.x + ScaleUIPx(8),
-                       (int)block.y + ScaleUIPx(4) + row * line_h,
-                       ScaleUIPx(12), color)
-            row = row + 1
-        }
-        EndScissorMode()
-        y = y + line_h * (lines + 1) + ScaleUIPx(10)
+        y = y + h
         i = i + 1
     }
     if busy != 0 {
         live := krait_agent_streaming_text()
+        dots := (int)(GetTime() * 2.0) % 4
+        tail := ""
+        if dots == 1 {
+            tail = "."
+        } else if dots == 2 {
+            tail = ".."
+        } else if dots == 3 {
+            tail = "..."
+        }
+        think: [32] char
+        snprintf(think, sizeof(think), "thinking%s", tail)
         if strlen(live) > 0 {
             DrawUIText("agent:", (int)bounds.x + pad, y, ScaleUIPx(11),
                        GetThemeLink())
-            wrap_w2 := (int)bounds.width - pad * 2 - ScaleUIPx(16)
-            lines2 := krait_wrap_lines(live, wrap_w2, ScaleUIPx(12), 30)
-            block2 := (Rectangle){bounds.x + (float)pad,
-                                  (float)(y + line_h),
-                                  bounds.width - (float)(pad * 2),
-                                  (float)(line_h * lines2 + ScaleUIPx(8))}
-            BeginScissorMode((int)block2.x, (int)block2.y,
-                             (int)block2.width, (int)block2.height)
-            row2 := 0
-            while row2 < lines2 {
-                line_buf2: [512] char
-                krait_wrap_line(live, wrap_w2, ScaleUIPx(12), 30, row2,
-                                line_buf2, sizeof(line_buf2))
-                DrawUIText(line_buf2, (int)block2.x + ScaleUIPx(8),
-                           (int)block2.y + ScaleUIPx(4) + row2 * line_h,
-                           ScaleUIPx(12), GetThemeText())
-                row2 = row2 + 1
-            }
-            EndScissorMode()
+            mdv.md_draw(live, (int)bounds.x + pad + ScaleUIPx(10),
+                        y + line_h, wrap_w - ScaleUIPx(20), fnt, line_h)
+        } else {
+            DrawUIText(think, (int)bounds.x + pad, y, ScaleUIPx(12),
+                       GetThemeIcon())
         }
     }
     EndScissorMode()
+}
+
+draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
+    agent_bind(st)
+    krait_agent_poll()
+    if krait_agent_files_changed() != 0 {
+        tree.refresh_tree(st)
+        i := 0
+        while i < krait_agent_written_count() {
+            ed.editor_reload_if_open(st, krait_agent_written_path(i))
+            i = i + 1
+        }
+    }
+    agent_route_problems(st)
+    agent_mirror_console(st)
+    if ed.mod_key_down() && IsKeyPressed(KEY_L) {
+        if agent_input_focused == 0 {
+            agent_reset(st)
+        }
+    }
+    if krait_agent_busy() != 0 && IsKeyPressed(KEY_ESCAPE) &&
+       agent_input_focused == 0 {
+        krait_agent_stop()
+    }
+    DrawRectangleRec(bounds, GetThemeBackground())
+    pad := ScaleUIPx(10)
+    row_h := ScaleUIPx(32)
+    busy := krait_agent_busy()
+
+    perm_h := 0
+    if krait_agent_permission_pending() != 0 {
+        perm_h = ScaleUIPx(34) + krait_agent_permission_count() * ScaleUIPx(16)
+        if perm_h > ScaleUIPx(120) {
+            perm_h = ScaleUIPx(120)
+        }
+    }
+    sess_h := 0
+    if agent_sessions_open != 0 {
+        sess_h = ScaleUIPx(220)
+    }
+    input_y := (int)bounds.y + (int)bounds.height - row_h - pad
+    input_y = input_y - perm_h
+    status := krait_agent_status_text()
+    transcript_h := (float)(input_y - (int)bounds.y) - (float)sess_h
+    if strlen(status) > 0 {
+        transcript_h = transcript_h - (float)ScaleUIPx(22)
+    }
+    transcript := (Rectangle){bounds.x, bounds.y, bounds.width, transcript_h}
+    draw_transcript(transcript, busy, st)
+    if strlen(status) > 0 {
+        DrawUIText(status, (int)bounds.x + pad,
+                   input_y - ScaleUIPx(20), ScaleUIPx(12), GetThemeLink())
+    }
+    if perm_h > 0 {
+        draw_permission_bar((Rectangle){bounds.x,
+                                        (float)(input_y + row_h),
+                                        bounds.width, (float)perm_h})
+    }
+    if agent_sessions_open != 0 {
+        draw_sessions((Rectangle){bounds.x,
+                                  (float)(input_y - sess_h),
+                                  bounds.width, (float)sess_h}, st)
+    }
+
+    style := (UITextInputStyle){
+        GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
+        GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
+    }
+    send_w := ScaleUIPx(64)
+    stop_w := ScaleUIPx(58)
+    sess_w := ScaleUIPx(70)
+    field_w := bounds.width - (float)(pad * 2 + send_w + stop_w + sess_w + ScaleUIPx(18))
+    DrawUITextField((TextFieldProps){
+        (Rectangle){bounds.x + (float)pad, (float)input_y,
+                    field_w, (float)row_h},
+        agent_input, sizeof(agent_input),
+        &agent_input_cursor, &agent_input_focused,
+        sizeof(agent_input) - 1, ScaleUIPx(13), 7601,
+        style, (UITextInputFilter){0}, NULL, NULL
+    })
+    if strlen(agent_input) > 0 && busy == 0 {
+        if DrawUIGenericButton((int)bounds.x + pad + (int)field_w + ScaleUIPx(6),
+                               input_y, send_w, row_h, "Send",
+                               UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+            agent_send_input()
+        }
+    }
+    if krait_agent_can_revert() != 0 {
+        rev_w := ScaleUIPx(70)
+        if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad -
+                               stop_w - sess_w - ScaleUIPx(12) - rev_w,
+                               input_y, rev_w, row_h, "Revert",
+                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            krait_agent_revert()
+        }
+    }
+    if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - stop_w - sess_w - ScaleUIPx(6),
+                           input_y, sess_w, row_h, "Sessions",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        agent_sessions_open = agent_sessions_open == 0 ? 1 : 0
+    }
+    if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - stop_w,
+                           input_y, stop_w, row_h, busy != 0 ? "Stop" : "Clear",
+                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        if busy != 0 {
+            krait_agent_stop()
+        } else {
+            agent_reset(st)
+        }
+    }
+    if agent_input_focused != 0 && IsKeyPressed(KEY_ENTER) && busy == 0 {
+        agent_send_input()
+    }
 }

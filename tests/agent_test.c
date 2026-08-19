@@ -378,6 +378,93 @@ test_live_agent_gated(void)
            krait_agent_status_text());
 }
 
+/* ---- markdown layout (native_md.c) ---- */
+static void
+test_markdown_layout(void)
+{
+    static const char *doc = "# Title\n"
+                             "plain **bold** and `code` span\n"
+                             "```c\nint x = 1;\nint y = 2;\n```\n"
+                             "- alpha\n"
+                             "- beta\n"
+                             "1. first\n"
+                             "> quoted line\n";
+    int rows = krait_md_rows(doc, 400, 12);
+    int kind = -1, runs = 0, indent = 0, bg = 0, i;
+    int saw_h1 = 0, saw_code = 0, saw_bullet = 0, saw_num = 0, saw_quote = 0;
+
+    CHECK(rows >= 8);
+    for(i = 0; i < rows; i++) {
+        char buf[256];
+        int x = 0, style = 0;
+
+        if(!krait_md_row_info(doc, 400, 12, i, &kind, &runs, &indent, &bg)) {
+            CHECK(0);
+            continue;
+        }
+        if(kind == 1)
+            saw_h1 = 1;
+        if(kind == 4) {
+            saw_code = 1;
+            CHECK(bg == 1);
+        }
+        if(kind == 6)
+            saw_bullet = 1;
+        if(kind == 7)
+            saw_num = 1;
+        if(kind == 5)
+            saw_quote = 1;
+        CHECK(krait_md_run_info(doc, 400, 12, i, 0, buf, sizeof(buf),
+                                &x, &style) == 1 || runs == 0);
+    }
+    CHECK(saw_h1);
+    CHECK(saw_code);
+    CHECK(saw_bullet);
+    CHECK(saw_num);
+    CHECK(saw_quote);
+
+    /* style bits: the bold word in row 2+ carries style 1 */
+    {
+        char buf[256];
+        int x = 0, style = 0, found_bold = 0, found_code = 0;
+
+        for(i = 0; i < rows; i++) {
+            int kind2, runs2, ind2, bg2, r;
+
+            krait_md_row_info(doc, 400, 12, i, &kind2, &runs2, &ind2, &bg2);
+            for(r = 0; r < runs2; r++) {
+                if(krait_md_run_info(doc, 400, 12, i, r, buf, sizeof(buf),
+                                     &x, &style)) {
+                    if(style % 2 == 1 && strcmp(buf, "bold") == 0)
+                        found_bold = 1;
+                    if(style / 4 % 2 == 1 && strcmp(buf, "code") == 0)
+                        found_code = 1;
+                }
+            }
+        }
+        CHECK(found_bold);
+        CHECK(found_code);
+    }
+
+    /* layout is safe at tiny widths (wrapping depends on the live font,
+     * which needs a window, so only sanity-check row counts here) */
+    CHECK(krait_md_rows("one two three four five six seven eight", 40, 12) >= 1);
+
+    /* empty and NULL are safe */
+    CHECK(krait_md_rows("", 400, 12) == 0);
+    CHECK(krait_md_rows(NULL, 400, 12) == 0);
+}
+
+/* ---- permission gate no-op + retry guards ---- */
+static void
+test_permission_and_retry_guards(void)
+{
+    CHECK(krait_agent_permission_pending() == 0);
+    krait_agent_permission_respond(0, 0);   /* nothing pending: no-op */
+    CHECK(krait_agent_retry(-1) == 0);
+    CHECK(krait_agent_retry(9999) == 0);
+}
+
 int
 main(void)
 {
@@ -397,6 +484,8 @@ main(void)
     test_hex_editor();
     test_vision_body();
     test_stream_body();
+    test_markdown_layout();
+    test_permission_and_retry_guards();
     test_live_agent_gated();
     test_live_vision_gated();
     krait_agent_shutdown();

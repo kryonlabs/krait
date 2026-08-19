@@ -1,0 +1,163 @@
+#module "ide.mdview"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+
+krait_md_rows :: (text: const char*, width: int, font: int) -> int #extern
+krait_md_row_info :: (text: const char*, width: int, font: int, row: int, kind: int*, runs: int*, indent: int*, bg: int*) -> int #extern
+krait_md_run_info :: (text: const char*, width: int, font: int, row: int, run: int, dst: char*, dst_size: int, x: int*, style: int*) -> int #extern
+krait_md_indent_px :: () -> int #extern
+krait_md_view_set :: (text: const char*, title: const char*) #extern
+krait_md_view_open_file :: (path: const char*) -> int #extern
+krait_md_view_text :: () -> const char* #extern
+krait_md_view_title :: () -> const char* #extern
+
+md_scroll :: int #global
+
+# Markdown rendering shared by the agent transcript and the standalone
+# viewer. Rows come pre-wrapped from native_md.c; this maps row kinds and
+# per-run style bits to fonts and theme colors. Style bits: 1 bold,
+# 2 italic, 4 code, 8 link.
+
+md_row_height :: (kind: int, line_h: int) -> int {
+    if kind == 1 {
+        return line_h * 3 / 2
+    }
+    if kind == 2 {
+        return line_h * 5 / 4
+    }
+    return line_h
+}
+
+md_height :: (text: const char*, wrap_w: int, fnt: int, line_h: int) -> int {
+    rows := krait_md_rows(text, wrap_w, fnt)
+    total := 0
+    r := 0
+    while r < rows {
+        kind := 0
+        runs := 0
+        ind := 0
+        bg := 0
+        krait_md_row_info(text, wrap_w, fnt, r, &kind, &runs, &ind, &bg)
+        total = total + md_row_height(kind, line_h) + ScaleUIPx(2)
+        r = r + 1
+    }
+    return total
+}
+
+md_draw :: (text: const char*, x: int, y: int, wrap_w: int, fnt: int, line_h: int) -> int {
+    rows := krait_md_rows(text, wrap_w, fnt)
+    yy := y
+    r := 0
+    while r < rows {
+        kind := 0
+        runs := 0
+        ind := 0
+        bg := 0
+        krait_md_row_info(text, wrap_w, fnt, r, &kind, &runs, &ind, &bg)
+        rh := md_row_height(kind, line_h)
+        if bg != 0 {
+            DrawRectangleRec((Rectangle){(float)x - ScaleUIPx(4), (float)yy,
+                                         (float)(wrap_w + ScaleUIPx(8)),
+                                         (float)(rh + ScaleUIPx(2))},
+                             GetThemeSurface())
+        }
+        if kind == 8 {
+            DrawLine(x, yy + line_h / 2, x + wrap_w, yy + line_h / 2,
+                     GetThemeSurface())
+        } else {
+            run := 0
+            while run < runs {
+                buf: [600] char
+                rx := 0
+                st := 0
+                krait_md_run_info(text, wrap_w, fnt, r, run, buf,
+                                  sizeof(buf), &rx, &st)
+                color := GetThemeText()
+                f := fnt
+                code := (st / 4) % 2
+                link := (st / 8) % 2
+                bold := st % 2
+                if code != 0 || link != 0 {
+                    color = GetThemeLink()
+                } else if bold != 0 {
+                    f = fnt + 1
+                }
+                if buf[0] != 0 {
+                    DrawUIText(buf, x + rx + ind * krait_md_indent_px(), yy,
+                               f, color)
+                }
+                run = run + 1
+            }
+        }
+        yy = yy + rh + ScaleUIPx(2)
+        r = r + 1
+    }
+    return yy - y
+}
+
+mdview_open :: (text: const char*, title: const char*, st: state.IdeState*) {
+    krait_md_view_set(text, title)
+    md_scroll = 0
+    st->view = state.IDE_VIEW_MD
+}
+
+mdview_open_file :: (path: const char*, st: state.IdeState*) -> int {
+    if krait_md_view_open_file(path) == 0 {
+        return 0
+    }
+    md_scroll = 0
+    st->view = state.IDE_VIEW_MD
+    return 1
+}
+
+draw_md_view :: (bounds: Rectangle, st: state.IdeState*) {
+    DrawRectangleRec(bounds, GetThemeBackground())
+    text := krait_md_view_text()
+    title := krait_md_view_title()
+    pad := ScaleUIPx(12)
+    line_h := ScaleUIPx(18)
+    fnt := ScaleUIPx(13)
+
+    header_h := ScaleUIPx(34)
+    DrawRectangleRec((Rectangle){bounds.x, bounds.y, bounds.width,
+                                 (float)header_h}, GetThemeSurface())
+    head: [300] char
+    snprintf(head, sizeof(head), "%s  -  Esc: back", title)
+    DrawUIText(head, (int)bounds.x + pad,
+               (int)bounds.y + (header_h - ScaleUIPx(14)) / 2,
+               ScaleUIPx(12), GetThemeLink())
+    if IsKeyPressed(KEY_ESCAPE) {
+        if st->project.loaded != 0 {
+            st->view = state.IDE_VIEW_PROJECT
+        } else {
+            st->view = state.IDE_VIEW_START
+        }
+        return
+    }
+
+    body := (Rectangle){bounds.x, bounds.y + (float)header_h, bounds.width,
+                        bounds.height - (float)header_h}
+    wrap_w := (int)bounds.width - pad * 2
+    content_h := md_height(text, wrap_w, fnt, line_h)
+    max_scroll := content_h - (int)body.height + pad * 2
+    if max_scroll < 0 {
+        max_scroll = 0
+    }
+    if max_scroll > 0 {
+        md_scroll = md_scroll + (int)(GetMouseWheelMove() * (float)(line_h * 3))
+        if md_scroll > max_scroll {
+            md_scroll = max_scroll
+        }
+        if md_scroll < 0 {
+            md_scroll = 0
+        }
+    } else {
+        md_scroll = 0
+    }
+    BeginScissorMode((int)body.x, (int)body.y, (int)body.width,
+                     (int)body.height)
+    md_draw(text, (int)bounds.x + pad,
+            (int)body.y + pad - md_scroll, wrap_w, fnt, line_h)
+    EndScissorMode()
+}

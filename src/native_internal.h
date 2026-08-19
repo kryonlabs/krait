@@ -180,6 +180,35 @@ int krait_agent_written_count(void);
 const char *krait_agent_written_path(int index);
 int krait_agent_can_revert(void);
 int krait_agent_revert(void);
+const char *krait_agent_tool_name(int index);
+const char *krait_agent_tool_arg(int index);
+int krait_agent_tool_status(int index);
+int krait_agent_tool_dur(int index);
+int krait_agent_permission_pending(void);
+int krait_agent_permission_count(void);
+const char *krait_agent_permission_line(int index);
+void krait_agent_permission_respond(int allow, int always);
+int krait_agent_retry(int index);
+int krait_agent_session_count(void);
+const char *krait_agent_session_name(int index);
+const char *krait_agent_session_project(int index);
+long krait_agent_session_mtime(int index);
+int krait_agent_open_session(int index);
+
+/* ---- native_md.c: markdown layout for the transcript + viewer ----
+ * Style bits: 1 bold, 2 italic, 4 code, 8 link. Row kinds: 0 text,
+ * 1..3 heading levels, 4 code, 5 quote, 6 bullet, 7 numbered, 8 hr. */
+int krait_md_rows(const char *text, int width, int font);
+int krait_md_row_info(const char *text, int width, int font, int row,
+                      int *kind, int *runs, int *indent, int *bg);
+int krait_md_run_info(const char *text, int width, int font, int row, int run,
+                      char *dst, int dst_size, int *x, int *style);
+int krait_md_indent_px(void);
+const char *krait_md_file_text(const char *path);
+void krait_md_view_set(const char *text, const char *title);
+int krait_md_view_open_file(const char *path);
+const char *krait_md_view_text(void);
+const char *krait_md_view_title(void);
 
 /* ---- native_live_eval.c: pure parser/eval helpers (shared by scene + live) ---- */
 const char *krait_live_skip_space(const char *p);

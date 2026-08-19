@@ -24,6 +24,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/time.h>
+#include <dirent.h>
+#include <time.h>
 #include <unistd.h>
 #include <stdarg.h>
 
@@ -44,7 +48,25 @@
 typedef struct {
     int kind;
     char *text;   /* malloc'd */
+    char *tool;   /* malloc'd tool name (TOOL/ACTIONS rows) or NULL */
+    char *arg;    /* malloc'd short arg summary or NULL */
+    int status;   /* tool rows: 0 running, 1 ok, 2 error */
+    int dur_ms;
+    long ts;      /* wall-clock seconds at append */
 } AgentMsg;
+
+/* one executed tool call from the latest batch, captured while the batch
+ * ran so the transcript can show per-call cards with status + duration */
+#define AGENT_MAX_RECS 64
+typedef struct {
+    char tool[32];
+    char arg[192];
+    char result[1400];
+    int status;
+    int dur_ms;
+} AgentToolRec;
+static AgentToolRec agent_recs[AGENT_MAX_RECS];
+static int agent_rec_count;
 
 static AgentMsg agent_msgs[AGENT_MAX_MSGS];
 static int agent_msg_count;
@@ -216,18 +238,24 @@ static void
 agent_msg_free(AgentMsg *m)
 {
     free(m->text);
+    free(m->tool);
+    free(m->arg);
     m->text = NULL;
+    m->tool = NULL;
+    m->arg = NULL;
     m->kind = AGENT_MSG_USER;
+    m->status = 1;
+    m->dur_ms = 0;
+    m->ts = 0;
 }
 
 static void
-agent_append(int kind, const char *text)
+agent_append_full(int kind, const char *text, const char *tool,
+                  const char *arg, int status, int dur_ms)
 {
     AgentMsg *m;
 
     if(agent_msg_count >= AGENT_MAX_MSGS) {
-        int i;
-
         agent_msg_free(&agent_msgs[0]);
         memmove(&agent_msgs[0], &agent_msgs[1],
                 sizeof(AgentMsg) * (AGENT_MAX_MSGS - 1));
@@ -236,10 +264,22 @@ agent_append(int kind, const char *text)
     m = &agent_msgs[agent_msg_count++];
     m->kind = kind;
     m->text = strdup(text != NULL ? text : "");
+    m->tool = tool != NULL && tool[0] != '\0' ? strdup(tool) : NULL;
+    m->arg = arg != NULL && arg[0] != '\0' ? strdup(arg) : NULL;
+    m->status = status;
+    m->dur_ms = dur_ms;
+    m->ts = time(NULL);
 }
 
 static void
-agent_persist_msg(int kind, const char *text)
+agent_append(int kind, const char *text)
+{
+    agent_append_full(kind, text, NULL, NULL, kind == AGENT_MSG_ERROR ? 2 : 1,
+                      0);
+}
+
+static void
+agent_persist_msg(const AgentMsg *m)
 {
     FILE *f;
 
@@ -252,10 +292,26 @@ agent_persist_msg(int kind, const char *text)
         KryJsonBuf buf = {0};
         const char *line;
 
-        kry_json_buf_raw(&buf, "{\"kind\":");
-        kry_json_buf_num(&buf, kind);
+        kry_json_buf_raw(&buf, "{\"v\":2,\"kind\":");
+        kry_json_buf_num(&buf, m->kind);
         kry_json_buf_raw(&buf, ",\"text\":");
-        kry_json_buf_str(&buf, text != NULL ? text : "");
+        kry_json_buf_str(&buf, m->text != NULL ? m->text : "");
+        if(m->tool != NULL) {
+            kry_json_buf_raw(&buf, ",\"tool\":");
+            kry_json_buf_str(&buf, m->tool);
+        }
+        if(m->arg != NULL) {
+            kry_json_buf_raw(&buf, ",\"arg\":");
+            kry_json_buf_str(&buf, m->arg);
+        }
+        if(m->kind == AGENT_MSG_TOOL || m->kind == AGENT_MSG_ACTIONS) {
+            kry_json_buf_raw(&buf, ",\"status\":");
+            kry_json_buf_num(&buf, m->status);
+            kry_json_buf_raw(&buf, ",\"dur\":");
+            kry_json_buf_num(&buf, m->dur_ms);
+        }
+        kry_json_buf_raw(&buf, ",\"ts\":");
+        kry_json_buf_num(&buf, (double)m->ts);
         kry_json_buf_raw(&buf, "}");
         line = kry_json_buf_finish(&buf);
         if(line != NULL)
@@ -294,9 +350,13 @@ agent_load_history(void)
             if(root != NULL) {
                 msg_text = kry_json_string(kry_json_get(root, "text"));
                 if(msg_text != NULL)
-                    agent_append(
+                    agent_append_full(
                         (int)kry_json_number(kry_json_get(root, "kind")),
-                        msg_text);
+                        msg_text,
+                        kry_json_string(kry_json_get(root, "tool")),
+                        kry_json_string(kry_json_get(root, "arg")),
+                        (int)kry_json_number(kry_json_get(root, "status")),
+                        (int)kry_json_number(kry_json_get(root, "dur")));
                 kry_json_free(root);
             }
         }
@@ -311,7 +371,7 @@ static void
 agent_remember(int kind, const char *text)
 {
     agent_append(kind, text);
-    agent_persist_msg(kind, text);
+    agent_persist_msg(&agent_msgs[agent_msg_count - 1]);
 }
 
 static int
@@ -663,6 +723,52 @@ agent_tool_search(const char *query, char *out, size_t out_size)
                                  results[i].excerpt);
 }
 
+/* ---- per-call capture inside krait_agent_run_tools ---- */
+static struct timeval agent_rec_tv;
+
+static void
+agent_rec_begin(const char *tool, const char *a1, const char *a2)
+{
+    AgentToolRec *r;
+
+    if(agent_rec_count >= AGENT_MAX_RECS)
+        return;
+    r = &agent_recs[agent_rec_count++];
+    memset(r, 0, sizeof(*r));
+    snprintf(r->tool, sizeof(r->tool), "%s", tool != NULL ? tool : "?");
+    {
+        const char *a = a1 != NULL && a1[0] != '\0' ? a1 : a2;
+
+        snprintf(r->arg, sizeof(r->arg), "%s", a != NULL ? a : "");
+    }
+    gettimeofday(&agent_rec_tv, NULL);
+}
+
+static void
+agent_rec_end(const char *out, size_t before, size_t after)
+{
+    AgentToolRec *r;
+    struct timeval tv;
+    size_t len;
+
+    if(agent_rec_count <= 0)
+        return;
+    r = &agent_recs[agent_rec_count - 1];
+    gettimeofday(&tv, NULL);
+    r->dur_ms = (int)((tv.tv_sec - agent_rec_tv.tv_sec) * 1000 +
+                      (tv.tv_usec - agent_rec_tv.tv_usec) / 1000);
+    len = after > before ? after - before : 0;
+    if(len > sizeof(r->result) - 1)
+        len = sizeof(r->result) - 1;
+    memcpy(r->result, out + before, len);
+    r->result[len] = '\0';
+    krait_trim(r->result);
+    r->status = (strstr(r->result, "refused") != NULL ||
+                 strstr(r->result, "failed") != NULL ||
+                 strstr(r->result, "FAILED") != NULL ||
+                 strstr(r->result, "not found") != NULL) ? 2 : 1;
+}
+
 /* Parse and execute a JSON array of tool actions. Returns the compact
  * TOOL RESULTS text (malloc'd). Public so tests drive the exact tool
  * path the live loop uses. */
@@ -681,6 +787,7 @@ krait_agent_run_tools(const char *json)
         return NULL;
     }
     out[0] = '\0';
+    agent_rec_count = 0;
     if(root == NULL) {
         snprintf(out, AGENT_TOOL_OUT_CAP, "TOOL RESULTS: bad action json\n");
         return out;
@@ -690,9 +797,18 @@ krait_agent_run_tools(const char *json)
     for(i = 0; i < count; i++) {
         KryJson *action = kry_json_at(root, i);
         const char *tool = kry_json_string(kry_json_get(action, "tool"));
+        size_t before;
 
         if(tool == NULL)
             continue;
+        agent_rec_begin(tool,
+                        kry_json_string(kry_json_get(action, "path")),
+                        kry_json_string(kry_json_get(action, "query")) != NULL ?
+                        kry_json_string(kry_json_get(action, "query")) :
+                        kry_json_string(kry_json_get(action, "cmd")) != NULL ?
+                        kry_json_string(kry_json_get(action, "cmd")) :
+                        kry_json_string(kry_json_get(action, "title")));
+        before = strlen(out);
         if(strcmp(tool, "list") == 0)
             agent_tool_list(out, AGENT_TOOL_OUT_CAP);
         else if(strcmp(tool, "search") == 0)
@@ -783,6 +899,7 @@ krait_agent_run_tools(const char *json)
                          rc == 1 ? "ok" : "failed");
             }
         }
+        agent_rec_end(out, before, strlen(out));
     }
     kry_json_free(root);
     if(wrote)
@@ -915,6 +1032,240 @@ agent_build_context(KraitAiMessage *msgs, int max, char *temps[], int *temp_coun
     return count;
 }
 
+/* ---- per-call transcript rows from the latest batch ---- */
+static void
+agent_remember_tool_results(char *blob)
+{
+    int i;
+
+    if(blob == NULL)
+        return;
+    if(agent_rec_count <= 0) {
+        agent_remember(AGENT_MSG_TOOL, blob);
+        free(blob);
+        return;
+    }
+    for(i = 0; i < agent_rec_count; i++) {
+        AgentToolRec *r = &agent_recs[i];
+        char head[288];
+
+        snprintf(head, sizeof(head), "[%s %s] %s", r->tool,
+                 r->arg[0] != '\0' ? r->arg : "-", r->result);
+        agent_append_full(AGENT_MSG_TOOL, head, r->tool, r->arg, r->status,
+                          r->dur_ms);
+        agent_persist_msg(&agent_msgs[agent_msg_count - 1]);
+    }
+    free(blob);
+}
+
+/* ---- permission gate: park a tool batch until the user approves ---- */
+static char *agent_perm_json;
+static char agent_perm_lines[AGENT_MAX_RECS][224];
+static int agent_perm_count;
+static int agent_perm_always;
+
+int
+krait_agent_permission_pending(void)
+{
+    return agent_perm_json != NULL;
+}
+
+int
+krait_agent_permission_count(void)
+{
+    return agent_perm_count;
+}
+
+const char *
+krait_agent_permission_line(int index)
+{
+    if(index < 0 || index >= agent_perm_count)
+        return "";
+    return agent_perm_lines[index];
+}
+
+static void
+agent_build_perm_lines(const char *json)
+{
+    KryJson *root = kry_json_parse(json);
+    int i;
+
+    agent_perm_count = 0;
+    if(root == NULL)
+        return;
+    for(i = 0; i < kry_json_count(root) && agent_perm_count < AGENT_MAX_RECS;
+        i++) {
+        KryJson *a = kry_json_at(root, i);
+        const char *tool = kry_json_string(kry_json_get(a, "tool"));
+        const char *detail;
+
+        if(tool == NULL)
+            continue;
+        detail = kry_json_string(kry_json_get(a, "path"));
+        if(detail == NULL || detail[0] == '\0')
+            detail = kry_json_string(kry_json_get(a, "cmd"));
+        if(detail == NULL || detail[0] == '\0')
+            detail = kry_json_string(kry_json_get(a, "query"));
+        snprintf(agent_perm_lines[agent_perm_count++],
+                 sizeof(agent_perm_lines[0]), "%s %s", tool,
+                 detail != NULL ? detail : "");
+    }
+    kry_json_free(root);
+}
+
+/* Forward: shared execution path used by the poll loop and the
+ * permission approve button. Consumes (frees) the reply json. */
+static void
+agent_execute_actions(char *reply);
+
+void
+krait_agent_permission_respond(int allow, int always)
+{
+    char *json = agent_perm_json;
+
+    if(json == NULL)
+        return;
+    agent_perm_json = NULL;
+    agent_perm_count = 0;
+    if(allow) {
+        if(always)
+            agent_perm_always = 1;
+        agent_execute_actions(json);
+        return;
+    }
+    free(json);
+    agent_busy = 0;
+    agent_set_status("tools denied");
+    agent_remember(AGENT_MSG_ERROR, "tool batch denied by user");
+}
+
+/* ---- retry: replay a user turn from the transcript ---- */
+int
+krait_agent_retry(int index)
+{
+    char *text;
+    int i;
+
+    if(agent_busy || index < 0 || index >= agent_msg_count)
+        return 0;
+    if(agent_msgs[index].kind != AGENT_MSG_USER)
+        return 0;
+    text = strdup(agent_msgs[index].text != NULL ? agent_msgs[index].text : "");
+    for(i = index; i < agent_msg_count; i++)
+        agent_msg_free(&agent_msgs[i]);
+    agent_msg_count = index;
+    {
+        int rc = krait_agent_send(text);
+
+        free(text);
+        return rc;
+    }
+}
+
+/* ---- session picker: histories under ~/.kryon/krait/agent ---- */
+#define AGENT_MAX_SESSIONS 32
+typedef struct {
+    char dir_name[256];
+    char project[KRAIT_PATH_MAX];
+    long mtime;
+} AgentSession;
+static AgentSession agent_sessions[AGENT_MAX_SESSIONS];
+static int agent_session_count;
+static long agent_session_scan;
+
+static void
+agent_sessions_scan(void)
+{
+    char root[KRAIT_PATH_MAX * 2];
+    DIR *d;
+    struct dirent *e;
+
+    if(time(NULL) - agent_session_scan < 2)
+        return;
+    agent_session_scan = time(NULL);
+    agent_session_count = 0;
+    snprintf(root, sizeof(root), "%s/.kryon/krait/agent",
+             getenv("HOME") != NULL ? getenv("HOME") : ".");
+    d = opendir(root);
+    if(d == NULL)
+        return;
+    while((e = readdir(d)) != NULL &&
+          agent_session_count < AGENT_MAX_SESSIONS) {
+        char path[KRAIT_PATH_MAX * 2];
+        char proj[KRAIT_PATH_MAX];
+        struct stat st;
+        AgentSession *s;
+
+        if(e->d_name[0] == '.')
+            continue;
+        snprintf(path, sizeof(path), "%s/%s/history.jsonl", root, e->d_name);
+        if(stat(path, &st) != 0 || !S_ISREG(st.st_mode))
+            continue;
+        proj[0] = '\0';
+        snprintf(path, sizeof(path), "%s/%s/project.txt", root, e->d_name);
+        {
+            char *data = NULL;
+            long len;
+
+            if(krait_read_file_alloc(path, &data, &len) && data != NULL) {
+                krait_trim(data);
+                snprintf(proj, sizeof(proj), "%s", data);
+                free(data);
+            }
+        }
+        s = &agent_sessions[agent_session_count++];
+        snprintf(s->dir_name, sizeof(s->dir_name), "%s", e->d_name);
+        snprintf(s->project, sizeof(s->project), "%s", proj);
+        s->mtime = (long)st.st_mtime;
+    }
+    closedir(d);
+}
+
+int
+krait_agent_session_count(void)
+{
+    agent_sessions_scan();
+    return agent_session_count;
+}
+
+const char *
+krait_agent_session_name(int index)
+{
+    if(index < 0 || index >= agent_session_count)
+        return "";
+    return agent_sessions[index].dir_name;
+}
+
+const char *
+krait_agent_session_project(int index)
+{
+    if(index < 0 || index >= agent_session_count)
+        return "";
+    return agent_sessions[index].project;
+}
+
+long
+krait_agent_session_mtime(int index)
+{
+    if(index < 0 || index >= agent_session_count)
+        return 0;
+    return agent_sessions[index].mtime;
+}
+
+int
+krait_agent_open_session(int index)
+{
+    const char *proj;
+
+    if(index < 0 || index >= agent_session_count)
+        return 0;
+    proj = agent_sessions[index].project;
+    if(proj == NULL || proj[0] == '\0' || !krait_path_exists(proj))
+        return 0;
+    krait_agent_bind(proj);
+    return 1;
+}
+
 static void
 agent_start_request(void)
 {
@@ -980,6 +1331,14 @@ krait_agent_bind(const char *project_dir)
     snprintf(agent_history_path, sizeof(agent_history_path), "%s/history.jsonl",
              dir);
     krait_mkdir_p(dir);
+    /* session picker reads this to map a history dir back to its project */
+    {
+        char proj_path[KRAIT_PATH_MAX * 2];
+
+        snprintf(proj_path, sizeof(proj_path), "%s/project.txt", dir);
+        if(!krait_path_exists(proj_path) && agent_project[0] != '\0')
+            krait_write_text_file(proj_path, agent_project);
+    }
     if(getenv("KRAIT_AGENT_DEBUG") != NULL)
         fprintf(stderr, "agent-bind: project='%s' history='%s'\n",
                 agent_project, agent_history_path);
@@ -1018,7 +1377,7 @@ krait_agent_status_text(void)
 const char *
 krait_agent_streaming_text(void)
 {
-    static char partial[4096];
+    static char partial[16384];
     char *text;
 
     if(!agent_busy || agent_req == NULL)
@@ -1031,6 +1390,38 @@ krait_agent_streaming_text(void)
     snprintf(partial, sizeof(partial), "%s", text);
     free(text);
     return partial;
+}
+
+const char *
+krait_agent_tool_name(int index)
+{
+    if(index < 0 || index >= agent_msg_count)
+        return "";
+    return agent_msgs[index].tool != NULL ? agent_msgs[index].tool : "";
+}
+
+const char *
+krait_agent_tool_arg(int index)
+{
+    if(index < 0 || index >= agent_msg_count)
+        return "";
+    return agent_msgs[index].arg != NULL ? agent_msgs[index].arg : "";
+}
+
+int
+krait_agent_tool_status(int index)
+{
+    if(index < 0 || index >= agent_msg_count)
+        return 1;
+    return agent_msgs[index].status;
+}
+
+int
+krait_agent_tool_dur(int index)
+{
+    if(index < 0 || index >= agent_msg_count)
+        return 0;
+    return agent_msgs[index].dur_ms;
 }
 
 int
@@ -1101,26 +1492,58 @@ krait_agent_stop(void)
 void
 krait_agent_clear(void)
 {
-    char cmd[KRAIT_PATH_MAX * 8];
     int i;
 
     if(agent_req != NULL) {
         krait_ai_free(agent_req);
         agent_req = NULL;
     }
+    free(agent_perm_json);
+    agent_perm_json = NULL;
+    agent_perm_count = 0;
+    agent_perm_always = 0;
     for(i = 0; i < agent_msg_count; i++)
         agent_msg_free(&agent_msgs[i]);
     agent_msg_count = 0;
     agent_busy = 0;
     agent_round = 0;
     agent_set_status("");
-    if(agent_history_path[0] != '\0') {
-        snprintf(cmd, sizeof(cmd), "rm -f '%s'", agent_history_path);
-        system(cmd);
-    }
+    if(agent_history_path[0] != '\0')
+        remove(agent_history_path);
 }
 
 #define AGENT_MAX_HTTP_RETRIES 2
+
+/* Execute an approved tool-action reply: remember it, run the batch
+ * (threaded or sync), then feed the next request. Consumes reply. */
+static void
+agent_execute_actions(char *reply)
+{
+    char *results;
+
+    agent_round++;
+    agent_remember(AGENT_MSG_ACTIONS, reply);
+    agent_set_status("running tools (round %d/%d)...", agent_round,
+                     AGENT_MAX_ROUNDS);
+    if(agent_start_tools(reply, &results)) {
+        free(reply);
+        if(results == NULL) {
+            agent_busy = 0;
+            agent_set_status("tool failure");
+            return;
+        }
+        agent_remember_tool_results(results);
+        if(agent_round >= AGENT_MAX_ROUNDS) {
+            agent_busy = 0;
+            agent_set_status("stopped: too many tool rounds");
+            agent_remember(AGENT_MSG_ERROR, "stopped: too many tool rounds");
+            return;
+        }
+        agent_start_request();
+        return;
+    }
+    free(reply);   /* threaded batch: poll picks up the result */
+}
 
 int
 krait_agent_poll(void)
@@ -1143,8 +1566,7 @@ krait_agent_poll(void)
             agent_set_status("tool failure");
             return 0;
         }
-        agent_remember(AGENT_MSG_TOOL, results);
-        free(results);
+        agent_remember_tool_results(results);
         if(agent_round >= AGENT_MAX_ROUNDS) {
             agent_busy = 0;
             agent_set_status("stopped: too many tool rounds");
@@ -1189,30 +1611,15 @@ krait_agent_poll(void)
         return 0;
     }
     if(agent_reply_is_actions(reply)) {
-        agent_round++;
-        agent_remember(AGENT_MSG_ACTIONS, reply);
-        agent_set_status("running tools (round %d/%d)...", agent_round,
-                         AGENT_MAX_ROUNDS);
-        if(agent_start_tools(reply, &results)) {
-            /* synchronous batch (or spawn failure): result is ready */
-            free(reply);
-            if(results == NULL) {
-                agent_busy = 0;
-                agent_set_status("tool failure");
-                return 0;
-            }
-            agent_remember(AGENT_MSG_TOOL, results);
-            free(results);
-            if(agent_round >= AGENT_MAX_ROUNDS) {
-                agent_busy = 0;
-                agent_set_status("stopped: too many tool rounds");
-                agent_remember(AGENT_MSG_ERROR, "stopped: too many tool rounds");
-                return 0;
-            }
-            agent_start_request();
+        if(!agent_perm_always) {
+            free(agent_perm_json);
+            agent_build_perm_lines(reply);
+            agent_perm_json = reply;
+            agent_set_status("approve tools? (round %d/%d)", agent_round + 1,
+                             AGENT_MAX_ROUNDS);
             return 1;
         }
-        free(reply);   /* threaded batch: poll picks up the result */
+        agent_execute_actions(reply);
         return 1;
     }
     agent_finish(reply);
@@ -1229,6 +1636,8 @@ krait_agent_shutdown(void)
         krait_ai_free(agent_req);
         agent_req = NULL;
     }
+    free(agent_perm_json);
+    agent_perm_json = NULL;
     for(i = 0; i < agent_msg_count; i++)
         agent_msg_free(&agent_msgs[i]);
     agent_msg_count = 0;

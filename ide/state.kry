@@ -39,6 +39,7 @@
     IDE_VIEW_AGENT,
     IDE_VIEW_TEXT,
     IDE_VIEW_KANBAN,
+    IDE_VIEW_MD,
 }
 
 #enum {
