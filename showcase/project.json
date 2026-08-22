@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "slug": "krait",
+  "name": "Krait",
+  "summary": "Standalone Kryon IDE for editing, previewing, inspecting, and building Kryon projects.",
+  "repository": {
+    "platform": "github",
+    "url": "https://github.com/kryonlabs/krait",
+    "owner": "kryonlabs",
+    "name": "krait"
+  },
+  "homepage": "https://krait.kryonlabs.com",
+  "banner": "showcase/banner.png",
+  "tags": ["ide", "developer-tools", "desktop"],
+  "featured": true
+}
