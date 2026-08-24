@@ -38,9 +38,9 @@ draw_project_card :: (x: int, y: int, w: int, h: int,
 
     DrawRectangle(x, y, w, h, GetThemeSurface())
     DrawRectangleLines(x, y, w, h, GetThemeButton())
-    DrawUIText(title, x + ScaleUIPx(12), y + ScaleUIPx(10),
+    Text(title, x + ScaleUIPx(12), y + ScaleUIPx(10),
                ScaleUIPx(15), GetThemeText())
-    DrawUIText(path, x + ScaleUIPx(12), y + ScaleUIPx(34),
+    Text(path, x + ScaleUIPx(12), y + ScaleUIPx(34),
                ScaleUIPx(11), GetThemeIcon())
     return !blocked &&
            CheckCollisionPointRec(mouse,
@@ -53,10 +53,10 @@ draw_recent_projects :: (x0: int, y0: int, card_w: int, card_h: int,
                          gap: int, st: state.IdeState*) -> int {
     y := y0
     recent_count := krait_recent_count()
-    DrawUIText("Recent Projects", x0, y, ScaleUIPx(18), GetThemeText())
+    Text("Recent Projects", x0, y, ScaleUIPx(18), GetThemeText())
     y = y + ScaleUIPx(30)
     if recent_count == 0 {
-        DrawUIText("No recent projects yet - open or create one.",
+        Text("No recent projects yet - open or create one.",
                    x0, y, ScaleUIPx(13), GetThemeIcon())
         return y + ScaleUIPx(34)
     }
@@ -77,8 +77,8 @@ draw_recent_projects :: (x0: int, y0: int, card_w: int, card_h: int,
             proj.project_open(st, path)
             return -1
         }
-        if DrawUIGenericButton(remove_x, remove_y, remove_size, remove_size, "x",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        if StyledButton(remove_x, remove_y, remove_size, remove_size, "x",
+                               ButtonStyleSecondary, 0, NULL) {
             krait_recent_remove(i)
             state.project_set_status(st, "Removed recent project")
             return -1
@@ -91,10 +91,10 @@ draw_examples :: (x0: int, y0: int, card_w: int, card_h: int, gap: int,
                  bottom: int, st: state.IdeState*) {
     y := y0
     example_count := krait_example_count()
-    DrawUIText("Examples", x0, y, ScaleUIPx(18), GetThemeText())
+    Text("Examples", x0, y, ScaleUIPx(18), GetThemeText())
     y = y + ScaleUIPx(30)
     if example_count == 0 {
-        DrawUIText("No examples found.", x0, y, ScaleUIPx(13), GetThemeIcon())
+        Text("No examples found.", x0, y, ScaleUIPx(13), GetThemeIcon())
         return
     }
     for int i = 0; i < example_count; i++ {
@@ -130,19 +130,19 @@ draw_start_page :: (content: Rectangle, st: state.IdeState*) {
     gap := ScaleUIPx(14)
     bottom := (int)(content.y + content.height - pad)
 
-    DrawUIText("Krait", x0, y, ScaleUIPx(32), GetThemeText())
+    Text("Krait", x0, y, ScaleUIPx(32), GetThemeText())
     y = y + ScaleUIPx(42)
-    DrawUIText("Choose a project to begin, or start something new.",
+    Text("Choose a project to begin, or start something new.",
                x0, y, ScaleUIPx(14), GetThemeIcon())
     y = y + ScaleUIPx(34)
-    if DrawUIGenericButton(x0, y, ScaleUIPx(180), ScaleUIPx(42),
-                           "Open Project", UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+    if StyledButton(x0, y, ScaleUIPx(180), ScaleUIPx(42),
+                           "Open Project", ButtonStylePrimary, 0, NULL) {
         st->dialog_mode = state.IDE_DIALOG_OPEN_PROJECT
     }
     if mods.has_project_templates(st) != 0 {
-        if DrawUIGenericButton(x0 + ScaleUIPx(194), y,
+        if StyledButton(x0 + ScaleUIPx(194), y,
                                ScaleUIPx(180), ScaleUIPx(42), "New Project",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                               ButtonStyleSecondary, 0, NULL) {
             st->dialog_mode = state.IDE_DIALOG_NEW_PROJECT
         }
     }
@@ -175,8 +175,8 @@ draw_project_picker_modal :: (bounds: Rectangle, st: state.IdeState*) {
     if h < ScaleUIPx(360) {
         h = ScaleUIPx(360)
     }
-    frame := DrawUIModalFrame(w, h, "Open Project",
-                              (Texture2D){0}, (Texture2D){0})
+    frame := ModalFrame(w, h, "Open Project",
+                        (Texture2D){0}, (Texture2D){0})
     if IsKeyPressed(KEY_ESCAPE) ||
        (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
         !CheckCollisionPointRec(GetMousePosition(),
@@ -202,16 +202,16 @@ draw_picker_body :: (bounds: Rectangle, st: state.IdeState*) {
     gap := ScaleUIPx(14)
     bottom := (int)(bounds.y + bounds.height - pad)
 
-    if DrawUIGenericButton(x0, y, ScaleUIPx(150), ScaleUIPx(34),
-                           "Browse...", UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+    if StyledButton(x0, y, ScaleUIPx(150), ScaleUIPx(34),
+                           "Browse...", ButtonStylePrimary, 0, NULL) {
         st->dialog_mode = state.IDE_DIALOG_OPEN_PROJECT
         st->picker_open = 0
         return
     }
     if mods.has_project_templates(st) != 0 {
-        if DrawUIGenericButton(x0 + ScaleUIPx(162), y,
+        if StyledButton(x0 + ScaleUIPx(162), y,
                                ScaleUIPx(150), ScaleUIPx(34), "New Project",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                               ButtonStyleSecondary, 0, NULL) {
             st->dialog_mode = state.IDE_DIALOG_NEW_PROJECT
             st->picker_open = 0
             return

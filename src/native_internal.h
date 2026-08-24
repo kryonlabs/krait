@@ -221,7 +221,7 @@ int krait_live_eval_int(const char *expr, int *out);
 int krait_live_next_scale_arg(char **sp, int *out);
 int krait_live_parse_ident(char **sp, char *dst, size_t dst_size);
 int krait_live_eval_color(const char *expr, Color *out);
-UIButtonStyle krait_live_eval_button_style(const char *expr);
+ButtonStyle krait_live_eval_button_style(const char *expr);
 int krait_live_find_named_body(const char *text, const char *keyword, const char *name,
                                const char **body, const char **body_end);
 int krait_live_find_function_body(const char *text, const char *name,

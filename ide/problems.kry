@@ -90,7 +90,7 @@ draw_problems :: (bounds: Rectangle, st: state.IdeState*) {
         text_w = ScaleUIPx(80)
     }
     if st->diagnostic_count == 0 {
-        DrawUIText("No problems", text_x, y,
+        Text("No problems", text_x, y,
                    ScaleUIPx(13), GetThemeText())
         return
     }
@@ -105,11 +105,11 @@ draw_problems :: (bounds: Rectangle, st: state.IdeState*) {
                           GetThemeButtonHover())
         }
         BeginUIClip(text_x, y, text_w, ScaleUIPx(18))
-        DrawUIText(label, text_x, y, ScaleUIPx(13), GetThemeText())
+        Text(label, text_x, y, ScaleUIPx(13), GetThemeText())
         EndUIClip()
-        if DrawUIGenericButton((int)(bounds.x + bounds.width) - ScaleUIPx(10) - copy_w,
+        if StyledButton((int)(bounds.x + bounds.width) - ScaleUIPx(10) - copy_w,
                                y - ScaleUIPx(2), copy_w, ScaleUIPx(20),
-                               "Copy", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                               "Copy", ButtonStyleSecondary, 0, NULL) {
             SetUIClipboardTextValue(label)
             state.project_set_status(st, "Problem copied")
         }

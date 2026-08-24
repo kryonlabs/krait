@@ -30,7 +30,10 @@ krait_layout_file(char *path, size_t path_size)
 static int
 krait_valid_pane_view(int view)
 {
-    return view >= IDE_PANE_VIEW_EXPLORER && view <= IDE_PANE_VIEW_CARTRIDGE;
+    /* OUTPUT is a dockable bottom-panel tab like the others; KANBAN/ASSETS
+     * are full views, not panes. */
+    return (view >= IDE_PANE_VIEW_EXPLORER && view <= IDE_PANE_VIEW_CARTRIDGE) ||
+           view == IDE_PANE_VIEW_OUTPUT;
 }
 
 static void
@@ -95,8 +98,7 @@ krait_layout_clear_node(PaneNode *node)
 static void
 krait_layout_remove_duplicates(IdeState *st)
 {
-    int seen[IDE_PANE_VIEW_KANBAN + 1] = {0};   /* sized by enum; kanban
-                                                 * itself is a full view now */
+    int seen[64] = {0};   /* sized above every pane view id */
 
     if(st == NULL)
         return;
@@ -109,6 +111,8 @@ krait_layout_remove_duplicates(IdeState *st)
             continue;
         for(int j = 0; j < group->tab_count && j < IDE_MAX_PANE_TABS; j++) {
             int view = group->tabs[j];
+            if(view < 0 || view >= (int)(sizeof(seen) / sizeof(seen[0])))
+                continue;
             if(!krait_valid_pane_view(view) || seen[view])
                 continue;
             seen[view] = 1;
@@ -174,6 +178,7 @@ krait_layout_enforce_studio(IdeState *st)
     static const int bottom_views[] = {
         IDE_PANE_VIEW_PROBLEMS,
         IDE_PANE_VIEW_CONSOLE,
+        IDE_PANE_VIEW_OUTPUT,
     };
 
     if(st == NULL)

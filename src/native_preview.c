@@ -271,6 +271,13 @@ krait_build_output(void)
     return g_preview_build.output;
 }
 
+/* Output pane (ide/output.kry) "Clear" button target. */
+void
+krait_output_clear(void)
+{
+    g_preview_build.output[0] = '\0';
+}
+
 static int
 krait_preview_build_start(const char *project_path, const char *host_path,
                           const char *command, char *status, int status_size)

@@ -28,16 +28,16 @@ draw_assets :: (bounds: Rectangle, st: state.IdeState*) {
     scan_assets(st)
     DrawRectangleRec(bounds, GetThemeSurface())
     pad := ScaleUIPx(8)
-    DrawUIText("Assets", (int)bounds.x + pad, (int)bounds.y + pad,
+    Text("Assets", (int)bounds.x + pad, (int)bounds.y + pad,
                ScaleUIPx(15), GetThemeText())
     count := krait_asset_count()
     snprintf_temp: [64] char
     snprintf(snprintf_temp, sizeof(snprintf_temp), "%d files", count)
-    DrawUIText(snprintf_temp,
+    Text(snprintf_temp,
                (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(24),
                ScaleUIPx(11), GetThemeIcon())
     if count == 0 {
-        DrawUIText("No image or audio assets found",
+        Text("No image or audio assets found",
                    (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(44),
                    ScaleUIPx(12), GetThemeIcon())
         return
@@ -56,9 +56,9 @@ draw_assets :: (bounds: Rectangle, st: state.IdeState*) {
         if list_y + row_h > (int)bounds.y {
             icon_color := is_img != 0 ? GetThemeLink() : GetThemeIcon()
             icon := is_img != 0 ? "IMG" : "AUD"
-            DrawUIText(icon, (int)row.x, (int)row.y + ScaleUIPx(10),
+            Text(icon, (int)row.x, (int)row.y + ScaleUIPx(10),
                        ScaleUIPx(11), icon_color)
-            DrawUIText(path, (int)row.x + ScaleUIPx(40),
+            Text(path, (int)row.x + ScaleUIPx(40),
                        (int)row.y + ScaleUIPx(10), ScaleUIPx(12),
                        GetThemeText())
             if CheckCollisionPointRec(GetMousePosition(), row) {

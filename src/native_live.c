@@ -190,7 +190,7 @@ krait_live_exec_call(KraitLive *live, char *line)
                               live->rel_path, live->line_no);
             return 0;
         }
-        DrawUIText(label, x, y, font, color);
+        Text(label, x, y, font, color);
         live->render_count++;
         return 1;
     }
@@ -224,7 +224,7 @@ krait_live_exec_call(KraitLive *live, char *line)
                               live->rel_path, live->line_no);
             return 0;
         }
-        DrawUIGenericButton(x, y, w, h, label,
+        StyledButton(x, y, w, h, label,
                             krait_live_eval_button_style(args[0]), 0, NULL);
         live->render_count++;
         return 1;
@@ -246,7 +246,7 @@ krait_live_exec_call(KraitLive *live, char *line)
             return 0;
         }
         Picture((PictureProps){asset, {x, y, w, h}, {0}, {0}, 0, WHITE,
-                                    UI_PICTURE_FIT_STRETCH});
+                                    PICTURE_FIT_STRETCH});
         live->render_count++;
         return 1;
     }
@@ -263,13 +263,13 @@ krait_live_exec_call(KraitLive *live, char *line)
            !krait_live_next_scale_arg(&scan, &y) ||
            !krait_live_next_scale_arg(&scan, &w) ||
            !krait_live_next_scale_arg(&scan, &h)) {
-            krait_live_status(live, "%s:%d: unsupported DrawUITextField arguments",
+            krait_live_status(live, "%s:%d: unsupported TextField arguments",
                               live->rel_path, live->line_no);
             return 0;
         }
         Rect(x, y, w, h, GetThemeSurface(), GetThemeButton());
         Text("Text field", x + ScaleUIPx(10), y + ScaleUIPx(8),
-                   UI_TEXT_16, GetThemeIcon());
+                   ScaleUIPx(16), GetThemeIcon());
         live->render_count++;
         return 1;
     }
@@ -284,7 +284,7 @@ krait_live_exec_call(KraitLive *live, char *line)
            !krait_live_eval_int(args[1], &y) ||
            !krait_live_eval_int(args[2], &w) ||
            !krait_live_eval_int(args[3], &h)) {
-            krait_live_status(live, "%s:%d: unsupported DrawUIToggleSwitch arguments",
+            krait_live_status(live, "%s:%d: unsupported Toggle arguments",
                               live->rel_path, live->line_no);
             return 0;
         }
@@ -292,9 +292,9 @@ krait_live_exec_call(KraitLive *live, char *line)
         (void)krait_live_parse_string(&on, on_label, sizeof(on_label));
         Rect(x, y, w, h, GetThemeButton(), GetThemeButtonHover());
         Text(off_label, x + ScaleUIPx(8), y + ScaleUIPx(6),
-                   UI_TEXT_12, GetThemeText());
+                   ScaleUIPx(12), GetThemeText());
         Text(on_label, x + w - ScaleUIPx(32), y + ScaleUIPx(6),
-                   UI_TEXT_12, GetThemeIcon());
+                   ScaleUIPx(12), GetThemeIcon());
         live->render_count++;
         return 1;
     }
@@ -306,13 +306,13 @@ krait_live_exec_call(KraitLive *live, char *line)
         if(!krait_live_eval_int(args[1], &x) ||
            !krait_live_eval_int(args[2], &y) ||
            !krait_live_eval_int(args[3], &w)) {
-            krait_live_status(live, "%s:%d: unsupported DrawUISlider arguments",
+            krait_live_status(live, "%s:%d: unsupported Slider arguments",
                               live->rel_path, live->line_no);
             return 0;
         }
         (void)krait_live_parse_string(&s, slider_label, sizeof(slider_label));
-        /* Match DrawUISlider's editor_bounds {x,y,w,56}: label row at y, track at y+28. */
-        Text(slider_label, x, y, UI_TEXT_12, GetThemeText());
+        /* Match Slider's editor_bounds {x,y,w,56}: label row at y, track at y+28. */
+        Text(slider_label, x, y, ScaleUIPx(12), GetThemeText());
         Rect(x, y + ScaleUIPx(28), w, ScaleUIPx(8), GetThemeButton(), GetThemeButtonHover());
         Rect(x + w / 2 - ScaleUIPx(6), y + ScaleUIPx(21),
                    ScaleUIPx(12), ScaleUIPx(22), GetThemeLink(), GetThemeLink());
@@ -352,7 +352,7 @@ krait_live_exec_call(KraitLive *live, char *line)
             w = 0;
         if(!krait_live_next_scale_arg(&scan, &h))
             h = 0;
-        DrawUIText(label, x + ScaleUIPx(4), y + ScaleUIPx(4), UI_TEXT_12,
+        Text(label, x + ScaleUIPx(4), y + ScaleUIPx(4), ScaleUIPx(12),
                    GetThemeText());
         live->render_count++;
         return 1;
@@ -407,7 +407,7 @@ krait_live_exec_call(KraitLive *live, char *line)
             h = 0;
         Rect(x, y, w, h, (Color){0}, GetThemeButton());
         if(label[0] != '\0')
-            DrawUIText(label, x + ScaleUIPx(8), y, UI_TEXT_12, GetThemeText());
+            Text(label, x + ScaleUIPx(8), y, ScaleUIPx(12), GetThemeText());
         live->render_count++;
         return 1;
     }
@@ -607,4 +607,3 @@ krait_live_draw_source(const char *root, const char *rel_path, int w, int h,
     free(text);
     return live.ok;
 }
-

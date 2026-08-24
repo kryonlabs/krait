@@ -53,11 +53,11 @@ file_affects_preview :: (name: const char*) -> int {
     return 0
 }
 
-file_syntax :: (name: const char*) -> UISyntaxMode {
+file_syntax :: (name: const char*) -> SyntaxMode {
     if is_kry_file(name) != 0 {
-        return UI_SYNTAX_KRY
+        return SyntaxKry
     }
-    return UI_SYNTAX_NONE
+    return SyntaxNone
 }
 
 startup_file_priority :: (name: const char*) -> int {

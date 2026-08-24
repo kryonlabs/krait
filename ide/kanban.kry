@@ -88,26 +88,26 @@ draw_kanban :: (bounds: Rectangle, st: state.IdeState*) {
 
 draw_board :: (bounds: Rectangle, st: state.IdeState*, pad: int, modal: int) {
     row_h := ScaleUIPx(30)
-    if DrawUIGenericButton((int)bounds.x + pad, (int)bounds.y + ScaleUIPx(6),
+    if StyledButton((int)bounds.x + pad, (int)bounds.y + ScaleUIPx(6),
                            ScaleUIPx(80), row_h, "+ Card",
-                           UI_BUTTON_STYLE_PRIMARY, modal, NULL) {
+                           ButtonStylePrimary, modal, NULL) {
         krait_kanban_create(0, "New card")
         krait_kanban_rescan()
     }
-    if DrawUIGenericButton((int)bounds.x + pad + ScaleUIPx(88),
+    if StyledButton((int)bounds.x + pad + ScaleUIPx(88),
                            (int)bounds.y + ScaleUIPx(6),
                            ScaleUIPx(110), row_h, "+ Project",
-                           UI_BUTTON_STYLE_PRIMARY, modal, NULL) {
+                           ButtonStylePrimary, modal, NULL) {
         st->dialog_mode = state.IDE_DIALOG_KANBAN_PROJECT
     }
-    if DrawUIGenericButton((int)bounds.x + pad + ScaleUIPx(206),
+    if StyledButton((int)bounds.x + pad + ScaleUIPx(206),
                            (int)bounds.y + ScaleUIPx(6),
                            ScaleUIPx(80), row_h, "Rescan",
-                           UI_BUTTON_STYLE_SECONDARY, modal, NULL) {
+                           ButtonStyleSecondary, modal, NULL) {
         krait_kanban_rescan()
     }
     if krait_kanban_ai_configured() == 0 {
-        DrawUIText("AI off: set ZAI_API_KEY", (int)bounds.x + pad,
+        Text("AI off: set ZAI_API_KEY", (int)bounds.x + pad,
                    (int)bounds.y + row_h + ScaleUIPx(12), ScaleUIPx(11),
                    GetThemeIcon())
     }
@@ -131,7 +131,7 @@ draw_column :: (bounds: Rectangle, col: int, interactive: int) {
     header: [64] char
     snprintf(header, sizeof(header), "%s (%d)",
              krait_kanban_column_name(col), krait_kanban_count(col))
-    DrawUIText(header, (int)bounds.x + ScaleUIPx(8),
+    Text(header, (int)bounds.x + ScaleUIPx(8),
                (int)bounds.y + ScaleUIPx(6), ScaleUIPx(12), GetThemeText())
     count := krait_kanban_count(col)
     card_h := ScaleUIPx(56)
@@ -147,17 +147,17 @@ draw_column :: (bounds: Rectangle, col: int, interactive: int) {
         DrawRectangleLinesEx(row, 1, GetThemeButton())
         title := krait_kanban_card_title(col, i)
         BeginScissorMode((int)row.x, (int)row.y, (int)row.width, (int)row.height)
-        DrawUIText(title, (int)row.x + ScaleUIPx(6),
+        Text(title, (int)row.x + ScaleUIPx(6),
                    (int)row.y + ScaleUIPx(6), ScaleUIPx(12), GetThemeText())
         project := krait_kanban_card_project(col, i)
         if strlen(project) > 0 {
-            DrawUIText(project, (int)row.x + ScaleUIPx(6),
+            Text(project, (int)row.x + ScaleUIPx(6),
                        (int)row.y + ScaleUIPx(22), ScaleUIPx(10),
                        GetThemeLink())
         }
         status := krait_kanban_card_status(col, i)
         if strlen(status) > 0 {
-            DrawUIText(status, (int)row.x + ScaleUIPx(6),
+            Text(status, (int)row.x + ScaleUIPx(6),
                        (int)row.y + ScaleUIPx(38), ScaleUIPx(10),
                        GetThemeLink())
         }
@@ -196,8 +196,8 @@ draw_card_modal :: (bounds: Rectangle, st: state.IdeState*) {
     if h < ScaleUIPx(420) {
         h = ScaleUIPx(420)
     }
-    frame := DrawUIModalFrame(w, h, kanban_detail_title,
-                              (Texture2D){0}, (Texture2D){0})
+    frame := ModalFrame(w, h, kanban_detail_title,
+                        (Texture2D){0}, (Texture2D){0})
     if IsKeyPressed(KEY_ESCAPE) ||
        (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
         !CheckCollisionPointRec(GetMousePosition(),
@@ -215,59 +215,59 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
     col := kanban_sel_col
     index := kanban_sel_card
     row_h := ScaleUIPx(30)
-    if DrawUIGenericButton((int)bounds.x + pad, (int)bounds.y + ScaleUIPx(6),
+    if StyledButton((int)bounds.x + pad, (int)bounds.y + ScaleUIPx(6),
                            ScaleUIPx(60), row_h, "Close",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                           ButtonStyleSecondary, 0, NULL) {
         kanban_reset_selection()
         return
     }
     column_label: [64] char
     snprintf(column_label, sizeof(column_label), "%s",
              krait_kanban_column_name(col))
-    DrawUIText(column_label, (int)bounds.x + ScaleUIPx(140),
+    Text(column_label, (int)bounds.x + ScaleUIPx(140),
                (int)bounds.y + ScaleUIPx(13), ScaleUIPx(12), GetThemeIcon())
     if col > 0 {
-        if DrawUIGenericButton((int)bounds.x + pad + ScaleUIPx(72),
+        if StyledButton((int)bounds.x + pad + ScaleUIPx(72),
                                (int)bounds.y + ScaleUIPx(6),
                                ScaleUIPx(28), row_h, "<",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                               ButtonStyleSecondary, 0, NULL) {
             krait_kanban_move(col, index, col - 1)
             kanban_reset_selection()
             return
         }
     }
     if col < 3 {
-        if DrawUIGenericButton((int)bounds.x + pad + ScaleUIPx(104),
+        if StyledButton((int)bounds.x + pad + ScaleUIPx(104),
                                (int)bounds.y + ScaleUIPx(6),
                                ScaleUIPx(28), row_h, ">",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                               ButtonStyleSecondary, 0, NULL) {
             krait_kanban_move(col, index, col + 1)
             kanban_reset_selection()
             return
         }
     }
-    if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - ScaleUIPx(60),
+    if StyledButton((int)bounds.x + (int)bounds.width - pad - ScaleUIPx(60),
                            (int)bounds.y + ScaleUIPx(6),
                            ScaleUIPx(60), row_h, "Delete",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                           ButtonStyleSecondary, 0, NULL) {
         krait_kanban_delete(col, index)
         kanban_reset_selection()
         return
     }
 
     body_top := (int)bounds.y + row_h + ScaleUIPx(18)
-    input_style := (UITextInputStyle){
+    input_style := (TextInputStyle){
         GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
         GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
     }
     old_len := strlen(kanban_detail_title)
-    DrawUITextField((TextFieldProps){
+    TextField((TextFieldProps){
         (Rectangle){bounds.x + (float)pad, (float)body_top,
                     bounds.width - (float)(pad * 2), (float)row_h},
         kanban_detail_title, sizeof(kanban_detail_title),
         &kanban_title_cursor, &kanban_title_focused,
         sizeof(kanban_detail_title) - 1, ScaleUIPx(13), 7501,
-        input_style, (UITextInputFilter){0}, NULL, NULL
+        input_style, (TextInputFilter){0}, NULL, NULL
     })
     if strlen(kanban_detail_title) != old_len {
         krait_kanban_set_title(col, index, kanban_detail_title)
@@ -280,13 +280,13 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
     } else {
         snprintf(proj_line, sizeof(proj_line), "no project bound")
     }
-    DrawUIText(proj_line, (int)bounds.x + pad,
+    Text(proj_line, (int)bounds.x + pad,
                body_top + row_h + ScaleUIPx(10), ScaleUIPx(11), GetThemeLink())
 
     ai_state := krait_kanban_ai_poll(col, index)
     status := krait_kanban_card_status(col, index)
     if strlen(status) > 0 {
-        DrawUIText(status, (int)bounds.x + (int)bounds.width - pad - ScaleUIPx(320),
+        Text(status, (int)bounds.x + (int)bounds.width - pad - ScaleUIPx(320),
                    body_top + ScaleUIPx(6), ScaleUIPx(11), GetThemeLink())
     }
 
@@ -299,14 +299,14 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
         area_h = (mid_bottom - mid_top) * 55 / 100
     }
     old_body_len := strlen(kanban_detail_body)
-    body_changed := DrawUITextArea((TextAreaProps){
+    body_changed := TextArea((TextAreaProps){
         (Rectangle){bounds.x + (float)pad, (float)mid_top,
                     bounds.width - (float)(pad * 2), (float)area_h},
         kanban_detail_body, sizeof(kanban_detail_body),
         &kanban_body_cursor, &kanban_body_focused, &kanban_body_scroll,
         sizeof(kanban_detail_body) - 1, ScaleUIPx(13), ScaleUIPx(6), 7502,
-        "Card prompt / notes", UI_SYNTAX_NONE,
-        input_style, (UITextInputFilter){0}, NULL
+        "Card prompt / notes", SyntaxNone,
+        input_style, (TextInputFilter){0}, NULL, 0
     })
     if body_changed != 0 || strlen(kanban_detail_body) != old_body_len {
         krait_kanban_set_body(col, index, kanban_detail_body)
@@ -319,7 +319,7 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
             path := krait_kanban_proposal_path(col, index, p)
             label: [300] char
             snprintf(label, sizeof(label), "proposed: %s", path)
-            DrawUIText(label, (int)bounds.x + pad, py, ScaleUIPx(11),
+            Text(label, (int)bounds.x + pad, py, ScaleUIPx(11),
                        GetThemeText())
             content := krait_kanban_proposal_content(col, index, p)
             preview := (Rectangle){bounds.x + (float)pad, (float)py + ScaleUIPx(14),
@@ -328,7 +328,7 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
             DrawRectangleLinesEx(preview, 1, GetThemeButton())
             BeginScissorMode((int)preview.x, (int)preview.y,
                              (int)preview.width, (int)preview.height)
-            DrawUIText(content, (int)preview.x + ScaleUIPx(6),
+            Text(content, (int)preview.x + ScaleUIPx(6),
                        (int)preview.y + ScaleUIPx(4), ScaleUIPx(11),
                        GetThemeText())
             EndScissorMode()
@@ -338,44 +338,44 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
     }
 
     if strlen(project) > 0 {
-        if DrawUIGenericButton((int)bounds.x + pad, btn_y, ScaleUIPx(70),
+        if StyledButton((int)bounds.x + pad, btn_y, ScaleUIPx(70),
                                row_h, "Open",
-                               UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+                               ButtonStylePrimary, 0, NULL) {
             kanban_open_selected(st)
         }
     }
     if krait_kanban_agent_ready() != 0 {
-        if DrawUIGenericButton((int)bounds.x + pad + ScaleUIPx(78), btn_y,
+        if StyledButton((int)bounds.x + pad + ScaleUIPx(78), btn_y,
                                ScaleUIPx(110), row_h, "Run in Agent",
-                               UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+                               ButtonStylePrimary, 0, NULL) {
             krait_kanban_agent_bridge(kanban_sel_col, kanban_sel_card)
             kanban_reset_selection()
             st->view = state.IDE_VIEW_AGENT
         }
     }
     if krait_kanban_ai_configured() != 0 {
-        if DrawUIGenericButton((int)bounds.x + pad + ScaleUIPx(78), btn_y,
+        if StyledButton((int)bounds.x + pad + ScaleUIPx(78), btn_y,
                                ScaleUIPx(80), row_h, "Run AI",
-                               UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+                               ButtonStylePrimary, 0, NULL) {
             krait_kanban_ai_run(col, index)
             kanban_ai_running = 1
         }
     } else {
-        DrawUIText("AI off: set ZAI_API_KEY", (int)bounds.x + pad + ScaleUIPx(78),
+        Text("AI off: set ZAI_API_KEY", (int)bounds.x + pad + ScaleUIPx(78),
                    btn_y + ScaleUIPx(9), ScaleUIPx(11), GetThemeIcon())
     }
     if proposals > 0 {
-        if DrawUIGenericButton((int)bounds.x + pad + ScaleUIPx(164), btn_y,
+        if StyledButton((int)bounds.x + pad + ScaleUIPx(164), btn_y,
                                ScaleUIPx(80), row_h, "Apply",
-                               UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+                               ButtonStylePrimary, 0, NULL) {
             applied := krait_kanban_apply(col, index)
             if applied > 0 {
                 state.project_set_status(st, "AI proposal applied")
             }
         }
-        if DrawUIGenericButton((int)bounds.x + pad + ScaleUIPx(252), btn_y,
+        if StyledButton((int)bounds.x + pad + ScaleUIPx(252), btn_y,
                                ScaleUIPx(80), row_h, "Reject",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                               ButtonStyleSecondary, 0, NULL) {
             krait_kanban_reject(col, index)
         }
     }

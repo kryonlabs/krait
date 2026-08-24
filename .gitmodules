@@ -1,3 +1,6 @@
 [submodule "vendor/kryon"]
 	path = vendor/kryon
 	url = https://github.com/kryonlabs/kryon.git
+[submodule "vendor/kapsule"]
+	path = vendor/kapsule
+	url = https://github.com/kryonlabs/kapsule.git

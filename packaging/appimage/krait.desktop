@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Krait
+GenericName=Kryon IDE
+Comment=Build Kryon interfaces visually
+Exec=krait %f
+Icon=krait
+Terminal=false
+Categories=Development;IDE;

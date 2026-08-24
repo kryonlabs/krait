@@ -51,10 +51,10 @@ draw_cartridge :: (bounds: Rectangle, st: state.IdeState*) {
     DrawRectangleRec(bounds, GetThemeSurface())
     pad := ScaleUIPx(8)
 
-    DrawUIText("Cartridge", (int)bounds.x + pad, (int)bounds.y + pad,
+    Text("Cartridge", (int)bounds.x + pad, (int)bounds.y + pad,
                ScaleUIPx(15), GetThemeText())
     reload_cartridge(st)
-    DrawUIText(krait_krb_status(), (int)bounds.x + pad,
+    Text(krait_krb_status(), (int)bounds.x + pad,
                (int)bounds.y + ScaleUIPx(24), ScaleUIPx(11), GetThemeIcon())
 
     if krait_krb_loaded() == 0 {
@@ -65,7 +65,7 @@ draw_cartridge :: (bounds: Rectangle, st: state.IdeState*) {
     preview := (Rectangle){bounds.x + pad, bounds.y + ScaleUIPx(44),
                            bounds.width - pad * 2, (float)preview_h}
     DrawRectangleLinesEx(preview, 1, GetThemeButton())
-    DrawUIText("Preview", (int)preview.x + ScaleUIPx(6),
+    Text("Preview", (int)preview.x + ScaleUIPx(6),
                (int)preview.y + ScaleUIPx(4), ScaleUIPx(10), GetThemeIcon())
     BeginScissorMode((int)preview.x, (int)preview.y,
                      (int)preview.width, (int)preview.height)
@@ -73,7 +73,7 @@ draw_cartridge :: (bounds: Rectangle, st: state.IdeState*) {
     EndScissorMode()
 
     tree_top := (int)preview.y + preview_h + ScaleUIPx(10)
-    DrawUIText("Nodes", (int)bounds.x + pad, tree_top, ScaleUIPx(12),
+    Text("Nodes", (int)bounds.x + pad, tree_top, ScaleUIPx(12),
                GetThemeText())
     count := krait_krb_node_count()
     row_h := ScaleUIPx(20)
@@ -92,9 +92,9 @@ draw_cartridge :: (bounds: Rectangle, st: state.IdeState*) {
             if cartridge_selected == i {
                 DrawRectangleRec(row, GetThemeButton())
             }
-            DrawUIText(tname, indent_x, (int)row.y + ScaleUIPx(5),
+            Text(tname, indent_x, (int)row.y + ScaleUIPx(5),
                        ScaleUIPx(11), GetThemeIcon())
-            DrawUIText(name, indent_x + ScaleUIPx(44),
+            Text(name, indent_x + ScaleUIPx(44),
                        (int)row.y + ScaleUIPx(5), ScaleUIPx(12),
                        GetThemeText())
             if CheckCollisionPointRec(GetMousePosition(), row) &&
@@ -107,7 +107,7 @@ draw_cartridge :: (bounds: Rectangle, st: state.IdeState*) {
     }
 
     foot := (int)bounds.y + (int)bounds.height - ScaleUIPx(64)
-    DrawUIText("Selection", (int)bounds.x + pad, foot, ScaleUIPx(12),
+    Text("Selection", (int)bounds.x + pad, foot, ScaleUIPx(12),
                GetThemeText())
     if cartridge_selected >= 0 && cartridge_selected < count {
         sel := cartridge_selected
@@ -116,12 +116,12 @@ draw_cartridge :: (bounds: Rectangle, st: state.IdeState*) {
                  krait_krb_node_type_name(sel), krait_krb_node_name(sel),
                  krait_krb_node_x(sel), krait_krb_node_y(sel),
                  krait_krb_node_w(sel), krait_krb_node_h(sel))
-        DrawUIText(line, (int)bounds.x + pad, foot + ScaleUIPx(16),
+        Text(line, (int)bounds.x + pad, foot + ScaleUIPx(16),
                    ScaleUIPx(11), GetThemeText())
         slot := krait_krb_node_bind_slot(sel)
         if slot >= 0 {
             snprintf(line, sizeof(line), "bind slot %d", slot)
-            DrawUIText(line, (int)bounds.x + pad, foot + ScaleUIPx(30),
+            Text(line, (int)bounds.x + pad, foot + ScaleUIPx(30),
                        ScaleUIPx(11), GetThemeLink())
         }
     }
@@ -129,6 +129,6 @@ draw_cartridge :: (bounds: Rectangle, st: state.IdeState*) {
     snprintf(summary, sizeof(summary), "v%d  nodes %d  strings %d  imports %d  ops %d",
              krait_krb_version(), count, krait_krb_string_count(),
              krait_krb_import_count(), krait_krb_op_count())
-    DrawUIText(summary, (int)bounds.x + pad, foot + ScaleUIPx(46),
+    Text(summary, (int)bounds.x + pad, foot + ScaleUIPx(46),
                ScaleUIPx(11), GetThemeIcon())
 }

@@ -7,6 +7,7 @@
     IDE_LAYOUT_PREVIEW,
 }
 
+# Pane view ids: OUTPUT is appended last so saved layouts keep their tab ids.
 #enum {
     IDE_PANE_VIEW_EXPLORER,
     IDE_PANE_VIEW_EDITOR,
@@ -23,6 +24,7 @@
     IDE_PANE_VIEW_CARTRIDGE,
     IDE_PANE_VIEW_ASSETS,
     IDE_PANE_VIEW_KANBAN,
+    IDE_PANE_VIEW_OUTPUT,
 }
 
 #enum {
@@ -146,7 +148,7 @@ PaneNode :: struct {
     ratio: float
 }
 
-ModuleFileSyntaxFn :: UISyntaxMode (*)(const char*) #type
+ModuleFileSyntaxFn :: SyntaxMode (*)(const char*) #type
 ModuleFilePredicateFn :: int (*)(const char*) #type
 ModuleFilePriorityFn :: int (*)(const char*) #type
 
@@ -202,6 +204,17 @@ OpenFile :: struct {
     artifact_dirty: int
     artifact_loaded: int
     artifact_kind: int
+    artifact_length: int
+    artifact_content_version: int
+    artifact_cache_source: [4][131072] char
+    artifact_cache_name: [4][256] char
+    artifact_cache_path: [4][1024] char
+    artifact_cache_length: [4] int
+    artifact_cache_content_version: [4] int
+    artifact_cache_cursor: [4] int
+    artifact_cache_scroll: [4] int
+    artifact_cache_dirty: [4] int
+    artifact_cache_loaded: [4] int
 }
 
 IdeState :: struct {
@@ -284,8 +297,7 @@ IdeState :: struct {
     preview_dirty: int
     last_edit_time: float
     preview_host_ready: int
-    # terminal (PTY)
-    term: Terminal
+    # terminal (Kapsule console; state owned by src/native_console.c)
     console_focused: int
     # problems
     diagnostics: [64] Diagnostic

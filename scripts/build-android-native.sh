@@ -85,11 +85,19 @@ $AR rcs $KRYON_OUT/libkryon.a $objs
 
 # --- 3. krait sources (arm64) ---------------------------------------------
 echo "==> krait (arm64)"
-KRAIT_INC="-I$KRYON/include -I$KRYON/src/ui -I$KRYON/vendor/clay -Ibuild/linux-x86_64/gen -Isrc"
+# Kapsule emulator core, vendored (keep in sync with GNUmakefile).
+KAPSULE=vendor/kapsule
+KAPSULE_SRCS="terminal.c terminal_csi.c terminal_dcs.c terminal_keys.c terminal_modes.c terminal_mouse.c terminal_osc.c terminal_parser.c terminal_paste.c terminal_pty.c terminal_screen.c terminal_search.c terminal_sgr.c terminal_sixel.c terminal_text.c terminal_view.c session.c selection.c input.c palette.c"
+KRAIT_INC="-I$KAPSULE/src -I$KRYON/include -I$KRYON/src/ui -I$KRYON/vendor/clay -Ibuild/linux-x86_64/gen -Isrc"
 kobjs=""
 for f in src/*.c; do
     o=$KRAIT_OUT/obj/$(basename "$f" .c).o
     $CC -c -std=c99 -O1 -fPIC -w $DEFS $KRAIT_INC "$f" -o "$o"
+    kobjs="$kobjs $o"
+done
+for f in $KAPSULE_SRCS; do
+    o=$KRAIT_OUT/obj/kapsule_$(basename "$f" .c).o
+    $CC -c -std=c99 -O1 -fPIC -w $DEFS $KRAIT_INC "$KAPSULE/src/$f" -o "$o"
     kobjs="$kobjs $o"
 done
 for f in build/linux-x86_64/gen/ide/*.c build/linux-x86_64/gen/modules/*/*.c; do

@@ -16,8 +16,8 @@ theme_settings_state :: UIThemeSettingsState #global
 
 draw_settings_tab :: (x: int, y: int, w: int, label: const char*,
                       tab: int, st: state.IdeState*) -> int {
-    style := st->settings_tab == tab ? UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB
-    if DrawUIGenericButton(x, y, w, ScaleUIPx(28), label, style, 0, NULL) {
+    style := st->settings_tab == tab ? ButtonStyleTabSelected : ButtonStyleTab
+    if StyledButton(x, y, w, ScaleUIPx(28), label, style, 0, NULL) {
         st->settings_tab = tab
         st->settings_scroll = 0
         krait_settings_save(st)
@@ -30,9 +30,9 @@ draw_settings_note :: (x: int, y: int, w: int, title: const char*,
                        body: const char*) -> int {
     font := GetUIFontSize()
     small := GetUISmallFontSize()
-    DrawUIText(title, x, y, font, GetThemeText())
+    Text(title, x, y, font, GetThemeText())
     y = y + font + ScaleUIPx(8)
-    DrawUIText(body, x, y, small, GetThemeIcon())
+    Text(body, x, y, small, GetThemeIcon())
     y = y + small + ScaleUIPx(18)
     DrawLine(x, y, x + w, y, GetThemeButton())
     return y + ScaleUIPx(16)
@@ -43,18 +43,22 @@ apply_settings_theme :: (st: state.IdeState*) {
         st->theme_source = THEME_SOURCE_APP
     }
     if st->theme_mode < THEME_MODE_SYSTEM || st->theme_mode > THEME_MODE_DARK {
-        st->theme_mode = THEME_MODE_DARK
+        st->theme_mode = GetDefaultPlatformThemeMode()
     }
     if st->theme_id < 0 || st->theme_id >= THEME_COUNT {
-        st->theme_id = THEME_MONO
+        st->theme_id = GetDefaultThemeForThemeStyle(GetDefaultPlatformThemeStyle())
     }
-    if st->theme_style < THEME_STYLE_SYSTEM || st->theme_style > THEME_STYLE_AERO {
-        st->theme_style = THEME_STYLE_RETRO
+    if st->theme_style < THEME_STYLE_SYSTEM || st->theme_style > THEME_STYLE_MATERIAL {
+        st->theme_style = THEME_STYLE_SYSTEM
     }
     SetThemeSource((ThemeSource)st->theme_source)
     SetThemeMode((ThemeMode)st->theme_mode)
     SetThemeStyle((ThemeStyle)st->theme_style)
-    SetCurrentTheme(st->theme_id, GetEffectiveThemeDarkMode() ? 1 : 0)
+    theme_id := st->theme_id
+    if st->theme_source == THEME_SOURCE_SYSTEM {
+        theme_id = GetDefaultThemeForThemeStyle(GetEffectiveThemeStyle())
+    }
+    SetCurrentTheme(theme_id, GetEffectiveThemeDarkMode() ? 1 : 0)
     ApplyCurrentUITheme()
 }
 
@@ -65,7 +69,7 @@ draw_appearance :: (body: Rectangle, st: state.IdeState*) {
     if w > ScaleUIPx(420) {
         w = ScaleUIPx(420)
     }
-    DrawUIText("Appearance", x, y, ScaleUIPx(20), GetThemeText())
+    Text("Appearance", x, y, ScaleUIPx(20), GetThemeText())
     y = y + ScaleUIPx(34)
 
     system_label: [160] char
@@ -84,10 +88,10 @@ draw_appearance :: (body: Rectangle, st: state.IdeState*) {
         "Theme", "Krait", "System", "Mode",
         "Follow system", "Light", "Dark", "Palette",
         "Style", "System", "Retro", "Material", "Fluent", "Adwaita",
-        "Liquid Glass", "Aero", system_label
+        "Liquid Glass", system_label
     }
-    DrawUIThemeSettings(settings, &theme_settings_state)
-    result := DrawUIThemeSettingsMenus(settings, &theme_settings_state)
+    result: UIThemeSettingsResult = {0}
+    ThemeSettings(settings, &theme_settings_state, &result)
     if result.changed {
         apply_settings_theme(st)
         if krait_settings_save(st) {
@@ -105,22 +109,21 @@ draw_panes :: (body: Rectangle, st: state.IdeState*) {
     if w > ScaleUIPx(420) {
         w = ScaleUIPx(420)
     }
-    DrawUIText("Panes", x, y, ScaleUIPx(20), GetThemeText())
+    Text("Panes", x, y, ScaleUIPx(20), GetThemeText())
     y = y + ScaleUIPx(34)
 
     row_h := ScaleUIPx(56)
     DrawRectangle(x, y, w, row_h, GetThemeSurface())
     DrawRectangleLines(x, y, w, row_h, GetThemeButton())
-    DrawUIText("Mobile preview", x + ScaleUIPx(14), y + ScaleUIPx(11),
+    Text("Mobile preview", x + ScaleUIPx(14), y + ScaleUIPx(11),
                ScaleUIPx(15), GetThemeText())
-    DrawUIText("Force the single-column phone layout at any window size.",
+    Text("Force the single-column phone layout at any window size.",
                x + ScaleUIPx(14), y + ScaleUIPx(33),
                GetUISmallFontSize(), GetThemeIcon())
     toggle_x := x + w - ScaleUIPx(142)
     toggle_y := y + (row_h - ScaleUIPx(26)) / 2
-    if DrawUIToggleSwitch(toggle_x, toggle_y, ScaleUIPx(128),
-                          ScaleUIPx(26), &st->force_mobile_layout,
-                          "Off", "On") {
+    if Toggle(7201, toggle_x, toggle_y, ScaleUIPx(128),
+              ScaleUIPx(26), &st->force_mobile_layout, "Off", "On") {
         st->force_mobile_layout = st->force_mobile_layout != 0 ? 1 : 0
         if krait_settings_save(st) {
             state.project_set_status(st, "Settings saved")
@@ -137,7 +140,7 @@ draw_extensions :: (body: Rectangle, st: state.IdeState*) {
     if w < ScaleUIPx(220) {
         w = ScaleUIPx(220)
     }
-    DrawUIText("Extensions", x, y, ScaleUIPx(20), GetThemeText())
+    Text("Extensions", x, y, ScaleUIPx(20), GetThemeText())
     y = y + ScaleUIPx(38)
 
     for int i = 0; i < st->module_count; i++ {
@@ -145,15 +148,14 @@ draw_extensions :: (body: Rectangle, st: state.IdeState*) {
         row_h := ScaleUIPx(96)
         DrawRectangle(x, y, w, row_h, GetThemeSurface())
         DrawRectangleLines(x, y, w, row_h, GetThemeButton())
-        DrawUIText(mod->name, x + ScaleUIPx(14), y + ScaleUIPx(12),
+        Text(mod->name, x + ScaleUIPx(14), y + ScaleUIPx(12),
                    ScaleUIPx(16), GetThemeText())
-        DrawUIText(mod->description, x + ScaleUIPx(14), y + ScaleUIPx(38),
+        Text(mod->description, x + ScaleUIPx(14), y + ScaleUIPx(38),
                    GetUISmallFontSize(), GetThemeIcon())
         toggle_x := x + w - ScaleUIPx(150)
         toggle_y := y + ScaleUIPx(56)
-        if DrawUIToggleSwitch(toggle_x, toggle_y, ScaleUIPx(128),
-                              ScaleUIPx(26), &mod->enabled,
-                              "Off", "On") {
+        if Toggle(7300 + i, toggle_x, toggle_y, ScaleUIPx(128),
+                  ScaleUIPx(26), &mod->enabled, "Off", "On") {
             mod->enabled = mod->enabled != 0 ? 1 : 0
             st->preview_dirty = 0
             st->preview_host_ready = 0

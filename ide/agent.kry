@@ -117,7 +117,7 @@ agent_send_input :: () {
 # ZCode-style approval: the pending tool batch lists its calls, the user * allows once, allows for the session, or denies.
 draw_permission_bar :: (bounds: Rectangle) {
     DrawRectangleRec(bounds, GetThemeSurface())
-    DrawUIText("Agent wants to run tools:", (int)bounds.x + ScaleUIPx(10),
+    Text("Agent wants to run tools:", (int)bounds.x + ScaleUIPx(10),
                (int)bounds.y + ScaleUIPx(6), ScaleUIPx(12), GetThemeLink())
     n := krait_agent_permission_count()
     if n > 6 {
@@ -125,7 +125,7 @@ draw_permission_bar :: (bounds: Rectangle) {
     }
     i := 0
     while i < n {
-        DrawUIText(krait_agent_permission_line(i),
+        Text(krait_agent_permission_line(i),
                    (int)bounds.x + ScaleUIPx(18),
                    (int)bounds.y + ScaleUIPx(24) + i * ScaleUIPx(16),
                    ScaleUIPx(12), GetThemeText())
@@ -135,18 +135,18 @@ draw_permission_bar :: (bounds: Rectangle) {
     by := (int)bounds.y + (int)bounds.height - bh - ScaleUIPx(6)
     bw := ScaleUIPx(64)
     bx := (int)bounds.x + (int)bounds.width - bw - ScaleUIPx(8)
-    if DrawUIGenericButton(bx, by, bw, bh, "Deny",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+    if StyledButton(bx, by, bw, bh, "Deny",
+                           ButtonStyleSecondary, 0, NULL) {
         krait_agent_permission_respond(0, 0)
     }
     bx = bx - bw - ScaleUIPx(40)
-    if DrawUIGenericButton(bx, by, bw + ScaleUIPx(34), bh, "Always allow",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+    if StyledButton(bx, by, bw + ScaleUIPx(34), bh, "Always allow",
+                           ButtonStyleSecondary, 0, NULL) {
         krait_agent_permission_respond(1, 1)
     }
     bx = bx - bw - ScaleUIPx(40)
-    if DrawUIGenericButton(bx, by, bw, bh, "Allow",
-                           UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+    if StyledButton(bx, by, bw, bh, "Allow",
+                           ButtonStylePrimary, 0, NULL) {
         krait_agent_permission_respond(1, 0)
     }
 }
@@ -155,7 +155,7 @@ draw_permission_bar :: (bounds: Rectangle) {
 draw_sessions :: (bounds: Rectangle, st: state.IdeState*) {
     DrawRectangleRec(bounds, GetThemeSurface())
     pad := ScaleUIPx(10)
-    DrawUIText("Agent sessions (per project)", (int)bounds.x + pad,
+    Text("Agent sessions (per project)", (int)bounds.x + pad,
                (int)bounds.y + ScaleUIPx(8), ScaleUIPx(12), GetThemeLink())
     n := krait_agent_session_count()
     if n > 8 {
@@ -172,9 +172,9 @@ draw_sessions :: (bounds: Rectangle, st: state.IdeState*) {
         }
         snprintf(line, sizeof(line), "%s  %s",
                  krait_agent_session_name(i), proj)
-        if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - ScaleUIPx(60),
+        if StyledButton((int)bounds.x + (int)bounds.width - pad - ScaleUIPx(60),
                                y - ScaleUIPx(2), ScaleUIPx(60), row, "Open",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                               ButtonStyleSecondary, 0, NULL) {
             if krait_agent_open_session(i) != 0 {
                 agent_bound = 1
                 agent_scroll = 0
@@ -182,11 +182,11 @@ draw_sessions :: (bounds: Rectangle, st: state.IdeState*) {
                 agent_sessions_open = 0
             }
         }
-        DrawUIText(line, (int)bounds.x + pad, y, ScaleUIPx(11), GetThemeText())
+        Text(line, (int)bounds.x + pad, y, ScaleUIPx(11), GetThemeText())
         i = i + 1
     }
     if n == 0 {
-        DrawUIText("no stored sessions yet", (int)bounds.x + pad,
+        Text("no stored sessions yet", (int)bounds.x + pad,
                    (int)bounds.y + ScaleUIPx(30), ScaleUIPx(11), GetThemeIcon())
     }
 }
@@ -239,7 +239,7 @@ agent_draw_tool_card :: (i: int, x: int, y: int, wrap_w: int, fnt: int,
        IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
         agent_expanded = agent_expanded == i + 1 ? 0 : i + 1
     }
-    DrawUIText(head, x + ScaleUIPx(8), y + ScaleUIPx(4), ScaleUIPx(11),
+    Text(head, x + ScaleUIPx(8), y + ScaleUIPx(4), ScaleUIPx(11),
                scolor)
     yy := y + line_h + ScaleUIPx(8)
     if agent_expanded == i + 1 {
@@ -252,7 +252,7 @@ agent_draw_tool_card :: (i: int, x: int, y: int, wrap_w: int, fnt: int,
             lb: [512] char
             krait_wrap_line(text, wrap_w - ScaleUIPx(20), fnt, 60, row,
                             lb, sizeof(lb))
-            DrawUIText(lb, x + ScaleUIPx(12), yy + row * line_h, fnt,
+            Text(lb, x + ScaleUIPx(12), yy + row * line_h, fnt,
                        GetThemeText())
             row = row + 1
         }
@@ -280,28 +280,28 @@ agent_draw_msg :: (i: int, x: int, y: int, wrap_w: int, fnt: int,
     }
     head: [64] char
     snprintf(head, sizeof(head), "%s:", label)
-    DrawUIText(head, x, y, ScaleUIPx(11), GetThemeLink())
+    Text(head, x, y, ScaleUIPx(11), GetThemeLink())
 
     bh := ScaleUIPx(18)
     bw := ScaleUIPx(42)
     bx := x + wrap_w - bw
     if kind == 1 {
-        if DrawUIGenericButton(bx - bw - ScaleUIPx(4), y - ScaleUIPx(2), bw, bh,
-                               "view", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        if StyledButton(bx - bw - ScaleUIPx(4), y - ScaleUIPx(2), bw, bh,
+                               "view", ButtonStyleSecondary, 0, NULL) {
             mdv.mdview_open(text, "agent message", st)
         }
     }
     if kind == 0 {
-        if DrawUIGenericButton(bx - bw - ScaleUIPx(4), y - ScaleUIPx(2), bw, bh,
-                               "retry", UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+        if StyledButton(bx - bw - ScaleUIPx(4), y - ScaleUIPx(2), bw, bh,
+                               "retry", ButtonStyleSecondary, 0, NULL) {
             if krait_agent_retry(i) != 0 {
                 agent_scroll = 0
                 agent_expanded = 0
             }
         }
     }
-    if DrawUIGenericButton(bx, y - ScaleUIPx(2), bw, bh, "copy",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+    if StyledButton(bx, y - ScaleUIPx(2), bw, bh, "copy",
+                           ButtonStyleSecondary, 0, NULL) {
         SetClipboardText(text)
     }
     body_y := y + line_h
@@ -376,9 +376,9 @@ draw_transcript :: (bounds: Rectangle, busy: int, st: state.IdeState*) {
     if count == 0 && busy == 0 {
         hint := "Ask the agent to change the project: describe what you want,"
         hint2 := "it reads, edits, compiles, and reports back."
-        DrawUIText(hint, (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(14),
+        Text(hint, (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(14),
                    ScaleUIPx(13), GetThemeIcon())
-        DrawUIText(hint2, (int)bounds.x + pad,
+        Text(hint2, (int)bounds.x + pad,
                    (int)bounds.y + ScaleUIPx(34), ScaleUIPx(13),
                    GetThemeIcon())
         return
@@ -410,12 +410,12 @@ draw_transcript :: (bounds: Rectangle, busy: int, st: state.IdeState*) {
         think: [32] char
         snprintf(think, sizeof(think), "thinking%s", tail)
         if strlen(live) > 0 {
-            DrawUIText("agent:", (int)bounds.x + pad, y, ScaleUIPx(11),
+            Text("agent:", (int)bounds.x + pad, y, ScaleUIPx(11),
                        GetThemeLink())
             mdv.md_draw(live, (int)bounds.x + pad + ScaleUIPx(10),
                         y + line_h, wrap_w - ScaleUIPx(20), fnt, line_h)
         } else {
-            DrawUIText(think, (int)bounds.x + pad, y, ScaleUIPx(12),
+            Text(think, (int)bounds.x + pad, y, ScaleUIPx(12),
                        GetThemeIcon())
         }
     }
@@ -470,7 +470,7 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     transcript := (Rectangle){bounds.x, bounds.y, bounds.width, transcript_h}
     draw_transcript(transcript, busy, st)
     if strlen(status) > 0 {
-        DrawUIText(status, (int)bounds.x + pad,
+        Text(status, (int)bounds.x + pad,
                    input_y - ScaleUIPx(20), ScaleUIPx(12), GetThemeLink())
     }
     if perm_h > 0 {
@@ -484,7 +484,7 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
                                   bounds.width, (float)sess_h}, st)
     }
 
-    style := (UITextInputStyle){
+    style := (TextInputStyle){
         GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
         GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
     }
@@ -492,38 +492,38 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     stop_w := ScaleUIPx(58)
     sess_w := ScaleUIPx(70)
     field_w := bounds.width - (float)(pad * 2 + send_w + stop_w + sess_w + ScaleUIPx(18))
-    DrawUITextField((TextFieldProps){
+    TextField((TextFieldProps){
         (Rectangle){bounds.x + (float)pad, (float)input_y,
                     field_w, (float)row_h},
         agent_input, sizeof(agent_input),
         &agent_input_cursor, &agent_input_focused,
         sizeof(agent_input) - 1, ScaleUIPx(13), 7601,
-        style, (UITextInputFilter){0}, NULL, NULL
+        style, (TextInputFilter){0}, NULL, NULL
     })
     if strlen(agent_input) > 0 && busy == 0 {
-        if DrawUIGenericButton((int)bounds.x + pad + (int)field_w + ScaleUIPx(6),
+        if StyledButton((int)bounds.x + pad + (int)field_w + ScaleUIPx(6),
                                input_y, send_w, row_h, "Send",
-                               UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+                               ButtonStylePrimary, 0, NULL) {
             agent_send_input()
         }
     }
     if krait_agent_can_revert() != 0 {
         rev_w := ScaleUIPx(70)
-        if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad -
+        if StyledButton((int)bounds.x + (int)bounds.width - pad -
                                stop_w - sess_w - ScaleUIPx(12) - rev_w,
                                input_y, rev_w, row_h, "Revert",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                               ButtonStyleSecondary, 0, NULL) {
             krait_agent_revert()
         }
     }
-    if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - stop_w - sess_w - ScaleUIPx(6),
+    if StyledButton((int)bounds.x + (int)bounds.width - pad - stop_w - sess_w - ScaleUIPx(6),
                            input_y, sess_w, row_h, "Sessions",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                           ButtonStyleSecondary, 0, NULL) {
         agent_sessions_open = agent_sessions_open == 0 ? 1 : 0
     }
-    if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - stop_w,
+    if StyledButton((int)bounds.x + (int)bounds.width - pad - stop_w,
                            input_y, stop_w, row_h, busy != 0 ? "Stop" : "Clear",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                           ButtonStyleSecondary, 0, NULL) {
         if busy != 0 {
             krait_agent_stop()
         } else {

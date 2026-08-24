@@ -10,6 +10,7 @@ screens :: #import "ide/screens"
 ed :: #import "ide/editor"
 prev :: #import "ide/preview"
 con :: #import "ide/console"
+outp :: #import "ide/output"
 prob :: #import "ide/problems"
 srch :: #import "ide/search"
 sett :: #import "ide/settings"
@@ -37,9 +38,33 @@ istate :: state.IdeState #global
 project_dialog :: FileDialog #global
 settings_icon :: Texture2D #global
 close_icon :: Texture2D #global
-project_menu_open :: int #global
-pane_tabs :: [state.IDE_MAX_PANE_TABS] UITab #global
+top_menu_open :: int #global
+top_menus :: [5] Menu #global
+file_menu_items :: [4] MenuItem #global
+edit_menu_items :: [2] MenuItem #global
+view_menu_items :: [4] MenuItem #global
+tools_menu_items :: [3] MenuItem #global
+project_menu_items :: [2] MenuItem #global
+pane_tabs :: [state.IDE_MAX_PANE_TABS] Tab #global
 pane_tab_scroll :: [state.IDE_MAX_PANE_GROUPS] int #global
+
+#enum {
+    MENU_FILE_OPEN_PROJECT = 9001,
+    MENU_FILE_SAVE,
+    MENU_FILE_CLOSE_TAB,
+    MENU_FILE_SETTINGS,
+    MENU_EDIT_UNDO,
+    MENU_EDIT_REDO,
+    MENU_VIEW_STUDIO,
+    MENU_VIEW_AGENT,
+    MENU_VIEW_TEXT,
+    MENU_VIEW_KANBAN,
+    MENU_TOOLS_SEARCH,
+    MENU_TOOLS_CONSOLE,
+    MENU_TOOLS_OUTPUT,
+    MENU_PROJECT_METADATA,
+    MENU_PROJECT_FILE,
+}
 
 apply_krait_theme :: () {
     sett.apply_settings_theme(&istate)
@@ -53,7 +78,9 @@ init :: () {
     mods.register_builtins(&istate)
     krait_settings_load(&istate)
     apply_krait_theme()
+    con.console_init(&istate)
     istate.view = state.IDE_VIEW_TEXT
+    top_menu_open = -1
     istate.layout_mode = state.IDE_LAYOUT_SPLIT
     init_panes(&istate)
     krait_layout_load(&istate)
@@ -70,6 +97,7 @@ krait_agent_streaming_text :: () -> const char* #extern
 shutdown :: () {
     krait_preview_unload()
     con.console_stop(&istate)
+    con.console_shutdown(&istate)
     krait_agent_shutdown()
     krait_settings_save(&istate)
     krait_layout_save(&istate)
@@ -133,14 +161,13 @@ frame_throttle :: () {
     }
 }
 
-frame :: () {
+App :: () #ui {
+    Screen root: {
     frame_throttle()
     w := GetScreenWidth()
     h := GetScreenHeight()
     apply_krait_theme()
-    BeginDrawing()
     ClearBackground(GetThemeBackground())
-    BeginUIFrame(w, h, GetUIScale())
     if kb.kanban_detail_open != 0 && kb.kanban_valid_selection() != 0 {
         BeginUIModalLayer()
     }
@@ -208,9 +235,8 @@ frame :: () {
         krait_layout_save(&istate)
         istate.layout_dirty = 0
     }
-    DrawUIOverlays()
-    EndUIFocus()
-    EndDrawing()
+    Overlays()
+    }
 }
 
 draw_chrome :: (view_w: int, view_h: int) {
@@ -218,54 +244,131 @@ draw_chrome :: (view_w: int, view_h: int) {
     draw_status_bar(view_w, view_h)
 }
 
-draw_top_bar :: (view_w: int) {
-    top_h := top_bar_height()
-    DrawRectangle(0, 0, view_w, top_h, GetThemeSurface())
-    DrawLine(0, top_h - 1, view_w, top_h - 1,
-             GetThemeButton())
-    x := ScaleUIPx(12)
-    if istate.project.loaded {
-        if IsUIDesktopMode() != 0 {
-            if DrawUIGenericButton(x, ScaleUIPx(6), ScaleUIPx(80), ScaleUIPx(26),
-                                   "Project", UI_BUTTON_STYLE_TAB,
-                                   0, NULL) {
-                project_menu_open = project_menu_open == 0 ? 1 : 0
-            }
-            DrawUIText(istate.project.name, x + ScaleUIPx(92), ScaleUIPx(11),
-                       ScaleUIPx(15), GetThemeText())
+set_menu_item :: (item: MenuItem*, kind: int, label: const char*,
+                  accel: const char*, id: int, disabled: int, checked: int) {
+    item->kind = kind
+    item->label = label
+    item->accelerator = accel
+    item->id = id
+    item->disabled = disabled
+    item->checked = checked
+    item->submenu = NULL
+    item->submenu_count = 0
+}
+
+prepare_top_menus :: () {
+    has_project := istate.project.loaded != 0 ? 1 : 0
+    has_file := istate.open_count > 0 ? 1 : 0
+
+    set_menu_item(&file_menu_items[0], MenuCommand, "Open Project", "Ctrl+O",
+                  MENU_FILE_OPEN_PROJECT, 0, 0)
+    set_menu_item(&file_menu_items[1], MenuCommand, "Save", "Ctrl+S",
+                  MENU_FILE_SAVE, has_file == 0 ? 1 : 0, 0)
+    set_menu_item(&file_menu_items[2], MenuCommand, "Close Tab", "Ctrl+W",
+                  MENU_FILE_CLOSE_TAB, has_file == 0 ? 1 : 0, 0)
+    set_menu_item(&file_menu_items[3], MenuCommand, "Settings", "",
+                  MENU_FILE_SETTINGS, 0, istate.view == state.IDE_VIEW_SETTINGS ? 1 : 0)
+
+    set_menu_item(&edit_menu_items[0], MenuCommand, "Undo", "Ctrl+Z",
+                  MENU_EDIT_UNDO, ed.editor_can_undo(&istate) == 0 ? 1 : 0, 0)
+    set_menu_item(&edit_menu_items[1], MenuCommand, "Redo", "Ctrl+Y",
+                  MENU_EDIT_REDO, ed.editor_can_redo(&istate) == 0 ? 1 : 0, 0)
+
+    set_menu_item(&view_menu_items[0], MenuCommand, "Studio", "",
+                  MENU_VIEW_STUDIO, has_project == 0 ? 1 : 0,
+                  istate.view == state.IDE_VIEW_PROJECT ? 1 : 0)
+    set_menu_item(&view_menu_items[1], MenuCommand, "Agent", "",
+                  MENU_VIEW_AGENT, 0, istate.view == state.IDE_VIEW_AGENT ? 1 : 0)
+    set_menu_item(&view_menu_items[2], MenuCommand, "Text", "",
+                  MENU_VIEW_TEXT, 0, istate.view == state.IDE_VIEW_TEXT ? 1 : 0)
+    set_menu_item(&view_menu_items[3], MenuCommand, "Kanban", "",
+                  MENU_VIEW_KANBAN, 0, istate.view == state.IDE_VIEW_KANBAN ? 1 : 0)
+
+    set_menu_item(&tools_menu_items[0], MenuCommand, "Search", "Ctrl+Shift+F",
+                  MENU_TOOLS_SEARCH, has_project == 0 ? 1 : 0, 0)
+    set_menu_item(&tools_menu_items[1], MenuCommand, "Kapsule Terminal", "Ctrl+`",
+                  MENU_TOOLS_CONSOLE, has_project == 0 ? 1 : 0, 0)
+    set_menu_item(&tools_menu_items[2], MenuCommand, "Output", "",
+                  MENU_TOOLS_OUTPUT, has_project == 0 ? 1 : 0, 0)
+
+    set_menu_item(&project_menu_items[0], MenuCommand, "Metadata", "",
+                  MENU_PROJECT_METADATA, has_project == 0 ? 1 : 0, 0)
+    set_menu_item(&project_menu_items[1], MenuCommand, "project.kryon", "",
+                  MENU_PROJECT_FILE, has_project == 0 ? 1 : 0, 0)
+
+    top_menus[0].label = "File"
+    top_menus[0].items = file_menu_items
+    top_menus[0].item_count = 4
+    top_menus[1].label = "Edit"
+    top_menus[1].items = edit_menu_items
+    top_menus[1].item_count = 2
+    top_menus[2].label = "View"
+    top_menus[2].items = view_menu_items
+    top_menus[2].item_count = 4
+    top_menus[3].label = "Tools"
+    top_menus[3].items = tools_menu_items
+    top_menus[3].item_count = 3
+    top_menus[4].label = "Project"
+    top_menus[4].items = project_menu_items
+    top_menus[4].item_count = 2
+}
+
+handle_top_menu :: (cmd: int) {
+    if cmd == MENU_FILE_OPEN_PROJECT {
+        istate.picker_open = istate.picker_open == 0 ? 1 : 0
+    } else if cmd == MENU_FILE_SAVE {
+        ed.editor_save_active(&istate)
+    } else if cmd == MENU_FILE_CLOSE_TAB {
+        ed.editor_close_active(&istate)
+    } else if cmd == MENU_FILE_SETTINGS {
+        istate.view = state.IDE_VIEW_SETTINGS
+    } else if cmd == MENU_EDIT_UNDO {
+        ed.editor_undo(&istate)
+    } else if cmd == MENU_EDIT_REDO {
+        ed.editor_redo(&istate)
+    } else if cmd == MENU_VIEW_STUDIO {
+        if istate.project.loaded {
+            istate.view = state.IDE_VIEW_PROJECT
         } else {
-            DrawUIText(istate.project.name, x, ScaleUIPx(11),
-                       ScaleUIPx(15), GetThemeText())
+            istate.picker_open = 1
         }
-    } else {
-        DrawUIText("Krait", x, ScaleUIPx(11),
-                   ScaleUIPx(15), GetThemeText())
-    }
-    draw_top_actions(view_w, top_h)
-    if istate.project.loaded && project_menu_open != 0 {
-        draw_project_menu()
+    } else if cmd == MENU_VIEW_AGENT {
+        istate.view = state.IDE_VIEW_AGENT
+    } else if cmd == MENU_VIEW_TEXT {
+        istate.view = state.IDE_VIEW_TEXT
+    } else if cmd == MENU_VIEW_KANBAN {
+        istate.view = state.IDE_VIEW_KANBAN
+    } else if cmd == MENU_TOOLS_SEARCH {
+        srch.search_focus(&istate, 0)
+        show_tool_bottom(&istate, state.IDE_PANE_VIEW_SEARCH)
+    } else if cmd == MENU_TOOLS_CONSOLE {
+        show_tool_bottom(&istate, state.IDE_PANE_VIEW_CONSOLE)
+    } else if cmd == MENU_TOOLS_OUTPUT {
+        show_tool_bottom(&istate, state.IDE_PANE_VIEW_OUTPUT)
+    } else if cmd == MENU_PROJECT_METADATA {
+        show_tool_right(&istate, state.IDE_PANE_VIEW_PROJECT_META)
+    } else if cmd == MENU_PROJECT_FILE {
+        ed.editor_open(&istate, "project.kryon")
     }
 }
 
-draw_project_menu :: () {
-    x := ScaleUIPx(12)
-    y := top_bar_height() - ScaleUIPx(2)
-    w := ScaleUIPx(190)
-    row_h := ScaleUIPx(30)
-    DrawRectangle(x, y, w, row_h * 2 + ScaleUIPx(8), GetThemeSurface())
-    DrawRectangleLines(x, y, w, row_h * 2 + ScaleUIPx(8), GetThemeButton())
-    if DrawUIGenericButton(x + ScaleUIPx(4), y + ScaleUIPx(4),
-                           w - ScaleUIPx(8), row_h, "Metadata",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-        show_tool_right(&istate, state.IDE_PANE_VIEW_PROJECT_META)
-        project_menu_open = 0
+draw_top_bar :: (view_w: int) {
+    top_h := top_bar_height()
+    prepare_top_menus()
+    result := MenuBar(9000, (Rectangle){0, 0, (float)view_w, (float)top_h},
+                      top_menus, 5, &top_menu_open)
+    if result.activated_id != 0 {
+        handle_top_menu(result.activated_id)
     }
-    if DrawUIGenericButton(x + ScaleUIPx(4), y + ScaleUIPx(4) + row_h,
-                           w - ScaleUIPx(8), row_h, "project.kryon",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
-        ed.editor_open(&istate, "project.kryon")
-        project_menu_open = 0
+    x := ScaleUIPx(330)
+    if istate.project.loaded {
+        Text(istate.project.name, x, ScaleUIPx(11),
+                   ScaleUIPx(15), GetThemeText())
+    } else {
+        Text("Krait", x, ScaleUIPx(11),
+                   ScaleUIPx(15), GetThemeText())
     }
+    draw_top_actions(view_w, top_h)
 }
 
 draw_top_actions :: (view_w: int, top_h: int) {
@@ -280,7 +383,7 @@ draw_top_actions :: (view_w: int, top_h: int) {
     }
     bg := istate.view == state.IDE_VIEW_SETTINGS ?
           GetThemeButtonHover() : GetThemeButton()
-    if DrawUIIconButton((IconButtonProps){
+    if IconButton((IconButtonProps){
         (Rectangle){(float)x, (float)y, (float)ScaleUIPx(24), (float)btn_h},
         icon,
         icon_type,
@@ -305,12 +408,21 @@ draw_top_actions :: (view_w: int, top_h: int) {
         gap := ScaleUIPx(6)
         view_w := ScaleUIPx(96)
         open_w := ScaleUIPx(104)
+        run_w := ScaleUIPx(58)
         x = x - gap - view_w
         if !istate.project.loaded {
             x = x - gap - open_w
-            if DrawUIGenericButton(x, y, open_w, btn_h, "Open Project",
-                                   UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+            if StyledButton(x, y, open_w, btn_h, "Open Project",
+                                   ButtonStyleSecondary, 0, NULL) {
                 istate.picker_open = istate.picker_open == 0 ? 1 : 0
+            }
+        } else {
+            x = x - gap - run_w
+            if StyledButton(x, y, run_w, btn_h, "Run",
+                                   ButtonStylePrimary, 0, NULL) {
+                show_tool_bottom(&istate, state.IDE_PANE_VIEW_CONSOLE)
+                con.console_run_app(&istate)
+                con.console_focus(&istate)
             }
         }
         view_options: [4] const char* = {"Studio", "Agent", "Text", "Kanban"}
@@ -323,7 +435,7 @@ draw_top_actions :: (view_w: int, top_h: int) {
             view_selected = 3
         }
         picked := view_selected
-        DrawUIDropdown(7800, x, y, view_w, btn_h, view_options, 4, &picked)
+        Dropdown(7800, x, y, view_w, btn_h, view_options, 4, &picked)
         if picked != view_selected {
             if picked == 1 {
                 istate.view = state.IDE_VIEW_AGENT
@@ -342,15 +454,15 @@ draw_top_actions :: (view_w: int, top_h: int) {
             redo_w := ScaleUIPx(46)
             undo_w := ScaleUIPx(52)
             x = x - gap - redo_w
-            if DrawUIGenericButton(x, y, redo_w, btn_h, "Redo",
-                                   UI_BUTTON_STYLE_SECONDARY,
+            if StyledButton(x, y, redo_w, btn_h, "Redo",
+                                   ButtonStyleSecondary,
                                    ed.editor_can_redo(&istate) == 0 ? 1 : 0,
                                    NULL) {
                 ed.editor_redo(&istate)
             }
             x = x - gap - undo_w
-            if DrawUIGenericButton(x, y, undo_w, btn_h, "Undo",
-                                   UI_BUTTON_STYLE_SECONDARY,
+            if StyledButton(x, y, undo_w, btn_h, "Undo",
+                                   ButtonStyleSecondary,
                                    ed.editor_can_undo(&istate) == 0 ? 1 : 0,
                                    NULL) {
                 ed.editor_undo(&istate)
@@ -363,7 +475,7 @@ draw_status_bar :: (view_w: int, view_h: int) {
     bar_h := status_bar_height()
     bar_y := view_h - bar_h
     DrawRectangle(0, bar_y, view_w, bar_h, GetThemeSurface())
-    DrawUIText(istate.status, ScaleUIPx(10), bar_y + ScaleUIPx(5),
+    Text(istate.status, ScaleUIPx(10), bar_y + ScaleUIPx(5),
                ScaleUIPx(13), GetThemeText())
 }
 
@@ -374,16 +486,16 @@ draw_project_view :: (content: Rectangle, st: state.IdeState*) {
 
 layout_button_style :: (mode: int) -> int {
     if istate.layout_mode == mode {
-        return UI_BUTTON_STYLE_TAB_SELECTED
+        return ButtonStyleTabSelected
     }
-    return UI_BUTTON_STYLE_TAB
+    return ButtonStyleTab
 }
 
 tool_button_style :: (view: int) -> int {
     if pane_view_exists(&istate, view) {
-        return UI_BUTTON_STYLE_TAB_SELECTED
+        return ButtonStyleTabSelected
     }
-    return UI_BUTTON_STYLE_TAB
+    return ButtonStyleTab
 }
 
 init_panes :: (st: state.IdeState*) {
@@ -834,6 +946,7 @@ pane_layout_default :: (st: state.IdeState*) {
     st->pane_groups[state.IDE_PANE_CENTER].active = 1
     pane_add(&st->pane_groups[state.IDE_PANE_RIGHT], state.IDE_PANE_VIEW_INSPECTOR)
     pane_add(&st->pane_groups[state.IDE_PANE_BOTTOM], state.IDE_PANE_VIEW_CONSOLE)
+    pane_add(&st->pane_groups[state.IDE_PANE_BOTTOM], state.IDE_PANE_VIEW_OUTPUT)
     pane_add(&st->pane_groups[state.IDE_PANE_BOTTOM], state.IDE_PANE_VIEW_PROBLEMS)
     st->bottom_height = ScaleUIPx(220)
     st->active_group = state.IDE_PANE_CENTER
@@ -897,7 +1010,10 @@ pane_view_label :: (view: int) -> const char* {
         return "Problems"
     }
     if view == state.IDE_PANE_VIEW_CONSOLE {
-        return "Terminal"
+        return "Kapsule"
+    }
+    if view == state.IDE_PANE_VIEW_OUTPUT {
+        return "Output"
     }
     if view == state.IDE_PANE_VIEW_CARTRIDGE {
         return "Cartridge"
@@ -923,8 +1039,8 @@ sync_preview_pane :: (st: state.IdeState*) {
 mobile_nav_button :: (x: int, y: int, w: int, h: int, label: const char*,
                       view: int, st: state.IdeState*) {
     active := st->mobile_active_view == view
-    style := active ? UI_BUTTON_STYLE_PRIMARY : UI_BUTTON_STYLE_TAB
-    if DrawUIGenericButton(x, y, w, h, label, style, 0, NULL) {
+    style := active ? ButtonStylePrimary : ButtonStyleTab
+    if StyledButton(x, y, w, h, label, style, 0, NULL) {
         st->mobile_active_view = view
         st->layout_dirty = 1
     }
@@ -952,10 +1068,10 @@ draw_mobile_nav :: (content: Rectangle, st: state.IdeState*) {
     btn_h := nav_h - ScaleUIPx(16)
     by := nav_y + ScaleUIPx(8)
     bx := (int)content.x
-    if DrawUIGenericButton(bx + ScaleUIPx(4), by, btn_w - ScaleUIPx(8), btn_h,
+    if StyledButton(bx + ScaleUIPx(4), by, btn_w - ScaleUIPx(8), btn_h,
                            "Agent", st->view == state.IDE_VIEW_AGENT ?
-                               UI_BUTTON_STYLE_TAB_SELECTED :
-                               UI_BUTTON_STYLE_TAB,
+                               ButtonStyleTabSelected :
+                               ButtonStyleTab,
                            0, NULL) {
         st->view = st->view == state.IDE_VIEW_AGENT ?
                    state.IDE_VIEW_PROJECT : state.IDE_VIEW_AGENT
@@ -1140,8 +1256,8 @@ draw_pane_group :: (bounds: Rectangle, st: state.IdeState*,
     DrawRectangleLinesEx(bounds, 1.0, GetThemeButton())
     if drop_hot {
         st->drag_drop_group = group_id
-        st->drag_drop_zone = GetUIPaneDropZone(bounds, mouse)
-        DrawUIPaneDropPreview(bounds, st->drag_drop_zone)
+        st->drag_drop_zone = GetPaneDropZone(bounds, mouse)
+        PaneDropPreview(bounds, st->drag_drop_zone)
     }
     if group->tab_count <= 0 {
         return
@@ -1149,7 +1265,7 @@ draw_pane_group :: (bounds: Rectangle, st: state.IdeState*,
     if group->active < 0 || group->active >= group->tab_count {
         group->active = 0
     }
-    header_h := GetUITabBarHeight()
+    header_h := TabBarHeight()
     header := (Rectangle){bounds.x, bounds.y, bounds.width, (float)header_h}
     min_tab_w := ScaleUIPx(88)
     max_tab_w := ScaleUIPx(140)
@@ -1168,7 +1284,7 @@ draw_pane_group :: (bounds: Rectangle, st: state.IdeState*,
         pane_tabs[i].closeable = 0
     }
     dragged := -1
-    result := DrawUIPaneTabBar((UIPaneTabBar){
+    result := PaneTabs((PaneTabBar){
         header, pane_tabs, group->tab_count, group->active,
         ScaleUIPx(12), min_tab_w, max_tab_w,
         &pane_tab_scroll[group_id], &dragged
@@ -1273,13 +1389,15 @@ draw_pane_view :: (bounds: Rectangle, st: state.IdeState*, view: int) {
         prob.draw_problems(bounds, st)
     } else if view == state.IDE_PANE_VIEW_CONSOLE {
         con.draw_console(bounds, st)
+    } else if view == state.IDE_PANE_VIEW_OUTPUT {
+        outp.draw_output(bounds, st)
     } else if view == state.IDE_PANE_VIEW_SEARCH {
         srch.draw_search(bounds, st)
     } else if view == state.IDE_PANE_VIEW_CARTRIDGE {
         krb.draw_cartridge(bounds, st)
     } else {
         DrawRectangleRec(bounds, GetThemeSurface())
-        DrawUIText(st->output, (int)bounds.x + ScaleUIPx(10),
+        Text(st->output, (int)bounds.x + ScaleUIPx(10),
                    (int)bounds.y + ScaleUIPx(8), ScaleUIPx(13), GetThemeText())
     }
 }
@@ -1353,6 +1471,5 @@ app "Krait" {
     size 1400 900
     fps 60
     init init
-    frame frame
     shutdown shutdown
 }

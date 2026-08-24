@@ -67,7 +67,7 @@ preview_or_open_screen :: (st: state.IdeState*, index: int) {
 draw_screen_list :: (bounds: Rectangle, st: state.IdeState*) {
     DrawRectangleRec(bounds, GetThemeSurface())
     if st->screen_count <= 0 {
-        DrawUIText("No scenes", (int)bounds.x + ScaleUIPx(12),
+        Text("No scenes", (int)bounds.x + ScaleUIPx(12),
                    (int)bounds.y + ScaleUIPx(12), ScaleUIPx(14),
                    GetThemeText())
         return
@@ -121,10 +121,10 @@ draw_screen_list :: (bounds: Rectangle, st: state.IdeState*) {
         if hot {
             MarkUIClickable()
         }
-        DrawUIText(st->screens[i].name, (int)row.x + ScaleUIPx(12),
+        Text(st->screens[i].name, (int)row.x + ScaleUIPx(12),
                    (int)row.y + ScaleUIPx(7), ScaleUIPx(14),
                    GetThemeText())
-        DrawUIText(st->screens[i].path, (int)row.x + ScaleUIPx(12),
+        Text(st->screens[i].path, (int)row.x + ScaleUIPx(12),
                    (int)row.y + ScaleUIPx(25), ScaleUIPx(12),
                    GetThemeText())
         if hot && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
@@ -148,17 +148,17 @@ draw_navigator :: (bounds: Rectangle, st: state.IdeState*) {
     tab_h := ScaleUIPx(30)
     x := (int)bounds.x + ScaleUIPx(6)
     y := (int)bounds.y + ScaleUIPx(4)
-    if DrawUIGenericButton(x, y, ScaleUIPx(64), ScaleUIPx(22), "Files",
+    if StyledButton(x, y, ScaleUIPx(64), ScaleUIPx(22), "Files",
                            st->navigator_tab == state.IDE_NAV_FILES ?
-                           UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB,
+                           ButtonStyleTabSelected : ButtonStyleTab,
                            0, NULL) {
         st->navigator_tab = state.IDE_NAV_FILES
     }
     x = x + ScaleUIPx(68)
     x = x + ScaleUIPx(90)
-    if DrawUIGenericButton(x, y, ScaleUIPx(80), ScaleUIPx(22), "Inspect",
+    if StyledButton(x, y, ScaleUIPx(80), ScaleUIPx(22), "Inspect",
                            st->navigator_tab == state.IDE_NAV_INSPECT ?
-                           UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB,
+                           ButtonStyleTabSelected : ButtonStyleTab,
                            0, NULL) {
         st->navigator_tab = state.IDE_NAV_INSPECT
     }

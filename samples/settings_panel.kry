@@ -4,18 +4,16 @@
 app "Settings Panel" {
     size 390 600
     fps 60
-    frame main
 }
 
-frame main {
-    BeginDrawing()
+App :: () #ui {
+    Screen root: {
     ClearBackground(GetThemeBackground())
-    BeginUIFrame(GetScreenWidth(), GetScreenHeight(), GetUIScale())
 
     Background(GetThemeBackground())
 
     Text("Settings", ScaleUIPx(20), ScaleUIPx(20),
-         UI_TEXT_24, GetThemeText())
+         ScaleUIPx(24), GetThemeText())
 
     Line(ScaleUIPx(20), ScaleUIPx(52), ScaleUIPx(370), ScaleUIPx(52),
          GetThemeButton())
@@ -23,7 +21,7 @@ frame main {
     Rect(ScaleUIPx(20), ScaleUIPx(64), ScaleUIPx(350), ScaleUIPx(50),
          GetThemeSurface(), GetThemeButton())
     Text("Dark Mode", ScaleUIPx(32), ScaleUIPx(78),
-         UI_TEXT_16, GetThemeText())
+         ScaleUIPx(16), GetThemeText())
     dark_mode: int = 1
     Toggle(ScaleUIPx(300), ScaleUIPx(72), ScaleUIPx(60), ScaleUIPx(28),
                        &dark_mode, "Off", "On")
@@ -31,7 +29,7 @@ frame main {
     Rect(ScaleUIPx(20), ScaleUIPx(124), ScaleUIPx(350), ScaleUIPx(50),
          GetThemeSurface(), GetThemeButton())
     Text("Notifications", ScaleUIPx(32), ScaleUIPx(138),
-         UI_TEXT_16, GetThemeText())
+         ScaleUIPx(16), GetThemeText())
     notify: int = 0
     Toggle(ScaleUIPx(300), ScaleUIPx(132), ScaleUIPx(60), ScaleUIPx(28),
                        &notify, "Off", "On")
@@ -39,7 +37,7 @@ frame main {
     Rect(ScaleUIPx(20), ScaleUIPx(184), ScaleUIPx(350), ScaleUIPx(50),
          GetThemeSurface(), GetThemeButton())
     Text("Volume", ScaleUIPx(32), ScaleUIPx(198),
-         UI_TEXT_16, GetThemeText())
+         ScaleUIPx(16), GetThemeText())
     volume: int = 70
     Slider(5201, ScaleUIPx(160), ScaleUIPx(196), ScaleUIPx(200),
                  "", 0, 100, &volume, "%")
@@ -47,7 +45,7 @@ frame main {
     Rect(ScaleUIPx(20), ScaleUIPx(244), ScaleUIPx(350), ScaleUIPx(50),
          GetThemeSurface(), GetThemeButton())
     Text("Brightness", ScaleUIPx(32), ScaleUIPx(258),
-         UI_TEXT_16, GetThemeText())
+         ScaleUIPx(16), GetThemeText())
     brightness: int = 85
     Slider(5202, ScaleUIPx(160), ScaleUIPx(256), ScaleUIPx(200),
                  "", 0, 100, &brightness, "%")
@@ -55,7 +53,7 @@ frame main {
     Separator(ScaleUIPx(20), ScaleUIPx(310), ScaleUIPx(350), ScaleUIPx(2), 0)
 
     Text("Account", ScaleUIPx(20), ScaleUIPx(322),
-         UI_TEXT_16, GetThemeText())
+         ScaleUIPx(16), GetThemeText())
 
     name_field: [128] char
     name_cursor: int = 0
@@ -64,8 +62,8 @@ frame main {
         (Rectangle){(float)ScaleUIPx(20), (float)ScaleUIPx(348),
                     (float)ScaleUIPx(350), (float)ScaleUIPx(34)},
         name_field, sizeof(name_field), &name_cursor, &name_focused,
-        128, UI_TEXT_16, 4201,
-        (UITextInputStyle){0}, (UITextInputFilter){0}, NULL, NULL
+        128, ScaleUIPx(16), 4201,
+        (TextInputStyle){0}, (TextInputFilter){0}, NULL, NULL
     })
 
     email_field: [128] char
@@ -75,22 +73,21 @@ frame main {
         (Rectangle){(float)ScaleUIPx(20), (float)ScaleUIPx(390),
                     (float)ScaleUIPx(350), (float)ScaleUIPx(34)},
         email_field, sizeof(email_field), &email_cursor, &email_focused,
-        128, UI_TEXT_16, 4202,
-        (UITextInputStyle){0}, (UITextInputFilter){0}, NULL, NULL
+        128, ScaleUIPx(16), 4202,
+        (TextInputStyle){0}, (TextInputFilter){0}, NULL, NULL
     })
 
     Button((ButtonProps){
         .bounds = {ScaleUIPx(20), ScaleUIPx(436), ScaleUIPx(350), ScaleUIPx(40)},
         .label = "Save Changes",
-        .style = UI_BUTTON_STYLE_PRIMARY,
+        .style = ButtonStylePrimary,
     })
 
     Button((ButtonProps){
         .bounds = {ScaleUIPx(20), ScaleUIPx(486), ScaleUIPx(350), ScaleUIPx(40)},
         .label = "Sign Out",
-        .style = UI_BUTTON_STYLE_DANGER,
+        .style = ButtonStyleDanger,
     })
 
-    EndUIFocus()
-    EndDrawing()
+    }
 }

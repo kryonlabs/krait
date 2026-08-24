@@ -66,7 +66,7 @@ has_project_templates :: (st: state.IdeState*) -> int {
     return 0
 }
 
-file_syntax :: (st: state.IdeState*, name: const char*) -> UISyntaxMode {
+file_syntax :: (st: state.IdeState*, name: const char*) -> SyntaxMode {
     if st != NULL {
         for int i = 0; i < st->module_count; i++ {
             mod := &st->modules[i]
@@ -74,26 +74,26 @@ file_syntax :: (st: state.IdeState*, name: const char*) -> UISyntaxMode {
                 continue
             }
             syntax := mod->file_syntax(name)
-            if syntax != UI_SYNTAX_NONE {
+            if syntax != SyntaxNone {
                 return syntax
             }
         }
     }
     len := strlen(name)
     if len >= 2 && strcmp(name + len - 2, ".c") == 0 {
-        return UI_SYNTAX_C
+        return SyntaxC
     }
     if len >= 2 && strcmp(name + len - 2, ".h") == 0 {
-        return UI_SYNTAX_C
+        return SyntaxC
     }
     if strcmp(name, "Makefile") == 0 || strcmp(name, "makefile") == 0 ||
        strcmp(name, "GNUmakefile") == 0 {
-        return UI_SYNTAX_MAKE
+        return SyntaxMake
     }
     if len >= 3 && strcmp(name + len - 3, ".mk") == 0 {
-        return UI_SYNTAX_MAKE
+        return SyntaxMake
     }
-    return UI_SYNTAX_NONE
+    return SyntaxNone
 }
 
 file_affects_preview :: (st: state.IdeState*, name: const char*) -> int {

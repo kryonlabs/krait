@@ -64,16 +64,16 @@ krait_scaffold_project(const char *dir, char *status, int status_size)
         "\n"
         "screen Main(viewport: Rectangle) {\n"
         "    Background(GetThemeBackground())\n"
-        "    Text(\"Hello, Kryon!\", ScaleUIPx(20), ScaleUIPx(20), UI_TEXT_24, GetThemeText())\n"
-        "    Text(\"Edit main.kry and the canvas reloads.\", ScaleUIPx(20), ScaleUIPx(54), UI_TEXT_16, GetThemeIcon())\n"
+        "    Text(\"Hello, Kryon!\", ScaleUIPx(20), ScaleUIPx(20), ScaleUIPx(24), GetThemeText())\n"
+        "    Text(\"Edit main.kry and the canvas reloads.\", ScaleUIPx(20), ScaleUIPx(54), ScaleUIPx(16), GetThemeIcon())\n"
         "    if Button((ButtonProps){\n"
         "        .bounds = {ScaleUIPx(20), ScaleUIPx(100), ScaleUIPx(160), ScaleUIPx(40)},\n"
         "        .label = \"Click me\",\n"
-        "        .style = UI_BUTTON_STYLE_PRIMARY,\n"
+        "        .style = ButtonStylePrimary,\n"
         "    }) {\n"
         "        click_count++\n"
         "    }\n"
-        "    Text(TextFormat(\"Clicks: %d\", click_count), ScaleUIPx(20), ScaleUIPx(160), UI_TEXT_16, GetThemeText())\n"
+        "    Text(TextFormat(\"Clicks: %d\", click_count), ScaleUIPx(20), ScaleUIPx(160), ScaleUIPx(16), GetThemeText())\n"
         "}\n";
 
     if(dir == NULL || dir[0] == '\0') {

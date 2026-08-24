@@ -375,10 +375,10 @@ krait_meta_export_fastlane(KraitProjectMeta *meta, char *status, int status_size
     return 1;
 }
 
-static UITextInputStyle
+static TextInputStyle
 krait_meta_input_style(void)
 {
-    return (UITextInputStyle){
+    return (TextInputStyle){
         GetThemeSurface(),
         GetThemeButton(),
         GetThemeLink(),
@@ -394,14 +394,14 @@ void
 krait_meta_field(Rectangle rect, const char *label, char *text,
                  size_t text_size, int *cursor, int *focused, int id)
 {
-    DrawUIText(label, (int)rect.x, (int)rect.y, ScaleUIPx(12),
+    Text(label, (int)rect.x, (int)rect.y, ScaleUIPx(12),
                GetThemeIcon());
-    DrawUITextField((TextFieldProps){
+    TextField((TextFieldProps){
         (Rectangle){rect.x, rect.y + (float)ScaleUIPx(18),
                     rect.width, (float)ScaleUIPx(32)},
         text, text_size, cursor, focused, (int)text_size - 1,
         ScaleUIPx(13), id, krait_meta_input_style(),
-        (UITextInputFilter){0}, NULL, NULL
+        (TextInputFilter){0}, NULL, NULL
     });
 }
 
@@ -417,12 +417,12 @@ krait_draw_project_metadata(Rectangle bounds, IdeState *st)
 
     DrawRectangleRec(bounds, GetThemeSurface());
     if(st == NULL || !st->project.loaded) {
-        DrawUIText("No project loaded", x, y, ScaleUIPx(14), GetThemeText());
+        Text("No project loaded", x, y, ScaleUIPx(14), GetThemeText());
         return;
     }
     if(!meta->loaded || strcmp(meta->root, st->project.path) != 0)
         krait_meta_load(meta, st->project.path);
-    DrawUIText("Project Metadata", x, y, ScaleUIPx(16), GetThemeText());
+    Text("Project Metadata", x, y, ScaleUIPx(16), GetThemeText());
     y += ScaleUIPx(30);
     krait_meta_field((Rectangle){x, y, w, 0}, "Title",
                      meta->title, sizeof(meta->title),
@@ -447,44 +447,43 @@ krait_draw_project_metadata(Rectangle bounds, IdeState *st)
     if(meta->languages[0] != '\0') {
         char line[640];
         snprintf(line, sizeof(line), "Detected: %s", meta->languages);
-        DrawUIText(line, x, y, ScaleUIPx(11), GetThemeIcon());
+        Text(line, x, y, ScaleUIPx(11), GetThemeIcon());
         y += ScaleUIPx(18);
     }
     krait_meta_field((Rectangle){x, y, w, 0}, "Short Description",
                      meta->short_description, sizeof(meta->short_description),
                      &meta->cursor[5], &meta->focused[5], 7105);
     y += ScaleUIPx(58);
-    DrawUIText("Full Description", x, y, ScaleUIPx(12), GetThemeIcon());
+    Text("Full Description", x, y, ScaleUIPx(12), GetThemeIcon());
     y += ScaleUIPx(18);
-    DrawUITextArea((TextAreaProps){
+    TextArea((TextAreaProps){
         (Rectangle){x, y, w, (float)ScaleUIPx(130)},
         meta->full_description, sizeof(meta->full_description),
         &meta->cursor[6], &meta->focused[6], &meta->full_scroll,
         (int)sizeof(meta->full_description) - 1, ScaleUIPx(13),
-        ScaleUIPx(4), 7106, "", UI_SYNTAX_NONE,
-        krait_meta_input_style(), (UITextInputFilter){0}, NULL
+        ScaleUIPx(4), 7106, "", SyntaxNone,
+        krait_meta_input_style(), (TextInputFilter){0}, NULL, 0
     });
     y += ScaleUIPx(142);
-    if(DrawUIGenericButton(x, y, ScaleUIPx(56), ScaleUIPx(28), "Save",
-                           UI_BUTTON_STYLE_PRIMARY, 0, NULL)) {
+    if(StyledButton(x, y, ScaleUIPx(56), ScaleUIPx(28), "Save",
+                           ButtonStylePrimary, 0, NULL)) {
         if(krait_meta_save(meta, status, sizeof(status)))
             snprintf(st->project.name, sizeof(st->project.name), "%s", meta->title);
         snprintf(st->status, sizeof(st->status), "%s", status);
     }
-    if(DrawUIGenericButton(x + ScaleUIPx(64), y, ScaleUIPx(92), ScaleUIPx(28),
-                           "Import", UI_BUTTON_STYLE_SECONDARY, 0, NULL)) {
+    if(StyledButton(x + ScaleUIPx(64), y, ScaleUIPx(92), ScaleUIPx(28),
+                           "Import", ButtonStyleSecondary, 0, NULL)) {
         krait_meta_import_fastlane(meta);
         snprintf(st->status, sizeof(st->status), "%s", "Fastlane metadata imported");
     }
-    if(DrawUIGenericButton(x + ScaleUIPx(164), y, ScaleUIPx(92), ScaleUIPx(28),
-                           "Export", UI_BUTTON_STYLE_SECONDARY, 0, NULL)) {
+    if(StyledButton(x + ScaleUIPx(164), y, ScaleUIPx(92), ScaleUIPx(28),
+                           "Export", ButtonStyleSecondary, 0, NULL)) {
         (void)krait_meta_export_fastlane(meta, status, sizeof(status));
         snprintf(st->status, sizeof(st->status), "%s", status);
     }
-    if(DrawUIGenericButton(x + ScaleUIPx(264), y, ScaleUIPx(72), ScaleUIPx(28),
-                           "Reload", UI_BUTTON_STYLE_SECONDARY, 0, NULL)) {
+    if(StyledButton(x + ScaleUIPx(264), y, ScaleUIPx(72), ScaleUIPx(28),
+                           "Reload", ButtonStyleSecondary, 0, NULL)) {
         krait_meta_load(meta, st->project.path);
         snprintf(st->status, sizeof(st->status), "%s", "Metadata reloaded");
     }
 }
-

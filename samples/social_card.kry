@@ -4,13 +4,11 @@
 app "Social Card" {
     size 390 400
     fps 60
-    frame main
 }
 
-frame main {
-    BeginDrawing()
+App :: () #ui {
+    Screen root: {
     ClearBackground(GetThemeBackground())
-    BeginUIFrame(GetScreenWidth(), GetScreenHeight(), GetUIScale())
 
     Background(GetThemeBackground())
 
@@ -24,45 +22,44 @@ frame main {
          GetThemeLink(), GetThemeButton())
 
     Text("User Name", ScaleUIPx(76), ScaleUIPx(32),
-         UI_TEXT_16, GetThemeText())
+         ScaleUIPx(16), GetThemeText())
     Text("@username", ScaleUIPx(76), ScaleUIPx(52),
-         UI_TEXT_12, GetThemeIcon())
+         ScaleUIPx(12), GetThemeIcon())
 
     Text("This is a social media card example built entirely with Kryon widgets. It demonstrates how to compose Text, Rect, and Button into a realistic UI layout.", ScaleUIPx(28), ScaleUIPx(92),
-         UI_TEXT_12, GetThemeText())
+         ScaleUIPx(12), GetThemeText())
 
     Line(ScaleUIPx(28), ScaleUIPx(200), ScaleUIPx(362), ScaleUIPx(200),
          GetThemeButton())
 
     Text("124 Likes", ScaleUIPx(28), ScaleUIPx(212),
-         UI_TEXT_12, GetThemeIcon())
+         ScaleUIPx(12), GetThemeIcon())
     Text("43 Comments", ScaleUIPx(140), ScaleUIPx(212),
-         UI_TEXT_12, GetThemeIcon())
+         ScaleUIPx(12), GetThemeIcon())
     Text("12 Shares", ScaleUIPx(280), ScaleUIPx(212),
-         UI_TEXT_12, GetThemeIcon())
+         ScaleUIPx(12), GetThemeIcon())
 
     Button((ButtonProps){
         .bounds = {ScaleUIPx(28), ScaleUIPx(250), ScaleUIPx(100), ScaleUIPx(36)},
         .label = "Like",
-        .style = UI_BUTTON_STYLE_PRIMARY,
+        .style = ButtonStylePrimary,
     })
     Button((ButtonProps){
         .bounds = {ScaleUIPx(140), ScaleUIPx(250), ScaleUIPx(100), ScaleUIPx(36)},
         .label = "Comment",
-        .style = UI_BUTTON_STYLE_SECONDARY,
+        .style = ButtonStyleSecondary,
     })
     Button((ButtonProps){
         .bounds = {ScaleUIPx(252), ScaleUIPx(250), ScaleUIPx(100), ScaleUIPx(36)},
         .label = "Share",
-        .style = UI_BUTTON_STYLE_SECONDARY,
+        .style = ButtonStyleSecondary,
     })
 
     toggle_notify: int = 1
     Toggle(ScaleUIPx(28), ScaleUIPx(310), ScaleUIPx(100), ScaleUIPx(28),
                        &toggle_notify, "Off", "On")
     Text("Notifications", ScaleUIPx(150), ScaleUIPx(316),
-         UI_TEXT_12, GetThemeText())
+         ScaleUIPx(12), GetThemeText())
 
-    EndUIFocus()
-    EndDrawing()
+    }
 }

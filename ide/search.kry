@@ -49,19 +49,19 @@ draw_search :: (bounds: Rectangle, st: state.IdeState*) {
                            bounds.width - (float)(pad * 2),
                            bounds.height - (float)(pad * 3 + input_h)}
     old_len := strlen(st->find_text)
-    DrawUITextField((TextFieldProps){
+    TextField((TextFieldProps){
         field, st->find_text, sizeof(st->find_text),
         &st->find_cursor, &st->find_focused,
         sizeof(st->find_text) - 1, ScaleUIPx(13), 5100,
-        (UITextInputStyle){0}, (UITextInputFilter){0}, NULL, NULL
+        (TextInputStyle){0}, (TextInputFilter){0}, NULL, NULL
     })
     if strlen(st->find_text) != old_len {
         search_run(st)
     }
-    if DrawUIGenericButton((int)button.x, (int)button.y,
+    if StyledButton((int)button.x, (int)button.y,
                            (int)button.width, (int)button.height,
                            st->quick_open_mode != 0 ? "Open" : "Find",
-                           UI_BUTTON_STYLE_PRIMARY, st->find_text[0] == 0,
+                           ButtonStylePrimary, st->find_text[0] == 0,
                            NULL) {
         search_run(st)
     }
@@ -85,8 +85,8 @@ draw_search :: (bounds: Rectangle, st: state.IdeState*) {
             snprintf(label, sizeof(label), "%s:%d  %s",
                      r->path, r->line, r->excerpt)
         }
-        if DrawUIGenericButton((int)results.x, y, (int)results.width,
-                               row_h, label, UI_BUTTON_STYLE_SECONDARY,
+        if StyledButton((int)results.x, y, (int)results.width,
+                               row_h, label, ButtonStyleSecondary,
                                0, NULL) {
             st->selected_search = i
             ed.editor_open(st, r->path)
@@ -95,7 +95,7 @@ draw_search :: (bounds: Rectangle, st: state.IdeState*) {
         y = y + row_h + ScaleUIPx(2)
     }
     if st->search_count == 0 {
-        DrawUIText(st->find_text[0] == 0 ? "Type a query" : "No results",
+        Text(st->find_text[0] == 0 ? "Type a query" : "No results",
                    (int)results.x, (int)results.y,
                    ScaleUIPx(13), GetThemeText())
     }

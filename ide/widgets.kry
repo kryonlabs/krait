@@ -131,8 +131,8 @@ draw_item :: (bounds: Rectangle, st: state.IdeState*, index: int) {
         DrawRectangleLines(sample_x, sample_y, sample_w, ScaleUIPx(34),
                            GetThemeLink())
     } else if insertable != 0 && strcmp(name, "Text") == 0 {
-        DrawUIText("Text", sample_x, sample_y + ScaleUIPx(10),
-                   UI_TEXT_16, color)
+        Text("Text", sample_x, sample_y + ScaleUIPx(10),
+                   ScaleUIPx(16), color)
     } else if insertable != 0 && strcmp(name, "Rect") == 0 {
         DrawRectangle(sample_x, sample_y, ScaleUIPx(92), ScaleUIPx(34),
                       GetThemeButton())
@@ -147,54 +147,53 @@ draw_item :: (bounds: Rectangle, st: state.IdeState*, index: int) {
                       GetThemeButton())
         DrawRectangleLines(sample_x, sample_y, ScaleUIPx(54), ScaleUIPx(34),
                            GetThemeLink())
-        DrawUIText("Picture", sample_x + ScaleUIPx(64),
+        Text("Picture", sample_x + ScaleUIPx(64),
                    sample_y + ScaleUIPx(10), ScaleUIPx(13), color)
     } else if insertable != 0 && strcmp(name, "Button") == 0 {
-        DrawUIGenericButton(sample_x, sample_y, ScaleUIPx(124), ScaleUIPx(34),
-                            "Button", UI_BUTTON_STYLE_PRIMARY, 0, NULL)
+        StyledButton(sample_x, sample_y, ScaleUIPx(124), ScaleUIPx(34),
+                            "Button", ButtonStylePrimary, 0, NULL)
     } else if insertable != 0 && strcmp(name, "TextField") == 0 {
         field: [64] char
         cursor := 0
         focused := 0
         snprintf(field, sizeof(field), "%s", "Text")
-        DrawUITextField((TextFieldProps){
+        TextField((TextFieldProps){
             .bounds = {sample_x, sample_y, ScaleUIPx(142), ScaleUIPx(34)},
             .text = field,
             .text_size = sizeof(field),
             .cursor_position = &cursor,
             .focused = &focused,
             .max_codepoints = 64,
-            .font = UI_TEXT_16,
+            .font = ScaleUIPx(16),
             .focus_id = 9100 + index,
-            .style = (UITextInputStyle){GetThemeSurface(), GetThemeButton(),
+            .style = (TextInputStyle){GetThemeSurface(), GetThemeButton(),
                                         GetThemeLink(), GetThemeText(),
                                         GetThemeLink(), 0,
                                         ScaleUIPx(8), ScaleUIPx(6)},
         })
     } else if insertable != 0 && strcmp(name, "Toggle") == 0 {
         value := 1
-        DrawUIToggleSwitch(sample_x, sample_y + ScaleUIPx(3),
-                           ScaleUIPx(112), ScaleUIPx(28),
-                           &value, "Off", "On")
+        Toggle(9300 + index, sample_x, sample_y + ScaleUIPx(3),
+               ScaleUIPx(112), ScaleUIPx(28), &value, "Off", "On")
     } else if insertable != 0 && strcmp(name, "Slider") == 0 {
         value := 64
-        DrawUISlider(9200 + index, sample_x, sample_y + ScaleUIPx(8),
-                     ScaleUIPx(140), "Value", 0, 100, &value, "", NULL)
+        Slider(9200 + index, sample_x, sample_y + ScaleUIPx(8),
+               ScaleUIPx(140), "Value", 0, 100, &value, "", NULL)
     } else if insertable != 0 && strcmp(name, "Checkbox") == 0 {
         checked := 1
-        DrawUICheckboxToggle(sample_x, sample_y + ScaleUIPx(8),
-                             "Checkbox", &checked)
+        Checkbox(9250 + index, sample_x, sample_y + ScaleUIPx(8),
+                 "Checkbox", &checked)
     } else if insertable != 0 && strcmp(name, "Dropdown") == 0 {
         options: [3] const char* = {"One", "Two", "Three"}
         selected := 0
-        DrawUIDropdown(9400 + index, sample_x, sample_y, ScaleUIPx(142),
+        Dropdown(9400 + index, sample_x, sample_y, ScaleUIPx(142),
                        ScaleUIPx(34), options, 3, &selected)
     } else if insertable != 0 && strcmp(name, "Group") == 0 {
         DrawRectangle(sample_x, sample_y, ScaleUIPx(124), ScaleUIPx(34),
                       Fade(GetThemeButton(), 0.45))
         DrawRectangleLines(sample_x, sample_y, ScaleUIPx(124), ScaleUIPx(34),
                            GetThemeButtonHover())
-        DrawUIText("Group", sample_x + ScaleUIPx(10),
+        Text("Group", sample_x + ScaleUIPx(10),
                    sample_y + ScaleUIPx(10), ScaleUIPx(13), color)
     } else if widget_is_2d(index) != 0 {
         cx := sample_x + ScaleUIPx(18)
@@ -238,13 +237,13 @@ draw_item :: (bounds: Rectangle, st: state.IdeState*, index: int) {
             DrawCircle(cx, cy, ScaleUIPx(13), GetThemeButton())
             DrawCircleLines(cx, cy, ScaleUIPx(13), GetThemeLink())
         }
-        DrawUIText(label, sample_x + ScaleUIPx(46),
+        Text(label, sample_x + ScaleUIPx(46),
                    sample_y + ScaleUIPx(10), ScaleUIPx(13), color)
     } else {
-        DrawUIText(label, sample_x, sample_y, ScaleUIPx(14), color)
-        DrawUIText(group, sample_x, sample_y + ScaleUIPx(18), ScaleUIPx(11),
+        Text(label, sample_x, sample_y, ScaleUIPx(14), color)
+        Text(group, sample_x, sample_y + ScaleUIPx(18), ScaleUIPx(11),
                    muted_on(bg))
-        DrawUIText(detail, sample_x, sample_y + ScaleUIPx(34), ScaleUIPx(11),
+        Text(detail, sample_x, sample_y + ScaleUIPx(34), ScaleUIPx(11),
                    muted_on(bg))
     }
     if hot && insertable != 0 && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
@@ -252,14 +251,14 @@ draw_item :: (bounds: Rectangle, st: state.IdeState*, index: int) {
         st->widget_drag_type = index
     }
     badge_text: const char* = "raylib"
-    badge_w := MeasureUIText(badge_text, ScaleUIPx(10)) + ScaleUIPx(10)
+    badge_w := TextWidth(badge_text, ScaleUIPx(10)) + ScaleUIPx(10)
     badge_h := ScaleUIPx(16)
     badge_x := (int)bounds.x + (int)bounds.width - badge_w - ScaleUIPx(6)
     badge_y := (int)bounds.y + (int)bounds.height - badge_h - ScaleUIPx(4)
     DrawRectangleRec((Rectangle){(float)badge_x, (float)badge_y,
                                  (float)badge_w, (float)badge_h},
                      GetThemeLink())
-    DrawUIText(badge_text, badge_x + ScaleUIPx(5),
+    Text(badge_text, badge_x + ScaleUIPx(5),
                badge_y + ScaleUIPx(3), ScaleUIPx(10),
                readable_on(GetThemeLink()))
 }
@@ -381,14 +380,14 @@ draw_inspector_field :: (label: const char*, bounds: Rectangle,
                          text: char*, text_size: int,
                          cursor: int*, focused: int*,
                          focus_id: int) {
-    DrawUIText(label, (int)bounds.x, (int)bounds.y,
+    Text(label, (int)bounds.x, (int)bounds.y,
                ScaleUIPx(12), GetThemeIcon())
-    DrawUITextField((TextFieldProps){
+    TextField((TextFieldProps){
         (Rectangle){bounds.x, bounds.y + (float)ScaleUIPx(16),
                     bounds.width, (float)ScaleUIPx(28)},
         text, text_size, cursor, focused, text_size - 1,
         ScaleUIPx(13), focus_id,
-        (UITextInputStyle){0}, (UITextInputFilter){0}, NULL, NULL
+        (TextInputStyle){0}, (TextInputFilter){0}, NULL, NULL
     })
 }
 
@@ -509,13 +508,13 @@ draw_hierarchy :: (bounds: Rectangle, st: state.IdeState*) {
     scan_scene(st)
     DrawRectangleRec(bounds, GetThemeSurface())
     pad := ScaleUIPx(8)
-    DrawUIText("Hierarchy", (int)bounds.x + pad, (int)bounds.y + pad,
+    Text("Hierarchy", (int)bounds.x + pad, (int)bounds.y + pad,
                ScaleUIPx(15), GetThemeText())
     tab_w := ScaleUIPx(52)
-    if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - tab_w,
+    if StyledButton((int)bounds.x + (int)bounds.width - pad - tab_w,
                            (int)bounds.y + ScaleUIPx(4), tab_w,
                            ScaleUIPx(20), "SFS",
-                           UI_BUTTON_STYLE_TAB, 0, NULL) {
+                           ButtonStyleTab, 0, NULL) {
         sfsb.sfs_browser_open = 1
         sfsb.sfs_browser_reset()
         return
@@ -523,7 +522,7 @@ draw_hierarchy :: (bounds: Rectangle, st: state.IdeState*) {
     list := (Rectangle){bounds.x, bounds.y + (float)ScaleUIPx(32),
                         bounds.width, bounds.height - (float)ScaleUIPx(32)}
     if st->scene_node_count <= 0 {
-        DrawUIText("Select a scene", (int)list.x + pad, (int)list.y + pad,
+        Text("Select a scene", (int)list.x + pad, (int)list.y + pad,
                    ScaleUIPx(13), GetThemeIcon())
         return
     }
@@ -564,9 +563,9 @@ draw_hierarchy :: (bounds: Rectangle, st: state.IdeState*) {
             MarkUIClickable()
         }
         x := (int)row.x + pad + depth * ScaleUIPx(14)
-        DrawUIText(scene_kind_label(kind), x, y + ScaleUIPx(6),
+        Text(scene_kind_label(kind), x, y + ScaleUIPx(6),
                    ScaleUIPx(12), GetThemeIcon())
-        DrawUIText(label, x + ScaleUIPx(72), y + ScaleUIPx(6),
+        Text(label, x + ScaleUIPx(72), y + ScaleUIPx(6),
                    ScaleUIPx(12), GetThemeText())
         if hot && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
             st->selected_scene_node = i
@@ -582,13 +581,13 @@ draw_stepper :: (x: int, y: int, w: int, label: const char*,
     btn_h := ScaleUIPx(28)
     gap := ScaleUIPx(4)
     lbl_w := ScaleUIPx(28)
-    DrawUIText(label, x, y + ScaleUIPx(6), ScaleUIPx(12), GetThemeIcon())
+    Text(label, x, y + ScaleUIPx(6), ScaleUIPx(12), GetThemeIcon())
     field_x := x + lbl_w
     field_w := w - lbl_w - (btn_w + gap) * 2
     on_minus[0] = 0
     on_plus[0] = 0
-    if DrawUIGenericButton(field_x, y, btn_w, btn_h, "-",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+    if StyledButton(field_x, y, btn_w, btn_h, "-",
+                           ButtonStyleSecondary, 0, NULL) {
         on_minus[0] = 1
     }
     val: [32] char
@@ -596,11 +595,11 @@ draw_stepper :: (x: int, y: int, w: int, label: const char*,
     DrawRectangleRec((Rectangle){(float)(field_x + btn_w + gap), (float)y,
                                   (float)field_w, (float)btn_h},
                      GetThemeBackground())
-    DrawUIText(val, field_x + btn_w + gap + ScaleUIPx(8),
+    Text(val, field_x + btn_w + gap + ScaleUIPx(8),
                y + ScaleUIPx(6), ScaleUIPx(13), GetThemeText())
-    if DrawUIGenericButton(field_x + btn_w + gap + field_w + gap, y,
+    if StyledButton(field_x + btn_w + gap + field_w + gap, y,
                            btn_w, btn_h, "+",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                           ButtonStyleSecondary, 0, NULL) {
         on_plus[0] = 1
     }
 }
@@ -636,7 +635,7 @@ draw_inspector :: (bounds: Rectangle, st: state.IdeState*) {
     pad := ScaleUIPx(8)
     if st->selected_scene_node < 0 ||
        st->selected_scene_node >= st->scene_node_count {
-        DrawUIText("No node selected", (int)bounds.x + pad,
+        Text("No node selected", (int)bounds.x + pad,
                    (int)bounds.y + pad, ScaleUIPx(13),
                    GetThemeIcon())
         return
@@ -651,16 +650,16 @@ draw_inspector :: (bounds: Rectangle, st: state.IdeState*) {
     row_w := (int)bounds.width - pad * 2
     line: [256] char
     snprintf(line, sizeof(line), "%s", scene_kind_label(kind))
-    DrawUIText(line, x, y, ScaleUIPx(15), GetThemeText())
+    Text(line, x, y, ScaleUIPx(15), GetThemeText())
     y = y + ScaleUIPx(24)
     is_screen := kind == SCENE_NODE_SCREEN
     if is_screen == 0 && node_label != NULL && node_label[0] != 0 {
-        DrawUIText("Text", x, y, ScaleUIPx(12), GetThemeIcon())
+        Text("Text", x, y, ScaleUIPx(12), GetThemeIcon())
         y = y + ScaleUIPx(16)
         field_bounds := (Rectangle){(float)x, (float)y,
                                     (float)row_w, (float)ScaleUIPx(28)}
         DrawRectangleRec(field_bounds, GetThemeBackground())
-        DrawUIText(node_label, x + ScaleUIPx(8),
+        Text(node_label, x + ScaleUIPx(8),
                    y + ScaleUIPx(6), ScaleUIPx(13), GetThemeText())
         DrawRectangleLinesEx(field_bounds, 1, GetThemeButton())
         y = y + ScaleUIPx(38)
@@ -672,12 +671,12 @@ draw_inspector :: (bounds: Rectangle, st: state.IdeState*) {
         off_x := krait_scene_offset_x(node)
         off_y := krait_scene_offset_y(node)
         if layout_parent >= 0 {
-            DrawUIText("Offset (in group)", x, y, ScaleUIPx(12), GetThemeIcon())
+            Text("Offset (in group)", x, y, ScaleUIPx(12), GetThemeIcon())
             y = y + ScaleUIPx(18)
             draw_stepper(x, y, row_w, "X", off_x, 6300,
                          &minus_pressed, &plus_pressed)
         } else {
-            DrawUIText("Position", x, y, ScaleUIPx(12), GetThemeIcon())
+            Text("Position", x, y, ScaleUIPx(12), GetThemeIcon())
             y = y + ScaleUIPx(18)
             draw_stepper(x, y, row_w, "X", (int)bounds_value.x, 6300,
                          &minus_pressed, &plus_pressed)
@@ -724,7 +723,7 @@ draw_inspector :: (bounds: Rectangle, st: state.IdeState*) {
             y = y + ScaleUIPx(34)
         }
         if kind == SCENE_NODE_TEXT && font_sz > 0 {
-            DrawUIText("Font Size", x, y, ScaleUIPx(12), GetThemeIcon())
+            Text("Font Size", x, y, ScaleUIPx(12), GetThemeIcon())
             y = y + ScaleUIPx(18)
             draw_stepper(x, y, row_w, "Sz", font_sz, 6304,
                          &minus_pressed, &plus_pressed)
@@ -784,7 +783,7 @@ draw_widgets :: (bounds: Rectangle, st: state.IdeState*) {
     BeginUIClip((int)palette.x, (int)palette.y,
                 (int)palette.width, (int)palette.height)
     section_y := palette_y - st->widget_scroll
-    DrawUIText("UI", (int)bounds.x + pad, section_y,
+    Text("UI", (int)bounds.x + pad, section_y,
                ScaleUIPx(15), readable_on(GetThemeSurface()))
     section_y = section_y + label_h
     display_index := 0
@@ -813,7 +812,7 @@ draw_widgets :: (bounds: Rectangle, st: state.IdeState*) {
             ui_rows := (display_index + cols - 1) / cols
             section_y = section_y + ui_rows * row_h
             if game_count > 0 {
-                DrawUIText("2D", (int)bounds.x + pad, section_y,
+                Text("2D", (int)bounds.x + pad, section_y,
                            ScaleUIPx(15), readable_on(GetThemeSurface()))
                 section_y = section_y + label_h
             }
@@ -829,12 +828,12 @@ draw_drag_overlay :: (st: state.IdeState*) {
     }
     mouse := GetMousePosition()
     label := widget_label(st->widget_drag_type)
-    w := MeasureUIText(label, ScaleUIPx(13)) + ScaleUIPx(24)
+    w := TextWidth(label, ScaleUIPx(13)) + ScaleUIPx(24)
     h := ScaleUIPx(28)
     x := (int)mouse.x + ScaleUIPx(12)
     y := (int)mouse.y + ScaleUIPx(12)
     DrawRectangle(x, y, w, h, GetThemeButtonHover())
     DrawRectangleLines(x, y, w, h, GetThemeLink())
-    DrawUIText(label, x + ScaleUIPx(10), y + ScaleUIPx(7),
+    Text(label, x + ScaleUIPx(10), y + ScaleUIPx(7),
                ScaleUIPx(13), readable_on(GetThemeButtonHover()))
 }

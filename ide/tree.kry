@@ -70,7 +70,7 @@ draw_tree :: (bounds: Rectangle, st: state.IdeState*) {
         return
     }
     build_items(st)
-    DrawUICascadingTreeView((CascadingTreeViewProps){
+    CascadingTreeView((CascadingTreeViewProps){
         bounds, 2000, entries, st->entry_count,
         &st->selected_entry, &st->activated_entry,
         (UICascadingTreeExpansion){

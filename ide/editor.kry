@@ -18,9 +18,9 @@ krait_artifact_save_binary :: (generated_path: const char*,
 
 #private
 
-source_tabs :: [12] UITab #global
+source_tabs :: [12] Tab #global
 source_tab_labels :: [12][300] char #global
-artifact_tabs :: [4] UITab #global
+artifact_tabs :: [4] Tab #global
 artifact_tab_labels :: [4][16] char #global
 
 mod_key_down :: () -> int {
@@ -75,6 +75,17 @@ editor_file_history_clear :: (f: state.OpenFile*) {
     f->artifact_dirty = 0
     f->artifact_loaded = 0
     f->artifact_kind = state.IDE_ARTIFACT_KRY
+    f->artifact_length = 0
+    f->artifact_content_version = 1
+    memset(&f->artifact_cache_source[0][0], 0, sizeof(f->artifact_cache_source))
+    memset(&f->artifact_cache_name[0][0], 0, sizeof(f->artifact_cache_name))
+    memset(&f->artifact_cache_path[0][0], 0, sizeof(f->artifact_cache_path))
+    memset(&f->artifact_cache_length[0], 0, sizeof(f->artifact_cache_length))
+    memset(&f->artifact_cache_content_version[0], 0, sizeof(f->artifact_cache_content_version))
+    memset(&f->artifact_cache_cursor[0], 0, sizeof(f->artifact_cache_cursor))
+    memset(&f->artifact_cache_scroll[0], 0, sizeof(f->artifact_cache_scroll))
+    memset(&f->artifact_cache_dirty[0], 0, sizeof(f->artifact_cache_dirty))
+    memset(&f->artifact_cache_loaded[0], 0, sizeof(f->artifact_cache_loaded))
 }
 
 editor_history_clear_redo :: (f: state.OpenFile*) {
@@ -479,6 +490,85 @@ artifact_label :: (kind: int) -> const char* {
     return "kry"
 }
 
+artifact_kind_valid :: (kind: int) -> int {
+    return kind >= state.IDE_ARTIFACT_KRY && kind <= state.IDE_ARTIFACT_C ? 1 : 0
+}
+
+artifact_mark_content_changed :: (f: state.OpenFile*) {
+    if f == NULL {
+        return
+    }
+    f->artifact_content_version = f->artifact_content_version + 1
+    if f->artifact_content_version <= 0 {
+        f->artifact_content_version = 1
+    }
+}
+
+artifact_cache_store_active :: (f: state.OpenFile*) {
+    if f == NULL || artifact_kind_valid(f->artifact_kind) == 0 ||
+       f->artifact_loaded == 0 {
+        return
+    }
+    kind := f->artifact_kind
+    snprintf(f->artifact_cache_source[kind],
+             sizeof(f->artifact_cache_source[kind]), "%s", f->artifact_source)
+    snprintf(f->artifact_cache_name[kind],
+             sizeof(f->artifact_cache_name[kind]), "%s", f->artifact_name)
+    snprintf(f->artifact_cache_path[kind],
+             sizeof(f->artifact_cache_path[kind]), "%s", f->artifact_path)
+    f->artifact_cache_length[kind] = f->artifact_length
+    f->artifact_cache_content_version[kind] = f->artifact_content_version
+    f->artifact_cache_cursor[kind] = f->artifact_cursor
+    f->artifact_cache_scroll[kind] = f->artifact_scroll
+    f->artifact_cache_dirty[kind] = f->artifact_dirty
+    f->artifact_cache_loaded[kind] = 1
+}
+
+artifact_cache_restore :: (f: state.OpenFile*, kind: int) -> int {
+    if f == NULL || artifact_kind_valid(kind) == 0 ||
+       f->artifact_cache_loaded[kind] == 0 {
+        return 0
+    }
+    snprintf(f->artifact_source, sizeof(f->artifact_source), "%s",
+             f->artifact_cache_source[kind])
+    snprintf(f->artifact_name, sizeof(f->artifact_name), "%s",
+             f->artifact_cache_name[kind])
+    snprintf(f->artifact_path, sizeof(f->artifact_path), "%s",
+             f->artifact_cache_path[kind])
+    f->artifact_length = f->artifact_cache_length[kind]
+    f->artifact_content_version = f->artifact_cache_content_version[kind]
+    if f->artifact_content_version <= 0 {
+        f->artifact_content_version = 1
+    }
+    f->artifact_cursor = f->artifact_cache_cursor[kind]
+    f->artifact_scroll = f->artifact_cache_scroll[kind]
+    f->artifact_dirty = f->artifact_cache_dirty[kind]
+    f->artifact_loaded = 1
+    f->artifact_kind = kind
+    return 1
+}
+
+artifact_cache_invalidate :: (f: state.OpenFile*) {
+    if f == NULL {
+        return
+    }
+    f->artifact_loaded = 0
+    f->artifact_dirty = 0
+    f->artifact_length = 0
+    artifact_mark_content_changed(f)
+    for int i = 0; i < 4; i++ {
+        f->artifact_cache_loaded[i] = 0
+        f->artifact_cache_dirty[i] = 0
+        f->artifact_cache_source[i][0] = 0
+        f->artifact_cache_name[i][0] = 0
+        f->artifact_cache_path[i][0] = 0
+        f->artifact_cache_length[i] = 0
+        f->artifact_cache_content_version[i] = 0
+        f->artifact_cache_cursor[i] = 0
+        f->artifact_cache_scroll[i] = 0
+    }
+}
+
 artifact_dest_path :: (st: state.IdeState*, f: state.OpenFile*, kind: int,
                        out: char*, out_size: int) {
     snprintf(out, out_size, "%s/%s", st->project.path, f->name)
@@ -495,8 +585,11 @@ artifact_generate :: (st: state.IdeState*, f: state.OpenFile*, kind: int) -> int
     if f == NULL || kind == state.IDE_ARTIFACT_KRY {
         return 1
     }
-    if f->artifact_loaded != 0 && f->artifact_kind == kind &&
-       f->artifact_dirty == 0 {
+    if f->artifact_loaded != 0 && f->artifact_kind == kind {
+        return 1
+    }
+    artifact_cache_store_active(f)
+    if artifact_cache_restore(f, kind) != 0 {
         return 1
     }
     f->artifact_source[0] = 0
@@ -505,6 +598,8 @@ artifact_generate :: (st: state.IdeState*, f: state.OpenFile*, kind: int) -> int
     f->artifact_cursor = 0
     f->artifact_scroll = 0
     f->artifact_focused = 0
+    f->artifact_length = 0
+    artifact_mark_content_changed(f)
     if krait_artifact_generate(st->project.path, f->name, kind,
                                f->artifact_source, sizeof(f->artifact_source),
                                f->artifact_path, sizeof(f->artifact_path),
@@ -515,6 +610,9 @@ artifact_generate :: (st: state.IdeState*, f: state.OpenFile*, kind: int) -> int
         f->artifact_loaded = 1
         f->artifact_dirty = 0
         f->artifact_kind = kind
+        f->artifact_length = (int)strlen(f->artifact_source)
+        artifact_mark_content_changed(f)
+        artifact_cache_store_active(f)
         state.project_set_status(st, "Artifact generation failed")
         return 0
     }
@@ -523,6 +621,9 @@ artifact_generate :: (st: state.IdeState*, f: state.OpenFile*, kind: int) -> int
     f->artifact_loaded = 1
     f->artifact_dirty = 0
     f->artifact_kind = kind
+    f->artifact_length = (int)strlen(f->artifact_source)
+    artifact_mark_content_changed(f)
+    artifact_cache_store_active(f)
     state.project_set_status(st, status)
     return 1
 }
@@ -539,13 +640,16 @@ editor_save_artifact :: (st: state.IdeState*, f: state.OpenFile*) {
             return
         }
     } else {
-        len := strlen(f->artifact_source)
-        if kry_fs_write_file(dest, f->artifact_source, len) < 0 {
+        if f->artifact_length < 0 {
+            f->artifact_length = (int)strlen(f->artifact_source)
+        }
+        if kry_fs_write_file(dest, f->artifact_source, f->artifact_length) < 0 {
             state.project_set_status(st, "Artifact save failed")
             return
         }
     }
     f->artifact_dirty = 0
+    artifact_cache_store_active(f)
     state.project_set_status(st, "Artifact saved")
 }
 
@@ -572,17 +676,20 @@ draw_artifact_tabs :: (bounds: Rectangle, st: state.IdeState*,
         artifact_tabs[i].italic = kind == state.IDE_ARTIFACT_KRY ? 0 : 1
         artifact_tabs[i].closeable = 0
     }
-    clicked := DrawUITabBar((TabBarProps){
+    clicked := TabBar((TabBarProps){
         bounds, artifact_tabs, 4, f->artifact_tab,
         ScaleUIPx(12), ScaleUIPx(56), ScaleUIPx(92),
-        NULL, 0, NULL
+        NULL, 0, NULL, NULL
     })
     if clicked >= 0 {
+        artifact_cache_store_active(f)
         f->artifact_tab = clicked
         f->focused = clicked == state.IDE_ARTIFACT_KRY ? 1 : 0
         f->artifact_focused = clicked == state.IDE_ARTIFACT_KRY ? 0 : 1
         if clicked != state.IDE_ARTIFACT_KRY {
-            artifact_generate(st, f, clicked)
+            if artifact_cache_restore(f, clicked) == 0 {
+                artifact_generate(st, f, clicked)
+            }
         }
     }
 }
@@ -607,10 +714,10 @@ draw_tabs :: (bounds: Rectangle, st: state.IdeState*) {
     }
 
     closed := -1
-    clicked := DrawUITabBar((TabBarProps){
+    clicked := TabBar((TabBarProps){
         bounds, source_tabs, st->open_count, st->active_open,
         ScaleUIPx(13), ScaleUIPx(96), ScaleUIPx(220),
-        &st->source_tab_scroll, 1, &closed
+        &st->source_tab_scroll, 1, &closed, NULL
     })
     if closed >= 0 {
         st->active_open = closed
@@ -628,12 +735,12 @@ draw_tabs :: (bounds: Rectangle, st: state.IdeState*) {
 
 draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
     if st->open_count == 0 {
-        DrawUIText("Select a file from the tree",
+        Text("Select a file from the tree",
                    (int)bounds.x + ScaleUIPx(16), (int)bounds.y + ScaleUIPx(16),
                    ScaleUIPx(15), GetThemeText())
         return
     }
-    tab_h := GetUITabBarHeight()
+    tab_h := TabBarHeight()
     tab_bounds := (Rectangle){bounds.x, bounds.y, bounds.width, (float)tab_h}
     draw_tabs(tab_bounds, st)
     body := (Rectangle){bounds.x, bounds.y + (float)tab_h,
@@ -654,7 +761,7 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
     } else {
         f->artifact_tab = state.IDE_ARTIFACT_KRY
     }
-    editor_style := (UITextInputStyle){
+    editor_style := (TextInputStyle){
         GetThemeSurface(),
         GetThemeButton(),
         GetThemeLink(),
@@ -664,7 +771,7 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
         ScaleUIPx(14),
         ScaleUIPx(12)
     }
-    artifact_style := (UITextInputStyle){
+    artifact_style := (TextInputStyle){
         GetThemeSurface(),
         GetThemeButton(),
         (Color){244, 137, 61, 255},
@@ -676,7 +783,7 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
     }
     if f->artifact_tab != state.IDE_ARTIFACT_KRY {
         artifact_generate(st, f, f->artifact_tab)
-        before_artifact_len := strlen(f->artifact_source)
+        before_artifact_len := f->artifact_length
         if f->artifact_tab == state.IDE_ARTIFACT_KRB {
             hx.draw_hex_artifact(body, st, f)
             f->artifact_focused = 0
@@ -685,17 +792,21 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
                 editor_save_artifact(st, f)
             }
         } else {
-            changed := DrawUITextArea((TextAreaProps){
+            changed := TextArea((TextAreaProps){
                 body, f->artifact_source, sizeof(f->artifact_source),
                 &f->artifact_cursor, &f->artifact_focused, &f->artifact_scroll,
                 sizeof(f->artifact_source) - 1, ScaleUIPx(14), ScaleUIPx(6),
                 3002, "Generated", f->artifact_tab == state.IDE_ARTIFACT_C ?
-                UI_SYNTAX_C : UI_SYNTAX_KRY,
-                artifact_style, (UITextInputFilter){0}, NULL
+                SyntaxC : SyntaxKry,
+                artifact_style, (TextInputFilter){0}, NULL,
+                f->artifact_content_version
             })
-            after_artifact_len := strlen(f->artifact_source)
+            after_artifact_len := (int)strlen(f->artifact_source)
             if changed != 0 || after_artifact_len != before_artifact_len {
+                f->artifact_length = after_artifact_len
+                artifact_mark_content_changed(f)
                 f->artifact_dirty = 1
+                artifact_cache_store_active(f)
             }
         }
         if f->artifact_focused != 0 {
@@ -722,12 +833,12 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
     }
     editor_snapshot_ensure(f)
     before_len := strlen(f->source)
-    text_changed := DrawUITextArea((TextAreaProps){
+    text_changed := TextArea((TextAreaProps){
         body, f->source, sizeof(f->source),
         &f->cursor, &f->focused, &f->scroll,
         sizeof(f->source) - 1, ScaleUIPx(14), ScaleUIPx(6), 3001,
         "Source", mods.file_syntax(st, f->name),
-        editor_style, (UITextInputFilter){0}, NULL
+        editor_style, (TextInputFilter){0}, NULL, 0
     })
     after_len := strlen(f->source)
     if f->focused != 0 {
@@ -742,8 +853,7 @@ draw_editor :: (bounds: Rectangle, st: state.IdeState*) {
         f->revision = f->revision + 1
         f->dirty = f->revision != f->saved_revision ? 1 : 0
         f->preview = 0
-        f->artifact_loaded = 0
-        f->artifact_dirty = 0
+        artifact_cache_invalidate(f)
         if mods.file_affects_preview(st, f->name) != 0 {
             st->preview_dirty = 1
             st->last_edit_time = GetTime()

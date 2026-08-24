@@ -97,13 +97,13 @@ draw_sfs_browser :: (bounds: Rectangle, st: state.IdeState*) {
     sfs_refresh()
 
     tab_w := ScaleUIPx(64)
-    if DrawUIGenericButton((int)bounds.x + pad, (int)bounds.y + ScaleUIPx(4),
+    if StyledButton((int)bounds.x + pad, (int)bounds.y + ScaleUIPx(4),
                            tab_w, ScaleUIPx(20), "Scene",
-                           UI_BUTTON_STYLE_TAB, 0, NULL) {
+                           ButtonStyleTab, 0, NULL) {
         sfs_browser_open = 0
         return
     }
-    DrawUIText(sfs_browser_cwd, (int)bounds.x + pad + tab_w + ScaleUIPx(8),
+    Text(sfs_browser_cwd, (int)bounds.x + pad + tab_w + ScaleUIPx(8),
                (int)bounds.y + ScaleUIPx(8), ScaleUIPx(12), GetThemeText())
 
     list := (Rectangle){bounds.x, bounds.y + (float)ScaleUIPx(30),
@@ -130,10 +130,10 @@ draw_sfs_browser :: (bounds: Rectangle, st: state.IdeState*) {
 
     up_w := ScaleUIPx(56)
     if strlen(sfs_browser_cwd) > 1 {
-        if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - up_w,
+        if StyledButton((int)bounds.x + (int)bounds.width - pad - up_w,
                                (int)bounds.y + ScaleUIPx(28), up_w,
                                ScaleUIPx(20), "Up",
-                               UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+                               ButtonStyleSecondary, 0, NULL) {
             sfs_parent_path(sfs_browser_cwd, sfs_browser_cwd,
                             sizeof(sfs_browser_cwd))
             sfs_browser_selected = -1
@@ -167,7 +167,7 @@ draw_sfs_browser :: (bounds: Rectangle, st: state.IdeState*) {
         if i == sfs_browser_selected {
             DrawRectangleRec(row, GetThemeButton())
         }
-        DrawUIText(label, (int)row.x + ScaleUIPx(8),
+        Text(label, (int)row.x + ScaleUIPx(8),
                    (int)row.y + ScaleUIPx(4), ScaleUIPx(12), GetThemeText())
         if CheckCollisionPointRec(GetMousePosition(), row) &&
            IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
@@ -199,19 +199,19 @@ draw_sfs_browser :: (bounds: Rectangle, st: state.IdeState*) {
         sfs_join_path(sfs_browser_cwd,
                       sfs_browser_entries[sfs_browser_selected].name, path,
                       sizeof(path))
-        DrawUIText(path, (int)value.x + ScaleUIPx(8),
+        Text(path, (int)value.x + ScaleUIPx(8),
                    (int)value.y + ScaleUIPx(4), ScaleUIPx(11), GetThemeLink())
         BeginScissorMode((int)value.x, (int)value.y + ScaleUIPx(18),
                          (int)value.width, (int)value.height - ScaleUIPx(18))
-        DrawUIText(sfs_browser_value, (int)value.x + ScaleUIPx(8),
+        Text(sfs_browser_value, (int)value.x + ScaleUIPx(8),
                    (int)value.y + ScaleUIPx(20), ScaleUIPx(11), GetThemeText())
         EndScissorMode()
         if sfs_is_action_path(path) != 0 {
-            if DrawUIGenericButton((int)value.x + (int)value.width -
+            if StyledButton((int)value.x + (int)value.width -
                                    ScaleUIPx(62),
                                    (int)value.y + ScaleUIPx(2), ScaleUIPx(56),
                                    ScaleUIPx(18), "Tap",
-                                   UI_BUTTON_STYLE_PRIMARY, 0, NULL) {
+                                   ButtonStylePrimary, 0, NULL) {
                 if KrySfsWrite(path, "tap") == 1 {
                     sfs_browser_value[0] = 0
                     KrySfsRead(path, sfs_browser_value,
@@ -220,7 +220,7 @@ draw_sfs_browser :: (bounds: Rectangle, st: state.IdeState*) {
             }
         }
     } else {
-        DrawUIText("select an entry", (int)value.x + ScaleUIPx(8),
+        Text("select an entry", (int)value.x + ScaleUIPx(8),
                    (int)value.y + ScaleUIPx(4), ScaleUIPx(11), GetThemeIcon())
     }
 }

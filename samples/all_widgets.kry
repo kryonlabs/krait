@@ -4,36 +4,34 @@
 app "All Widgets" {
     size 390 844
     fps 60
-    frame main
 }
 
-frame main {
-    BeginDrawing()
+App :: () #ui {
+    Screen root: {
     ClearBackground(GetThemeBackground())
-    BeginUIFrame(GetScreenWidth(), GetScreenHeight(), GetUIScale())
 
     Background(GetThemeSurface())
 
     Text("All Widgets Demo", ScaleUIPx(20), ScaleUIPx(16),
-         UI_TEXT_24, GetThemeText())
+         ScaleUIPx(24), GetThemeText())
 
     Line(ScaleUIPx(20), ScaleUIPx(48), ScaleUIPx(370), ScaleUIPx(48),
          GetThemeButton())
 
     Text("Text Widget", ScaleUIPx(20), ScaleUIPx(58),
-         UI_TEXT_16, GetThemeText())
+         ScaleUIPx(16), GetThemeText())
     Text("Hello from Krait!", ScaleUIPx(20), ScaleUIPx(78),
-         UI_TEXT_12, GetThemeIcon())
+         ScaleUIPx(12), GetThemeIcon())
 
     Rect(ScaleUIPx(20), ScaleUIPx(100), ScaleUIPx(160), ScaleUIPx(60),
          Fade(GetThemeButton(), 0.3), GetThemeButton())
     Text("Rect Widget", ScaleUIPx(28), ScaleUIPx(118),
-         UI_TEXT_12, GetThemeText())
+         ScaleUIPx(12), GetThemeText())
 
     Button((ButtonProps){
         .bounds = {ScaleUIPx(200), ScaleUIPx(100), ScaleUIPx(170), ScaleUIPx(60)},
         .label = "Button Widget",
-        .style = UI_BUTTON_STYLE_PRIMARY,
+        .style = ButtonStylePrimary,
     })
 
     field_1: [128] char
@@ -43,15 +41,15 @@ frame main {
         (Rectangle){(float)ScaleUIPx(20), (float)ScaleUIPx(180),
                     (float)ScaleUIPx(350), (float)ScaleUIPx(34)},
         field_1, sizeof(field_1), &field_cursor_1, &field_focused_1,
-        128, UI_TEXT_16, 4201,
-        (UITextInputStyle){0}, (UITextInputFilter){0}, NULL, NULL
+        128, ScaleUIPx(16), 4201,
+        (TextInputStyle){0}, (TextInputFilter){0}, NULL, NULL
     })
 
     toggle_1: int = 0
     Toggle(ScaleUIPx(20), ScaleUIPx(230), ScaleUIPx(120), ScaleUIPx(28),
                        &toggle_1, "Off", "On")
     Text("Toggle Switch", ScaleUIPx(160), ScaleUIPx(236),
-         UI_TEXT_12, GetThemeText())
+         ScaleUIPx(12), GetThemeText())
 
     slider_1: int = 50
     Slider(5201, ScaleUIPx(20), ScaleUIPx(290), ScaleUIPx(350),
@@ -61,33 +59,32 @@ frame main {
          GetThemeButton())
 
     Text("Progress Bar", ScaleUIPx(20), ScaleUIPx(380),
-         UI_TEXT_16, GetThemeText())
+         ScaleUIPx(16), GetThemeText())
     Rect(ScaleUIPx(20), ScaleUIPx(404), ScaleUIPx(350), ScaleUIPx(20),
          GetThemeButton(), GetThemeButtonHover())
     Rect(ScaleUIPx(20), ScaleUIPx(404), ScaleUIPx(175), ScaleUIPx(20),
          GetThemeLink(), Fade(GetThemeLink(), 0.5))
 
     Text("Label Frame", ScaleUIPx(20), ScaleUIPx(440),
-         UI_TEXT_16, GetThemeText())
+         ScaleUIPx(16), GetThemeText())
     Rect(ScaleUIPx(20), ScaleUIPx(462), ScaleUIPx(350), ScaleUIPx(120),
          (Color){0}, GetThemeButton())
     Text("Content inside the frame", ScaleUIPx(32), ScaleUIPx(480),
-         UI_TEXT_12, GetThemeIcon())
+         ScaleUIPx(12), GetThemeIcon())
     Text("Second line of content", ScaleUIPx(32), ScaleUIPx(500),
-         UI_TEXT_12, GetThemeIcon())
+         ScaleUIPx(12), GetThemeIcon())
 
     Text("Image Box", ScaleUIPx(20), ScaleUIPx(600),
-         UI_TEXT_16, GetThemeText())
+         ScaleUIPx(16), GetThemeText())
     Rect(ScaleUIPx(20), ScaleUIPx(622), ScaleUIPx(100), ScaleUIPx(100),
          GetThemeSurface(), GetThemeButton())
     Text("IMG", ScaleUIPx(50), ScaleUIPx(662),
-         UI_TEXT_12, GetThemeIcon())
+         ScaleUIPx(12), GetThemeIcon())
 
     Separator(ScaleUIPx(20), ScaleUIPx(740), ScaleUIPx(350), ScaleUIPx(2), 0)
 
     Text("Separator above", ScaleUIPx(20), ScaleUIPx(750),
-         UI_TEXT_12, GetThemeIcon())
+         ScaleUIPx(12), GetThemeIcon())
 
-    EndUIFocus()
-    EndDrawing()
+    }
 }

@@ -84,7 +84,7 @@ md_draw :: (text: const char*, x: int, y: int, wrap_w: int, fnt: int, line_h: in
                     f = fnt + 1
                 }
                 if buf[0] != 0 {
-                    DrawUIText(buf, x + rx + ind * krait_md_indent_px(), yy,
+                    Text(buf, x + rx + ind * krait_md_indent_px(), yy,
                                f, color)
                 }
                 run = run + 1
@@ -124,7 +124,7 @@ draw_md_view :: (bounds: Rectangle, st: state.IdeState*) {
                                  (float)header_h}, GetThemeSurface())
     head: [300] char
     snprintf(head, sizeof(head), "%s  -  Esc: back", title)
-    DrawUIText(head, (int)bounds.x + pad,
+    Text(head, (int)bounds.x + pad,
                (int)bounds.y + (header_h - ScaleUIPx(14)) / 2,
                ScaleUIPx(12), GetThemeLink())
     if IsKeyPressed(KEY_ESCAPE) {

@@ -4,15 +4,12 @@
 app "Hello Krait" {
     size 640 360
     fps 60
-    frame frame
 }
 
-frame :: () {
-    BeginDrawing()
+App :: () #ui {
+    Screen root: {
     ClearBackground(GetThemeBackground())
-    BeginUIFrame(GetScreenWidth(), GetScreenHeight(), GetUIScale())
     DrawText("Hello from Krait", ScaleUIPx(32), ScaleUIPx(32),
              ScaleUIPx(24), GetThemeText())
-    EndUIFocus()
-    EndDrawing()
+    }
 }

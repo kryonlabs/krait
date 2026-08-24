@@ -7,6 +7,7 @@
 #include "ui_icons.h"
 #include "ui_inspect.h"
 #include "theme_style.h"
+#include "version.h"
 
 #if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
 #include <SDL2/SDL.h>
@@ -170,7 +171,7 @@ run_smoke(const char *project_path, const char *screenshot_path, int build_previ
     (void)build_preview;
     for(int i = 0; i < 4; i++) {
         UpdateKeyPlatformState();
-        ide_app_frame();
+        ide_app_App();
     }
     if(!save_screen_image(screenshot_path))
         return 1;
@@ -271,6 +272,11 @@ main(int argc, char **argv)
         if(strcmp(argv[argi], "--temp-session") == 0) {
             argi++;
             continue;
+        }
+        if(strcmp(argv[argi], "--version") == 0 ||
+           strcmp(argv[argi], "-v") == 0) {
+            printf("krait %s\n", KRAIT_VERSION_STRING);
+            return 0;
         }
         if(strcmp(argv[argi], "--dev") == 0) {
             krait_use_kryon_dir("../kryon");
@@ -377,8 +383,8 @@ main(int argc, char **argv)
         return run_artifact_smoke(artifact_kind, artifact_project, artifact_rel);
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
-    InitWindow(screen_w, screen_h, "Krait");
-    window_icon_asset = GetUIIconAsset(UI_ICON_TYPE_KRYON);
+    InitWindow(screen_w, screen_h, "Krait " KRAIT_VERSION_STRING);
+    window_icon_asset = GetUIIconAsset(UI_ICON_TYPE_PROJ_KRYON);
     if(window_icon_asset != NULL) {
         window_icon = LoadImageFromMemory(".png", window_icon_asset->data,
                                           (int)window_icon_asset->size);
@@ -410,12 +416,11 @@ main(int argc, char **argv)
     SetKeyPlatformCallbacks(krait_update_logical_keys,
                               krait_logical_key_pressed,
                               krait_logical_key_down);
-    /* Krait is a dense desktop IDE: pin the crisp bevelled style instead of
-     * riding the global default (MATERIAL since the theme-default change)
-     * -- pill-shaped controls and inflated field chrome do not fit a
-     * text-heavy tool. */
-    SetThemeStyle(THEME_STYLE_RETRO);
-    SetCurrentTheme(THEME_MONO, 0);
+    SetThemeSource(GetDefaultPlatformThemeSource());
+    SetThemeMode(GetDefaultPlatformThemeMode());
+    SetThemeStyle(THEME_STYLE_SYSTEM);
+    SetCurrentTheme(GetDefaultThemeForThemeStyle(GetEffectiveThemeStyle()),
+                    GetEffectiveThemeDarkMode() ? 1 : 0);
     ide_app_init();
     open_startup_project(project_arg);
     if(view_arg != NULL) {
@@ -443,7 +448,7 @@ main(int argc, char **argv)
     } else {
         while(!WindowShouldClose()) {
             UpdateKeyPlatformState();
-            ide_app_frame();
+            ide_app_App();
         }
     }
 

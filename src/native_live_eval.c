@@ -245,16 +245,16 @@ krait_live_eval_int(const char *expr, int *out)
         *out = ScaleUIPx(v);
         return 1;
     }
-    if(strcmp(p, "UI_TEXT_12") == 0) {
-        *out = UI_TEXT_12;
+    if(strcmp(p, "ScaleUIPx(12)") == 0) {
+        *out = ScaleUIPx(12);
         return 1;
     }
-    if(strcmp(p, "UI_TEXT_16") == 0) {
-        *out = UI_TEXT_16;
+    if(strcmp(p, "ScaleUIPx(16)") == 0) {
+        *out = ScaleUIPx(16);
         return 1;
     }
-    if(strcmp(p, "UI_TEXT_24") == 0) {
-        *out = UI_TEXT_24;
+    if(strcmp(p, "ScaleUIPx(24)") == 0) {
+        *out = ScaleUIPx(24);
         return 1;
     }
     if(strcmp(p, "view_width") == 0 || strcmp(p, "GetScreenWidth()") == 0) {
@@ -441,18 +441,18 @@ krait_live_eval_color(const char *expr, Color *out)
     return 0;
 }
 
-UIButtonStyle
+ButtonStyle
 krait_live_eval_button_style(const char *expr)
 {
     if(expr != NULL && strstr(expr, "SECONDARY") != NULL)
-        return UI_BUTTON_STYLE_SECONDARY;
+        return ButtonStyleSecondary;
     if(expr != NULL && strstr(expr, "DANGER") != NULL)
-        return UI_BUTTON_STYLE_DANGER;
+        return ButtonStyleDanger;
     if(expr != NULL && strstr(expr, "TAB_SELECTED") != NULL)
-        return UI_BUTTON_STYLE_TAB_SELECTED;
+        return ButtonStyleTabSelected;
     if(expr != NULL && strstr(expr, "TAB") != NULL)
-        return UI_BUTTON_STYLE_TAB;
-    return UI_BUTTON_STYLE_PRIMARY;
+        return ButtonStyleTab;
+    return ButtonStylePrimary;
 }
 
 int
@@ -595,4 +595,3 @@ krait_live_find_frame_name(const char *text, char *dst, size_t dst_size)
     }
     return 0;
 }
-

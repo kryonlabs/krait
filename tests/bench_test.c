@@ -51,10 +51,11 @@ bench_gate(int cold)
 
         snprintf(kry, sizeof(kry),
                  "#import \"kryon.h\"\n\n"
-                 "screen B%d(viewport: Rectangle) {\n"
+                 "B%d :: (viewport: Rectangle) #ui {\n"
+                 "    Screen root: {\n"
                  "    Background(GetThemeBackground())\n"
-                 "    DrawUIText(\"v%d\", ScaleUIPx(10), ScaleUIPx(10), "
-                 "UI_TEXT_16, GetThemeText())\n}\n", n, n);
+                 "    Text(\"v%d\", ScaleUIPx(10), ScaleUIPx(10), "
+                 "ScaleUIPx(16), GetThemeText())\n    }\n}\n", n, n);
         krait_write_text_file("/tmp/krait-bench-proj/extra.kry", kry);
         n++;
     }
@@ -91,8 +92,8 @@ fill_text(char *buf, size_t size)
 
     while(used < size - 128) {
         used += (size_t)snprintf(buf + used, size - used,
-            "screen Demo(viewport: Rectangle) { Button((ButtonProps){ "
-            ".bounds = {ScaleUIPx(12), ScaleUIPx(20)} }) DrawUIText ok }\\n");
+            "Demo :: (viewport: Rectangle) #ui { Screen root: { Button((ButtonProps){ "
+            ".bounds = {ScaleUIPx(12), ScaleUIPx(20)} }) Text ok } }\\n");
     }
 }
 

@@ -27,7 +27,7 @@ krait_project_preview_size :: (root: const char*, w: int*, h: int*) -> int #exte
 canvas_menu_open :: int #global
 canvas_menu_x :: int #global
 canvas_menu_y :: int #global
-canvas_menu_items :: [3] UIMenuItem #global
+canvas_menu_items :: [3] MenuItem #global
 
 #global
 
@@ -225,35 +225,35 @@ draw_preview_toolbar :: (bounds: Rectangle, st: state.IdeState*) {
     y := (int)bounds.y + ScaleUIPx(4)
     x := (int)bounds.x + ScaleUIPx(6)
     h := ScaleUIPx(22)
-    if DrawUIGenericButton(x, y, ScaleUIPx(42), h, "Fit",
+    if StyledButton(x, y, ScaleUIPx(42), h, "Fit",
                            st->preview_scale_mode == state.IDE_PREVIEW_SCALE_FIT ?
-                               UI_BUTTON_STYLE_TAB_SELECTED : UI_BUTTON_STYLE_TAB,
+                               ButtonStyleTabSelected : ButtonStyleTab,
                            0, NULL) {
         preview_set_fit(st)
     }
     x = x + ScaleUIPx(48)
-    if DrawUIGenericButton(x, y, ScaleUIPx(36), h, "50",
-                           UI_BUTTON_STYLE_TAB, 0, NULL) {
+    if StyledButton(x, y, ScaleUIPx(36), h, "50",
+                           ButtonStyleTab, 0, NULL) {
         preview_set_zoom(st, 0.5)
     }
     x = x + ScaleUIPx(40)
-    if DrawUIGenericButton(x, y, ScaleUIPx(36), h, "75",
-                           UI_BUTTON_STYLE_TAB, 0, NULL) {
+    if StyledButton(x, y, ScaleUIPx(36), h, "75",
+                           ButtonStyleTab, 0, NULL) {
         preview_set_zoom(st, 0.75)
     }
     x = x + ScaleUIPx(40)
-    if DrawUIGenericButton(x, y, ScaleUIPx(42), h, "100",
-                           UI_BUTTON_STYLE_TAB, 0, NULL) {
+    if StyledButton(x, y, ScaleUIPx(42), h, "100",
+                           ButtonStyleTab, 0, NULL) {
         preview_set_zoom(st, 1.0)
     }
     x = x + ScaleUIPx(48)
-    if DrawUIGenericButton(x, y, ScaleUIPx(28), h, "-",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+    if StyledButton(x, y, ScaleUIPx(28), h, "-",
+                           ButtonStyleSecondary, 0, NULL) {
         preview_set_zoom(st, st->preview_zoom * 0.85)
     }
     x = x + ScaleUIPx(32)
-    if DrawUIGenericButton(x, y, ScaleUIPx(28), h, "+",
-                           UI_BUTTON_STYLE_SECONDARY, 0, NULL) {
+    if StyledButton(x, y, ScaleUIPx(28), h, "+",
+                           ButtonStyleSecondary, 0, NULL) {
         preview_set_zoom(st, st->preview_zoom * 1.18)
     }
 }
@@ -262,9 +262,9 @@ draw_canvas_message :: (bounds: Rectangle, title: const char*, detail: const cha
     DrawRectangleRec(bounds, GetThemeSurface())
     x := (int)bounds.x + ScaleUIPx(16)
     y := (int)bounds.y + ScaleUIPx(18)
-    DrawUIText(title, x, y, ScaleUIPx(16), GetThemeText())
+    Text(title, x, y, ScaleUIPx(16), GetThemeText())
     if detail != NULL && detail[0] != 0 {
-        DrawUIText(detail, x, y + ScaleUIPx(26), ScaleUIPx(13), GetThemeIcon())
+        Text(detail, x, y + ScaleUIPx(26), ScaleUIPx(13), GetThemeIcon())
     }
 }
 
@@ -421,20 +421,20 @@ draw_preview :: (bounds: Rectangle, st: state.IdeState*) {
     }
     if ok == 0 {
         DrawRectangleRec(dst, GetThemeBackground())
-        DrawUIText("Live canvas error", (int)dst.x + ScaleUIPx(16),
+        Text("Live canvas error", (int)dst.x + ScaleUIPx(16),
                    (int)dst.y + ScaleUIPx(16), ScaleUIPx(14), GetThemeText())
-        DrawUIText(status, (int)dst.x + ScaleUIPx(16),
+        Text(status, (int)dst.x + ScaleUIPx(16),
                    (int)dst.y + ScaleUIPx(40), ScaleUIPx(12), GetThemeIcon())
     }
     EndScissorMode()
     if canvas_menu_open != 0 {
-        canvas_menu_items[0].kind = UI_MENU_COMMAND
+        canvas_menu_items[0].kind = MenuCommand
         canvas_menu_items[0].label = "Reset View"
         canvas_menu_items[0].id = 1
-        canvas_menu_items[1].kind = UI_MENU_COMMAND
+        canvas_menu_items[1].kind = MenuCommand
         canvas_menu_items[1].label = "Zoom 100%"
         canvas_menu_items[1].id = 2
-        canvas_menu_items[2].kind = UI_MENU_COMMAND
+        canvas_menu_items[2].kind = MenuCommand
         canvas_menu_items[2].label = "Clear Selection"
         canvas_menu_items[2].id = 3
         canvas_menu_items[2].disabled = st->selected_scene_node < 0 ? 1 : 0

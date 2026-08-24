@@ -124,7 +124,7 @@ krait_draw_game_node(const char *type, const char *label,
 
     Rect(x, y, w, h, fill, outline);
     Text(label != NULL && label[0] != '\0' ? label : type,
-         x + ScaleUIPx(6), y + ScaleUIPx(6), UI_TEXT_12, outline);
+         x + ScaleUIPx(6), y + ScaleUIPx(6), ScaleUIPx(12), outline);
 }
 
 static int

@@ -7,6 +7,10 @@ BINDIR ?= $(PREFIX)/bin
 INSTALL ?= install
 KRYON_DIR ?= vendor/kryon
 DEV_KRYON_DIR ?= ../kryon
+# Kapsule terminal emulator, embedded as the studio console tab. Only the
+# emulator core is compiled (src/native_console.c drives it); the Kapsule
+# product UI stays out of the build.
+KAPSULE_DIR ?= vendor/kapsule
 KRYON_UNAME_S := $(shell uname -s 2>/dev/null)
 KRYON_UNAME_M := $(shell uname -m 2>/dev/null)
 ifeq ($(KRYON_UNAME_M),amd64)
@@ -31,6 +35,14 @@ KRAIT_SRCS := $(wildcard ide/*.kry) $(wildcard modules/*/*.kry)
 KRAIT_OBJS := $(patsubst %.kry,$(KRAIT_GEN)/%.o,$(KRAIT_SRCS))
 KRAIT_NATIVE_SRCS := src/main.c $(wildcard src/native_*.c)
 KRAIT_NATIVE_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/src/%.o,$(KRAIT_NATIVE_SRCS))
+# Kapsule emulator core (vendored). Keep this list in sync with
+# scripts/build-android-native.sh.
+KAPSULE_EMULATOR_SRCS := terminal.c terminal_csi.c terminal_dcs.c \
+	terminal_keys.c terminal_modes.c terminal_mouse.c terminal_osc.c \
+	terminal_parser.c terminal_paste.c terminal_pty.c terminal_screen.c \
+	terminal_search.c terminal_sgr.c terminal_sixel.c terminal_text.c \
+	terminal_view.c session.c selection.c input.c palette.c
+KAPSULE_OBJS := $(addprefix $(BUILD_DIR)/kapsule/,$(KAPSULE_EMULATOR_SRCS:.c=.o))
 
 K2C = $(KRYON_BUILD_DIR)/bin/k2c
 # Detect a k2c built for the wrong platform (e.g. a FreeBSD binary on Linux):
@@ -71,7 +83,7 @@ KRYON_CURL_LDLIBS ?= $(KRYON_CURL_A) $(KRYON_OPENSSL_SSL_LDLIB) $(KRYON_OPENSSL_
 KRYON_MARKDOWN_LDLIBS ?= $(KRYON_CMARK_GFM_EXTENSIONS_A) $(KRYON_CMARK_GFM_A)
 
 CFLAGS ?= -Wall -Wextra -O2
-CPPFLAGS += -I$(KRYON_DIR)/include -I$(KRYON_DIR)/src/ui -I$(KRYON_DIR)/vendor/clay \
+CPPFLAGS += -I$(KAPSULE_DIR)/src -I$(KRYON_DIR)/include -I$(KRYON_DIR)/src/ui -I$(KRYON_DIR)/vendor/clay \
 	$(RAY_SDL_CFLAGS) \
 	-DHAS_LIBOQS=1 -I$(KRYON_BUILD_DIR)/vendor/liboqs/include \
 	-DHAS_LIBCURL=1 -DCURL_STATICLIB -I$(KRYON_BUILD_DIR)/vendor/curl/include \
@@ -84,7 +96,7 @@ else
 KRYON_PLATFORM_LDLIBS ?=
 endif
 
-.PHONY: all krait run dev test smoke kanban-test clean install uninstall kryon-deps boundary-check docs-site android-debug android-install android-clean
+.PHONY: all krait run dev test smoke kanban-test clean install uninstall kryon-deps boundary-check docs-site appimage android-debug android-install android-clean
 
 all: krait
 
@@ -126,9 +138,13 @@ $(BUILD_DIR)/src/%.o: src/%.c $(KRAIT_GEN)/.transpiled
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -I$(KRAIT_GEN) -c $< -o $@
 
-$(KRAIT): kryon-deps $(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KRAIT_GEN)/.transpiled $(KRYON_LIB) $(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) | $(BUILD_DIR)/bin
+$(BUILD_DIR)/kapsule/%.o: $(KAPSULE_DIR)/src/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
+
+$(KRAIT): kryon-deps $(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KAPSULE_OBJS) $(KRAIT_GEN)/.transpiled $(KRYON_LIB) $(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) | $(BUILD_DIR)/bin
 	$(CC) $(CFLAGS) $(CPPFLAGS) -I$(KRAIT_GEN) $(RAY_CFLAGS) $(SYSTEM_THEME_CFLAGS) -o $@ \
-		$(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) \
+		$(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KAPSULE_OBJS) \
 		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
 		$(RAYLIB_A) $(KRYON_BOX2D_A) $(RAY_LDLIBS) $(KRYON_LIBOQS_A) $(KRYON_CURL_LDLIBS) \
 		$(KRYON_MARKDOWN_LDLIBS) \
@@ -241,6 +257,11 @@ smoke: test
 install: $(KRAIT)
 	mkdir -p $(DESTDIR)$(BINDIR)
 	$(INSTALL) -m 755 $(KRAIT) $(DESTDIR)$(BINDIR)/krait
+
+# Stages the AppDir locally; bundles libraries and emits build/dist/*.AppImage
+# when linuxdeploy + linuxdeploy-plugin-appimage are on PATH (CI does this).
+appimage: $(KRAIT)
+	sh packaging/appimage/build-appimage.sh
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/krait

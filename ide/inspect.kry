@@ -56,14 +56,14 @@ draw_inspect_header :: (bounds: Rectangle) {
         status = "offline"
         status_color = (Color){ 220, 120, 100, 255 }
     }
-    DrawUIText("Scene Inspector", (int)bounds.x + ScaleUIPx(12),
+    Text("Scene Inspector", (int)bounds.x + ScaleUIPx(12),
                (int)bounds.y + ScaleUIPx(10), ScaleUIPx(14), GetThemeText())
-    DrawUIText(status, (int)(bounds.x + bounds.width) - ScaleUIPx(58),
+    Text(status, (int)(bounds.x + bounds.width) - ScaleUIPx(58),
                (int)bounds.y + ScaleUIPx(10), ScaleUIPx(14), status_color)
     port_text: [32] char
     snprintf(&port_text[0], 32, "127.0.0.1:%d  (%d nodes)",
              krait_inspect_port(), krait_inspect_node_count())
-    DrawUIText(&port_text[0], (int)bounds.x + ScaleUIPx(12),
+    Text(&port_text[0], (int)bounds.x + ScaleUIPx(12),
                (int)bounds.y + ScaleUIPx(28), ScaleUIPx(12), GetThemeIcon())
 }
 
@@ -72,10 +72,10 @@ draw_inspect_tree :: (bounds: Rectangle) {
     mouse := GetMousePosition()
 
     if count <= 0 {
-        DrawUIText("No scene served. Start the app with its inspect port",
+        Text("No scene served. Start the app with its inspect port",
                    (int)bounds.x + ScaleUIPx(12), (int)bounds.y + ScaleUIPx(12),
                    ScaleUIPx(12), GetThemeIcon())
-        DrawUIText("(KASAIVAL_INSPECT_PORT=8642) and select its tab here.",
+        Text("(KASAIVAL_INSPECT_PORT=8642) and select its tab here.",
                    (int)bounds.x + ScaleUIPx(12), (int)bounds.y + ScaleUIPx(30),
                    ScaleUIPx(12), GetThemeIcon())
         return
@@ -124,7 +124,7 @@ draw_inspect_tree :: (bounds: Rectangle) {
         label: [128] char
         snprintf(&label[0], 128, "%s  (%s)",
                  krait_inspect_node_name(i), krait_inspect_node_kind(i))
-        DrawUIText(&label[0], (int)row.x + ScaleUIPx(8) + indent,
+        Text(&label[0], (int)row.x + ScaleUIPx(8) + indent,
                    (int)row.y + ScaleUIPx(3), ScaleUIPx(13), GetThemeText())
         if hot && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
             krait_inspect_select(id)
@@ -142,13 +142,13 @@ draw_inspect_props :: (bounds: Rectangle) {
                                  (float)ScaleUIPx(1)},
                      GetThemeButton())
     if krait_inspect_selected() < 0 {
-        DrawUIText("Select a node to inspect its properties",
+        Text("Select a node to inspect its properties",
                    (int)bounds.x + ScaleUIPx(12), (int)bounds.y + ScaleUIPx(12),
                    ScaleUIPx(12), GetThemeIcon())
         return
     }
     if count <= 0 {
-        DrawUIText("No properties on this node",
+        Text("No properties on this node",
                    (int)bounds.x + ScaleUIPx(12), (int)bounds.y + ScaleUIPx(12),
                    ScaleUIPx(12), GetThemeIcon())
         return
@@ -188,10 +188,10 @@ draw_inspect_props :: (bounds: Rectangle) {
         if i % 2 == 0 {
             DrawRectangleRec(row, GetThemeSurface())
         }
-        DrawUIText(krait_inspect_prop_label(i),
+        Text(krait_inspect_prop_label(i),
                    (int)row.x + ScaleUIPx(12), (int)row.y + ScaleUIPx(3),
                    ScaleUIPx(13), GetThemeText())
-        DrawUIText(krait_inspect_prop_value(i),
+        Text(krait_inspect_prop_value(i),
                    (int)row.x + (int)bounds.width / 2, (int)row.y + ScaleUIPx(3),
                    ScaleUIPx(13), GetThemeLink())
         i += 1

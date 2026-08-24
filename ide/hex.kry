@@ -175,7 +175,7 @@ draw_hex_view :: (bounds: Rectangle, st: state.IdeState*, display: const char*,
     hex_ensure_open(st, file_path)
     size0 := krait_hex_size()
     if size0 == 0 {
-        DrawUIText("hex: file empty or not loaded", (int)bounds.x + ScaleUIPx(16),
+        Text("hex: file empty or not loaded", (int)bounds.x + ScaleUIPx(16),
                    (int)bounds.y + ScaleUIPx(16), ScaleUIPx(13), GetThemeIcon())
         return
     }
@@ -183,21 +183,21 @@ draw_hex_view :: (bounds: Rectangle, st: state.IdeState*, display: const char*,
     pad := ScaleUIPx(8)
     row_h := ScaleUIPx(16)
     font := ScaleUIPx(12)
-    char_w := MeasureUIText("0", font)
+    char_w := TextWidth("0", font)
     size := krait_hex_size()
 
     head: [256] char
     snprintf(head, sizeof(head), "%s  %d bytes", display, size)
-    DrawUIText(head, (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(6),
+    Text(head, (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(6),
                font, GetThemeText())
     if krait_hex_dirty() != 0 {
-        DrawUIText("modified", (int)bounds.x + pad + ScaleUIPx(260),
+        Text("modified", (int)bounds.x + pad + ScaleUIPx(260),
                    (int)bounds.y + ScaleUIPx(6), font, GetThemeLink())
     }
-    if DrawUIGenericButton((int)bounds.x + (int)bounds.width - pad - ScaleUIPx(64),
+    if StyledButton((int)bounds.x + (int)bounds.width - pad - ScaleUIPx(64),
                            (int)bounds.y + ScaleUIPx(2), ScaleUIPx(64),
                            ScaleUIPx(22), "Save",
-                           UI_BUTTON_STYLE_PRIMARY,
+                           ButtonStylePrimary,
                            krait_hex_dirty() == 0 ? 1 : 0, NULL) {
         hex_save(st)
     }
@@ -207,7 +207,7 @@ draw_hex_view :: (bounds: Rectangle, st: state.IdeState*, display: const char*,
                         bounds.width - (float)(pad * 2),
                         bounds.height - (float)ScaleUIPx(38)}
     if grid.width < 480.0 || grid.height < (float)row_h {
-        DrawUIText("pane too small for the hex view",
+        Text("pane too small for the hex view",
                    (int)grid.x, (int)grid.y, font, GetThemeIcon())
         return
     }
@@ -257,7 +257,7 @@ draw_hex_view :: (bounds: Rectangle, st: state.IdeState*, display: const char*,
         y := top + row * row_h
         off: [16] char
         snprintf(off, sizeof(off), "%08x", line_index * 16)
-        DrawUIText(off, off_x, y, font, GetThemeIcon())
+        Text(off, off_x, y, font, GetThemeIcon())
         col := 0
         while col < 16 {
             index := line_index * 16 + col
@@ -278,12 +278,12 @@ draw_hex_view :: (bounds: Rectangle, st: state.IdeState*, display: const char*,
             pair[1] = hex_nibble_char(byte, 1)
             pair[2] = 0
             if is_cursor && hex_nibble == 0 {
-                DrawUIText(pair + 1, cx + char_w, y, font, GetThemeSurface())
+                Text(pair + 1, cx + char_w, y, font, GetThemeSurface())
             } else if is_cursor {
-                DrawUIText(pair, cx, y, font, GetThemeSurface())
-                DrawUIText(pair + 1, cx + char_w, y, font, GetThemeLink())
+                Text(pair, cx, y, font, GetThemeSurface())
+                Text(pair + 1, cx + char_w, y, font, GetThemeLink())
             } else {
-                DrawUIText(pair, cx, y, font, GetThemeText())
+                Text(pair, cx, y, font, GetThemeText())
             }
             cell := (Rectangle){(float)cx, (float)y, (float)(char_w * 3),
                                 (float)row_h}
@@ -306,7 +306,7 @@ draw_hex_view :: (bounds: Rectangle, st: state.IdeState*, display: const char*,
             one: [2] char
             one[0] = ch
             one[1] = 0
-            DrawUIText(one, ascii_x + acol * char_w, y, font,
+            Text(one, ascii_x + acol * char_w, y, font,
                        index == hex_cursor && hex_focused != 0 ?
                            GetThemeLink() : GetThemeText())
             acol = acol + 1

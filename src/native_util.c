@@ -362,7 +362,7 @@ wrap_build(const char *text, int width, int font)
             seg_len = sizeof(seg) - 1;
         memcpy(seg, word, seg_len);
         seg[seg_len] = '\0';
-        seg_w = MeasureUIText(seg, font);
+        seg_w = TextWidth(seg, font);
         if(line_w > 0 && line_w + seg_w + font > width) {
             if(count >= WRAP_CACHE_LINES)
                 break;

@@ -16,7 +16,7 @@ draw_text_view :: (bounds: Rectangle, st: state.IdeState*) {
     DrawRectangleRec(bounds, GetThemeBackground())
     f := state.active_file(st)
     if f == NULL {
-        DrawUIText("Open a file from the studio tree first", 
+        Text("Open a file from the studio tree first", 
                    (int)bounds.x + ScaleUIPx(16),
                    (int)bounds.y + ScaleUIPx(16), ScaleUIPx(14),
                    GetThemeIcon())
@@ -26,16 +26,16 @@ draw_text_view :: (bounds: Rectangle, st: state.IdeState*) {
     footer_h := ScaleUIPx(24)
     body := (Rectangle){bounds.x, bounds.y, bounds.width,
                         bounds.height - (float)footer_h}
-    style := (UITextInputStyle){
+    style := (TextInputStyle){
         GetThemeBackground(), GetThemeBackground(), GetThemeLink(),
         GetThemeText(), GetThemeText(), 0, ScaleUIPx(16), ScaleUIPx(10)
     }
     before_len := strlen(f->source)
-    changed := DrawUITextArea((TextAreaProps){
+    changed := TextArea((TextAreaProps){
         body, f->source, sizeof(f->source),
         &f->cursor, &f->focused, &f->scroll,
         sizeof(f->source) - 1, ScaleUIPx(14), ScaleUIPx(6), 7701,
-        "Type", UI_SYNTAX_NONE, style, (UITextInputFilter){0}, NULL
+        "Type", SyntaxNone, style, (TextInputFilter){0}, NULL, 0
     })
     if changed != 0 || strlen(f->source) != before_len {
         if f->dirty == 0 {
@@ -70,7 +70,7 @@ draw_text_view :: (bounds: Rectangle, st: state.IdeState*) {
     snprintf(foot, sizeof(foot), "%s%s  -  Esc: %s  Ctrl+S: save",
              f->name, f->dirty != 0 ? " *" : "",
              st->project.loaded != 0 ? "studio" : "projects")
-    DrawUIText(foot, (int)bounds.x + ScaleUIPx(10),
+    Text(foot, (int)bounds.x + ScaleUIPx(10),
                (int)(bounds.y + bounds.height) - footer_h + ScaleUIPx(5),
                ScaleUIPx(11), GetThemeIcon())
 }

@@ -35,11 +35,13 @@ krait_settings_sanitize(IdeState *st)
     if(st->theme_source != THEME_SOURCE_SYSTEM)
         st->theme_source = THEME_SOURCE_APP;
     if(st->theme_mode < THEME_MODE_SYSTEM || st->theme_mode > THEME_MODE_DARK)
-        st->theme_mode = THEME_MODE_DARK;
+        st->theme_mode = GetDefaultPlatformThemeMode();
     if(st->theme_id < 0 || st->theme_id >= THEME_COUNT)
-        st->theme_id = THEME_MONO;
-    if(st->theme_style < THEME_STYLE_SYSTEM || st->theme_style > THEME_STYLE_AERO)
-        st->theme_style = THEME_STYLE_RETRO;
+        st->theme_id = GetDefaultThemeForThemeStyle(
+            st->theme_style == THEME_STYLE_SYSTEM ? GetDefaultPlatformThemeStyle()
+                                                  : (ThemeStyle)st->theme_style);
+    if(st->theme_style < THEME_STYLE_SYSTEM || st->theme_style > THEME_STYLE_MATERIAL)
+        st->theme_style = THEME_STYLE_SYSTEM;
     if(st->settings_tab < 0 || st->settings_tab > 4)
         st->settings_tab = 0;
     if(st->settings_scroll < 0)
@@ -51,6 +53,22 @@ krait_settings_sanitize(IdeState *st)
         st->module_count = IDE_MAX_MODULES;
     for(int i = 0; i < st->module_count; i++)
         st->modules[i].enabled = st->modules[i].enabled ? 1 : 0;
+}
+
+static void
+krait_settings_migrate_legacy_defaults(IdeState *st)
+{
+    if(st == NULL)
+        return;
+    if(st->theme_source == THEME_SOURCE_APP &&
+       st->theme_mode == THEME_MODE_DARK &&
+       st->theme_id == THEME_MONO &&
+       st->theme_style == THEME_STYLE_RETRO) {
+        st->theme_source = GetDefaultPlatformThemeSource();
+        st->theme_mode = GetDefaultPlatformThemeMode();
+        st->theme_style = THEME_STYLE_SYSTEM;
+        st->theme_id = GetDefaultThemeForThemeStyle(GetDefaultPlatformThemeStyle());
+    }
 }
 
 static int
@@ -76,10 +94,10 @@ krait_settings_defaults(IdeState *st)
 {
     if(st == NULL)
         return;
-    st->theme_source = THEME_SOURCE_SYSTEM;
-    st->theme_mode = THEME_MODE_SYSTEM;
-    st->theme_id = THEME_MONO;
-    st->theme_style = THEME_STYLE_RETRO;
+    st->theme_source = GetDefaultPlatformThemeSource();
+    st->theme_mode = GetDefaultPlatformThemeMode();
+    st->theme_style = THEME_STYLE_SYSTEM;
+    st->theme_id = GetDefaultThemeForThemeStyle(GetDefaultPlatformThemeStyle());
     st->settings_tab = 0;
     st->settings_scroll = 0;
     st->force_mobile_layout = 0;
@@ -124,6 +142,7 @@ krait_settings_load(IdeState *st)
             (void)krait_settings_set_module(st, key, value);
     }
     fclose(file);
+    krait_settings_migrate_legacy_defaults(st);
     krait_settings_sanitize(st);
     return 1;
 }
@@ -155,4 +174,3 @@ krait_settings_save(IdeState *st)
     fclose(file);
     return 1;
 }
-

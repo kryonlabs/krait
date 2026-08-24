@@ -1,0 +1,152 @@
+#module "ide.output"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+
+# The Output tab next to Kapsule in the studio bottom panel: the project
+# build log captured by the preview/build pipeline (native_preview.c).
+krait_build_output :: () -> const char* #extern
+krait_output_clear :: () #extern
+
+output_scroll :: int #global
+output_follow :: int #global
+output_last_length :: int #global
+
+#global
+
+output_count_lines :: (text: const char*) -> int {
+    count := 0
+    last_was_newline := 0
+    if text == NULL || text[0] == 0 {
+        return 0
+    }
+    p := text
+    count = 1
+    while p[0] != 0 {
+        if p[0] == '\n' {
+            count = count + 1
+            last_was_newline = 1
+        } else {
+            last_was_newline = 0
+        }
+        p = p + 1
+    }
+    if last_was_newline {
+        count = count - 1
+    }
+    return count
+}
+
+draw_output :: (bounds: Rectangle, st: state.IdeState*) {
+    DrawRectangleRec(bounds, GetThemeSurface())
+    pad := ScaleUIPx(6)
+    bar_h := ScaleUIPx(26)
+    gap := ScaleUIPx(6)
+    btn_w := ScaleUIPx(58)
+    font := ScaleUIPx(13)
+    line_h := ScaleUIPx(18)
+    list := (Rectangle){bounds.x + (float)pad,
+                        bounds.y + (float)(bar_h + gap),
+                        bounds.width - (float)(pad * 2),
+                        bounds.height - (float)(bar_h + gap + pad)}
+    x := (int)bounds.x + pad
+    y := (int)bounds.y
+    text := krait_build_output()
+    length := text != NULL ? (int)strlen(text) : 0
+    total := output_count_lines(text)
+    visible := (int)list.height / line_h
+    if visible < 1 {
+        visible = 1
+    }
+    max_scroll := total - visible
+    if max_scroll < 0 {
+        max_scroll = 0
+    }
+
+    if StyledButton(x, y, btn_w, bar_h, "Copy",
+                           ButtonStyleSecondary, 0, NULL) {
+        if length > 0 {
+            SetUIClipboardTextValue(text)
+            state.project_set_status(st, "Output copied")
+        }
+    }
+    if StyledButton(x + btn_w + gap, y, btn_w, bar_h, "Clear",
+                           ButtonStyleSecondary, 0, NULL) {
+        krait_output_clear()
+        output_scroll = 0
+        output_follow = 1
+        state.project_set_status(st, "Output cleared")
+    }
+
+    # New build output follows the tail unless the user scrolled up.
+    if length != output_last_length {
+        output_last_length = length
+        if output_follow != 0 {
+            output_scroll = max_scroll
+        }
+    }
+    if CheckCollisionPointRec(GetMousePosition(), list) {
+        wheel := GetMouseWheelMove()
+        if wheel != 0.0 {
+            output_scroll = output_scroll - (int)(wheel * 3.0)
+            if output_scroll < 0 {
+                output_scroll = 0
+            }
+            if output_scroll > max_scroll {
+                output_scroll = max_scroll
+            }
+        }
+    }
+    if output_scroll >= max_scroll {
+        output_follow = 1
+    } else {
+        output_follow = 0
+    }
+    if output_scroll > max_scroll {
+        output_scroll = max_scroll
+    }
+
+    if total == 0 {
+        Text("No build output yet", (int)list.x + ScaleUIPx(10),
+                   (int)list.y + ScaleUIPx(6), font, GetThemeText())
+        return
+    }
+
+    # Walk to the first visible line, then render downward.
+    p := text
+    line := 0
+    while p[0] != 0 && line < output_scroll {
+        if p[0] == '\n' {
+            line = line + 1
+        }
+        p = p + 1
+    }
+    row_y := (int)list.y
+    clip_w := (int)list.width - ScaleUIPx(6)
+    if clip_w < ScaleUIPx(80) {
+        clip_w = ScaleUIPx(80)
+    }
+    while p[0] != 0 && row_y < (int)(list.y + list.height) {
+        start := p
+        while p[0] != 0 && p[0] != '\n' {
+            p = p + 1
+        }
+        line_text: [1024] char
+        len := (int)(p - start)
+        if len > 1023 {
+            len = 1023
+        }
+        if len > 0 {
+            memcpy(line_text, start, len)
+        }
+        line_text[len] = 0
+        BeginUIClip((int)list.x, row_y, clip_w, line_h)
+        Text(line_text, (int)list.x + ScaleUIPx(10), row_y, font,
+                   GetThemeText())
+        EndUIClip()
+        row_y = row_y + line_h
+        if p[0] == '\n' {
+            p = p + 1
+        }
+    }
+}

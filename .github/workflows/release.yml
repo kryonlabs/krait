@@ -1,0 +1,221 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APT_DEPS: >-
+    build-essential
+    ca-certificates
+    cmake
+    git
+    libbrotli-dev
+    libdrm-dev
+    libegl1-mesa-dev
+    libgbm-dev
+    libgles2-mesa-dev
+    libgtk-3-dev
+    libssl-dev
+    libsdl2-dev
+    libzstd-dev
+    pkg-config
+    zlib1g-dev
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $APT_DEPS
+
+      - name: Run Tests
+        run: make test
+
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    needs: test
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            $APT_DEPS file x11-utils xvfb
+
+      - name: Install AppImage Tools
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          curl -L -o "$HOME/.local/bin/linuxdeploy" \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -L -o "$HOME/.local/bin/linuxdeploy-plugin-appimage" \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-appimage-x86_64.AppImage
+          curl -L -o "$HOME/.local/bin/linuxdeploy-plugin-gtk" \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk-x86_64.AppImage
+          chmod +x "$HOME/.local/bin"/linuxdeploy*
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build Krait
+        run: make krait
+
+      - name: Show Version
+        run: ./build/linux-x86_64/bin/krait --version
+
+      - name: Build AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: make appimage
+
+      - name: Smoke Test AppImage
+        timeout-minutes: 5
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          DISPLAY: ":99"
+        run: |
+          set -euo pipefail
+          appimage="$(find build/dist -maxdepth 1 -name '*.AppImage' | head -n 1)"
+          test -n "$appimage"
+          chmod +x "$appimage"
+          Xvfb "$DISPLAY" -screen 0 1280x800x24 >/tmp/krait-xvfb.log 2>&1 &
+          xvfb_pid=$!
+          trap 'kill "$app_pid" "$xvfb_pid" >/dev/null 2>&1 || true' EXIT
+          sleep 2
+          "$appimage" >/tmp/krait-appimage.log 2>&1 &
+          app_pid=$!
+          for _ in $(seq 1 30); do
+            if xwininfo -root -tree | grep -q 'Krait '; then
+              echo "AppImage opened a window"
+              exit 0
+            fi
+            if ! kill -0 "$app_pid" >/dev/null 2>&1; then
+              echo "AppImage exited before opening a window"
+              cat /tmp/krait-appimage.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "AppImage did not open an X11 window within 30 seconds"
+          cat /tmp/krait-appimage.log || true
+          exit 1
+
+      - name: Package Linux Tarball
+        run: |
+          set -eu
+          version="$(sed -n 's/^#define KRAIT_VERSION_STRING "\(.*\)"/\1/p' src/version.h)"
+          package="krait-linux-x86_64-$version"
+          mkdir -p "build/dist/$package/bin"
+          cp build/linux-x86_64/bin/krait "build/dist/$package/bin/krait"
+          cp README.md "build/dist/$package/README.md"
+          cp CHANGELOG.md "build/dist/$package/CHANGELOG.md"
+          tar -C build/dist -czf "build/dist/$package.tar.gz" "$package"
+          rm -rf "build/dist/$package"
+          (cd build/dist && sha256sum "$package.tar.gz" > "$package.tar.gz.sha256")
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: |
+            build/dist/*.AppImage
+            build/dist/*.AppImage.sha256
+            build/dist/*.tar.gz
+            build/dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+      - test
+      - build-linux
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Release Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: build/release
+          merge-multiple: true
+
+      - name: Verify Release Artifacts
+        run: |
+          set -euo pipefail
+          test -n "$(find build/release -type f -print -quit)"
+
+      - name: Create and Push Tag If Version Is New
+        id: tag_version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^#define KRAIT_VERSION_STRING "\(.*\)"/\1/p' src/version.h)
+          if [ -z "$VERSION" ]; then
+            echo "Could not read KRAIT_VERSION_STRING"
+            exit 1
+          fi
+          TAG="v$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Tag $TAG and its GitHub release already exist, skipping release"
+              echo "tag_pushed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "Tag $TAG exists but its GitHub release is missing; publishing release"
+              echo "tag_pushed=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $VERSION"
+            git push origin "$TAG"
+            echo "tag_pushed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        if: steps.tag_version.outputs.tag_pushed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_version.outputs.tag_name }}
+          files: build/release/*
+          generate_release_notes: true
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

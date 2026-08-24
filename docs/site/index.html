@@ -81,7 +81,7 @@
 
 AppHome :: (app: App*) {
     col {
-        Text("Hello", UI_TEXT_24)
+        Text("Hello", ScaleUIPx(24))
         Button("Tap") {
             app->n += 1
         }

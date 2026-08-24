@@ -1,0 +1,6 @@
+#!/bin/sh
+# Krait AppImage launcher. Bundled libraries live under usr/; linuxdeploy
+# rewrote the RPATHs, so a plain exec is enough.
+HERE="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
+
+exec "$HERE/usr/bin/krait" "$@"
