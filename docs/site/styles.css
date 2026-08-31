@@ -901,6 +901,14 @@ body.ide-page::before {
   section { padding: var(--space-lg) 20px; }
 }
 
+.nl-wrap,
+.nl-badge,
+.nl-card {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 @media (max-width: 560px) {
   body { font-size: 14px; }
   .hero h1 { font-size: 26px; }
