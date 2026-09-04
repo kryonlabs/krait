@@ -100,11 +100,12 @@ typedef struct {
 /* editor session                                                      */
 /* ------------------------------------------------------------------ */
 
-#define LEVEL_TOOL_PAINT  0
-#define LEVEL_TOOL_ERASE  1
-#define LEVEL_TOOL_PICK   2
-#define LEVEL_TOOL_OBJECT 3
-#define LEVEL_TOOL_FILL   4
+#define LEVEL_TOOL_PAN    0
+#define LEVEL_TOOL_PAINT  1
+#define LEVEL_TOOL_ERASE  2
+#define LEVEL_TOOL_PICK   3
+#define LEVEL_TOOL_OBJECT 4
+#define LEVEL_TOOL_FILL   5
 
 typedef struct {
     int layer, x, y;
@@ -570,6 +571,60 @@ static void level_scan_dir(const char *abs_dir, const char *prefix)
     closedir(dir);
 }
 
+/* natural order: World0_2 before World0_10; worlds first, then plots,
+ * then everything else (templates, maps) */
+static int level_file_group(const char *name)
+{
+    if(strncmp(name, "World", 5) == 0)
+        return 0;
+    if(strncmp(name, "Plot", 4) == 0)
+        return 1;
+    return 2;
+}
+
+static int level_name_cmp(const char *a, const char *b)
+{
+    while(*a != '\0' && *b != '\0') {
+        if(isdigit((unsigned char)*a) && isdigit((unsigned char)*b)) {
+            long va, vb;
+            char *ea, *eb;
+
+            va = strtol(a, &ea, 10);
+            vb = strtol(b, &eb, 10);
+            if(va != vb)
+                return va < vb ? -1 : 1;
+            a = ea;
+            b = eb;
+            continue;
+        }
+        if((unsigned char)*a != (unsigned char)*b)
+            return (unsigned char)*a - (unsigned char)*b;
+        a++;
+        b++;
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+static int level_entry_cmp(const void *pa, const void *pb)
+{
+    /* entries may carry a relative path (sub/levels/Name.level); group
+     * and order by the file name itself */
+    const char *a = (const char *)pa;
+    const char *b = (const char *)pb;
+    const char *ba = strrchr(a, '/');
+    const char *bb = strrchr(b, '/');
+    int ga, gb;
+
+    a = ba ? ba + 1 : a;
+    b = bb ? bb + 1 : b;
+    ga = level_file_group(a);
+    gb = level_file_group(b);
+
+    if(ga != gb)
+        return ga - gb;
+    return level_name_cmp(a, b);
+}
+
 static void level_scan_files(const char *project_root)
 {
     char dir_path[LEVEL_PATH_MAX];
@@ -602,6 +657,9 @@ static void level_scan_files(const char *project_root)
         }
         closedir(dir);
     }
+    /* worlds first, natural numeric order within a world */
+    qsort(g_level.files, (size_t)g_level.file_count,
+          sizeof g_level.files[0], level_entry_cmp);
 }
 
 int krait_level_project_has(const char *project_root)
@@ -621,7 +679,7 @@ static void level_session_defaults(void)
     g_level.show_layer[3] = 1;
     g_level.show_grid = 1;
     g_level.show_flags = 0;
-    g_level.tool = LEVEL_TOOL_PAINT;
+    g_level.tool = LEVEL_TOOL_PAN;
     g_level.stroke_count = 0;
     g_level.stroke_open = 0;
     snprintf(g_level.status, sizeof g_level.status, "Levels loaded");
@@ -1005,8 +1063,9 @@ static void level_fill(int tx, int ty)
         nc.sheet = LEVEL_EMPTY;
         nc.col = 0;
         nc.row = 0;
-    } else if(g_level.cur_sheet >= 0 &&
-              g_level.tool == LEVEL_TOOL_PAINT) {
+    } else if(g_level.cur_sheet >= 0) {
+        /* fill with the selected tile whatever tool is active (the Fill
+         * tool itself used to be rejected here and never filled) */
         nc.sheet = g_level.doc.sheets[g_level.cur_sheet].id;
         nc.col = (unsigned char)g_level.cur_col;
         nc.row = (unsigned char)g_level.cur_row;
@@ -1139,10 +1198,10 @@ static void level_toolbar(Rectangle toolbar)
     }
     x += ScaleUIPx(6);
     {
-        static const char *labels[5] = { "Paint", "Erase", "Pick",
-                                         "Object", "Fill" };
+        static const char *labels[6] = { "Pan", "Paint", "Erase",
+                                         "Pick", "Object", "Fill" };
         int i;
-        for(i = 0; i < 5; i++) {
+        for(i = 0; i < 6; i++) {
             if(level_btn(x, y, ScaleUIPx(52), bh, labels[i],
                          g_level.tool == i))
                 g_level.tool = i;
@@ -1320,7 +1379,8 @@ static void level_palette(Rectangle zone)
                         g_level.cur_col = c;
                         g_level.cur_row = r;
                         if(g_level.tool == LEVEL_TOOL_OBJECT ||
-                           g_level.tool == LEVEL_TOOL_ERASE)
+                           g_level.tool == LEVEL_TOOL_ERASE ||
+                           g_level.tool == LEVEL_TOOL_PAN)
                             g_level.tool = LEVEL_TOOL_PAINT;
                     }
                 }
@@ -1577,14 +1637,15 @@ static void level_canvas(Rectangle canvas)
             g_level.cam_y = (mouse.y - canvas.y + g_level.cam_y) -
                             before_y * cell;
         }
-        if(hovered_tx >= 0 &&
+        if(g_level.tool != LEVEL_TOOL_PAN && hovered_tx >= 0 &&
            (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) ||
             IsMouseButtonDown(MOUSE_BUTTON_LEFT))) {
             if(!g_level.stroke_open)
                 level_undo_begin();
             level_canvas_paint(hovered_tx, hovered_ty, g_level.tool);
         }
-        if(hovered_tx >= 0 && IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
+        if(g_level.tool != LEVEL_TOOL_PAN && hovered_tx >= 0 &&
+           IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
             if(!g_level.stroke_open)
                 level_undo_begin();
             level_canvas_paint(hovered_tx, hovered_ty, LEVEL_TOOL_ERASE);
@@ -1596,7 +1657,9 @@ static void level_canvas(Rectangle canvas)
     }
     if(IsKeyPressed(KEY_Z))
         krait_level_undo();
-    if(IsMouseButtonDown(MOUSE_BUTTON_MIDDLE)) {
+    if(IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) ||
+       (g_level.tool == LEVEL_TOOL_PAN &&
+        IsMouseButtonDown(MOUSE_BUTTON_LEFT))) {
         Vector2 delta = GetMouseDelta();
         g_level.cam_x -= delta.x;
         g_level.cam_y -= delta.y;

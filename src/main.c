@@ -684,7 +684,17 @@ main(int argc, char **argv)
     } else {
         while(!WindowShouldClose()) {
             UpdateKeyPlatformState();
+            /* The declarative App is the frame body only: the caller owns
+             * Begin/End frame + UI scope (same wrapper run_smoke uses).
+             * Without EndFrame nothing swaps, waits, or polls events: the
+             * window stays black with dead input at 100% CPU. */
+            BeginFrame();
+            BeginUIFrame(GetScreenWidth(), GetScreenHeight(), GetUIScale());
+            BeginUI(Key("ide_app_App"));
             ide_app_App();
+            EndUI();
+            EndUIFrame();
+            EndFrame();
         }
     }
 
