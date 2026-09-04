@@ -360,6 +360,11 @@ draw_shared_dialog :: (bounds: Rectangle, st: state.IdeState*) {
 alias_buf :: [64] char #global
 alias_cursor :: int #global
 alias_focused :: int #global
+node_buf :: [256] char #global
+node_cursor :: int #global
+node_focused :: int #global
+
+krait_daochi_set_node_url :: (url: const char*) -> int #extern
 
 draw_account_section :: (x: int, y: int, w: int, st: state.IdeState*) -> int {
     row_h := ScaleUIPx(26)
@@ -370,6 +375,9 @@ draw_account_section :: (x: int, y: int, w: int, st: state.IdeState*) -> int {
              GetThemeIcon())
         return y + ScaleUIPx(20)
     }
+    if node_buf[0] == 0 {
+        snprintf(node_buf, sizeof(node_buf), "%s", krait_daochi_node_url())
+    }
     if krait_daochi_has_account() != 0 {
         id := krait_daochi_public_id()
         id_line: [96] char
@@ -377,10 +385,31 @@ draw_account_section :: (x: int, y: int, w: int, st: state.IdeState*) -> int {
         Text(id_line, x, y, ScaleUIPx(12), GetThemeIcon())
         y = y + ScaleUIPx(18)
         node := krait_daochi_node_url()
-        node_line: [192] char
+        node_line: [256] char
         snprintf(node_line, sizeof(node_line), "node: %s", node)
         Text(node_line, x, y, ScaleUIPx(12), GetThemeIcon())
         y = y + ScaleUIPx(22)
+
+        node_style := (TextInputStyle){
+            GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
+            GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
+        }
+        Text("node url", x, y, ScaleUIPx(11), GetThemeText())
+        TextField((TextFieldProps){
+            (Rectangle){(float)(x + ScaleUIPx(64)), (float)y,
+                        (float)(w - ScaleUIPx(196)), (float)row_h},
+            node_buf, sizeof(node_buf), &node_cursor, &node_focused,
+            sizeof(node_buf) - 1, ScaleUIPx(13), 7700,
+            node_style, (TextInputFilter){0}, NULL, NULL
+        })
+        if StyledButton(x + w - ScaleUIPx(120), y, ScaleUIPx(110), row_h,
+                               "Set node", ButtonStyleSecondary, 0, NULL) {
+            if krait_daochi_set_node_url(node_buf) != 0 {
+                state.project_set_status(st, krait_daochi_status())
+                node_buf[0] = 0
+            }
+        }
+        y = y + ScaleUIPx(34)
 
         input_style := (TextInputStyle){
             GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
