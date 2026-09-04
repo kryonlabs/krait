@@ -264,9 +264,21 @@ daochi-test: $(DAOCHI_TEST)
 git-test: $(GIT_TEST)
 	$(GIT_TEST)
 
-$(GIT_TEST): tests/git_test.c $(BUILD_DIR)/src/native_git.o $(BUILD_DIR)/src/native_util.o $(KRYON_LIB) $(RAYLIB_A) $(KRYON_CURL_A) | $(BUILD_DIR)
+$(GIT_TEST): tests/git_test.c $(BUILD_DIR)/src/native_git.o $(BUILD_DIR)/src/native_kanban.o $(BUILD_DIR)/src/native_ai.o $(BUILD_DIR)/src/native_util.o $(BUILD_DIR)/src/native_scaffold.o $(BUILD_DIR)/src/native_agent.o $(BUILD_DIR)/src/native_project.o $(BUILD_DIR)/src/native_krbhex.o $(BUILD_DIR)/src/native_compile.o $(BUILD_DIR)/src/native_preview.o $(BUILD_DIR)/src/native_live.o $(BUILD_DIR)/src/native_live_eval.o $(BUILD_DIR)/src/native_scene.o $(KRYON_LIB) $(RAYLIB_A) $(KRYON_CURL_A) | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc -I$(KRAIT_GEN) -I$(KRYON_DIR)/include -o $@ tests/git_test.c 		$(BUILD_DIR)/src/native_git.o $(BUILD_DIR)/src/native_util.o 		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive 		$(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) 		$(KRYON_CURL_LDLIBS) $(KRYON_MARKDOWN_LDLIBS) $(RAY_LDLIBS) 		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) 		-lbrotlidec -lbrotlicommon -lzstd -lz -lpthread -lm
+	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc -I$(KRAIT_GEN) -I$(KRYON_DIR)/include -o $@ tests/git_test.c \
+		$(BUILD_DIR)/src/native_git.o $(BUILD_DIR)/src/native_kanban.o \
+		$(BUILD_DIR)/src/native_ai.o $(BUILD_DIR)/src/native_util.o \
+		$(BUILD_DIR)/src/native_scaffold.o $(BUILD_DIR)/src/native_agent.o \
+		$(BUILD_DIR)/src/native_project.o $(BUILD_DIR)/src/native_krbhex.o \
+		$(BUILD_DIR)/src/native_compile.o $(BUILD_DIR)/src/native_preview.o \
+		$(BUILD_DIR)/src/native_live.o $(BUILD_DIR)/src/native_live_eval.o \
+		$(BUILD_DIR)/src/native_scene.o \
+		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
+		$(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) \
+		$(KRYON_CURL_LDLIBS) $(KRYON_MARKDOWN_LDLIBS) $(RAY_LDLIBS) \
+		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) \
+		-lbrotlidec -lbrotlicommon -lzstd -lz -lpthread -lm
 
 $(DAOCHI_TEST): tests/daochi_test.c $(BUILD_DIR)/src/native_daochi.o $(BUILD_DIR)/src/native_util.o $(KSYNC_OBJS) $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) | $(BUILD_DIR)
 	@mkdir -p $(dir $@)

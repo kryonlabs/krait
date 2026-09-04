@@ -8,6 +8,9 @@ dc :: #import "ide/daochi"
 krait_daochi_has_account :: () -> int #extern
 krait_daochi_friends_refresh :: () -> int #extern
 krait_daochi_boards_refresh :: () -> int #extern
+krait_github_board_sync :: () -> int #extern
+krait_github_card_issue :: (col: int, index: int) -> int #extern
+krait_git_status_text :: () -> const char* #extern
 
 krait_kanban_rescan :: () -> int #extern
 krait_kanban_count :: (col: int) -> int #extern
@@ -132,6 +135,18 @@ draw_board :: (bounds: Rectangle, st: state.IdeState*, pad: int, modal: int) {
         if dc.krait_daochi_has_account() != 0 {
             dc.krait_daochi_boards_refresh()
             dc.daochi_shared_open = 1
+        }
+    }
+    if StyledButton((int)bounds.x + pad + ScaleUIPx(454),
+                           (int)bounds.y + ScaleUIPx(6),
+                           ScaleUIPx(90), row_h, "GitHub",
+                           ButtonStyleSecondary, modal, NULL) {
+        state.project_set_status(st, "syncing kanban with github...")
+        if krait_github_board_sync() != 0 {
+            state.project_set_status(st, krait_git_status_text())
+            krait_kanban_rescan()
+        } else {
+            state.project_set_status(st, krait_git_status_text())
         }
     }
     if krait_kanban_ai_configured() == 0 {
@@ -307,6 +322,12 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
         snprintf(proj_line, sizeof(proj_line), "project: %s", project)
     } else {
         snprintf(proj_line, sizeof(proj_line), "no project bound")
+    }
+    issue_no := krait_github_card_issue(col, index)
+    if issue_no > 0 {
+        snprintf(proj_line + strlen(proj_line),
+                 sizeof(proj_line) - strlen(proj_line),
+                 "   github #%d", issue_no)
     }
     Text(proj_line, (int)bounds.x + pad,
                body_top + row_h + ScaleUIPx(10), ScaleUIPx(11), GetThemeLink())

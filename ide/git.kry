@@ -55,6 +55,23 @@ krait_github_pr_number :: (index: int) -> int #extern
 krait_github_browse_url :: () -> const char* #extern
 krait_github_pr_create :: (title: const char*, body: const char*) -> int #extern
 
+krait_github_project_connect_url :: (url: const char*) -> int #extern
+krait_github_project_connected :: () -> int #extern
+krait_github_project_title :: () -> const char* #extern
+krait_github_project_item_count :: () -> int #extern
+krait_github_project_item_title :: (i: int) -> const char* #extern
+krait_github_project_item_status :: (i: int) -> const char* #extern
+krait_github_project_item_issue :: (i: int) -> int #extern
+krait_github_project_pull :: () -> int #extern
+krait_github_project_push :: () -> int #extern
+krait_github_issues_refresh :: () -> int #extern
+krait_github_issue_count :: () -> int #extern
+krait_github_issue_number :: (i: int) -> int #extern
+krait_github_issue_title :: (i: int) -> const char* #extern
+krait_github_issue_state :: (i: int) -> const char* #extern
+krait_github_issue_labels :: (i: int) -> const char* #extern
+krait_github_issue_to_card :: (i: int) -> int #extern
+
 git_selected :: int #global
 git_commit_msg :: [512] char #global
 git_commit_cursor :: int #global
@@ -69,6 +86,9 @@ git_pr_title :: [256] char #global
 git_pr_cursor :: int #global
 git_pr_focused :: int #global
 git_tab :: int #global        # 0 changes, 1 log, 2 branches, 3 github
+git_project_url :: [300] char #global
+git_project_cursor :: int #global
+git_project_focused :: int #global
 
 reset :: () {
     git_selected = -1
@@ -426,6 +446,73 @@ draw_github :: (bounds: Rectangle, st: state.IdeState*, pad: int, row_h: int) {
         return
     }
 
+    # --- project (v2) sync ---
+    Text("project url (github.com/users/.../projects/N)", (int)bounds.x + pad,
+         y + ScaleUIPx(6), ScaleUIPx(11), GetThemeText())
+    TextField((TextFieldProps){
+        (Rectangle){bounds.x + (float)(pad + ScaleUIPx(60)), (float)y,
+                    (float)(bounds.width - (float)(pad * 2 + ScaleUIPx(260))),
+                    (float)row_h},
+        git_project_url, sizeof(git_project_url), &git_project_cursor,
+        &git_project_focused, sizeof(git_project_url) - 1, ScaleUIPx(12),
+        7305, input_style, (TextInputFilter){0}, NULL, NULL
+    })
+    if StyledButton((int)(bounds.x + bounds.width) - pad - ScaleUIPx(190), y,
+                           ScaleUIPx(80), row_h, "Connect",
+                           ButtonStyleSecondary, 0, NULL) {
+        if krait_github_project_connect_url(git_project_url) != 0 {
+            krait_github_issues_refresh()
+        }
+    }
+    if StyledButton((int)(bounds.x + bounds.width) - pad - ScaleUIPx(102), y,
+                           ScaleUIPx(96), row_h, "Sync board",
+                           ButtonStylePrimary, 0, NULL) {
+        if krait_github_project_connected() != 0 ||
+           krait_github_project_connect_url(git_project_url) != 0 {
+            krait_github_project_pull()
+            krait_github_project_push()
+            krait_github_project_connect_url(git_project_url)
+        }
+    }
+    y = y + row_h + ScaleUIPx(6)
+    if krait_github_project_connected() != 0 {
+        proj_line: [192] char
+        snprintf(proj_line, sizeof(proj_line), "project: %s (%d items)",
+                 krait_github_project_title(),
+                 krait_github_project_item_count())
+        Text(proj_line, (int)bounds.x + pad, y, ScaleUIPx(11), GetThemeLink())
+        if StyledButton((int)(bounds.x + bounds.width) - pad - ScaleUIPx(150),
+                               y - ScaleUIPx(2), ScaleUIPx(70), ScaleUIPx(20),
+                               "Pull", ButtonStyleSecondary, 0, NULL) {
+            krait_github_project_pull()
+        }
+        if StyledButton((int)(bounds.x + bounds.width) - pad - ScaleUIPx(74),
+                               y - ScaleUIPx(2), ScaleUIPx(70), ScaleUIPx(20),
+                               "Push", ButtonStyleSecondary, 0, NULL) {
+            krait_github_project_push()
+        }
+        y = y + ScaleUIPx(22)
+        BeginScissorMode((int)bounds.x, y, (int)bounds.width, ScaleUIPx(72))
+        for int i = 0; i < krait_github_project_item_count(); i++ {
+            line: [320] char
+            issue_no := krait_github_project_item_issue(i)
+            if issue_no > 0 {
+                snprintf(line, sizeof(line), "#%d  %-52.52s  [%s]", issue_no,
+                         krait_github_project_item_title(i),
+                         krait_github_project_item_status(i))
+            } else {
+                snprintf(line, sizeof(line), "     %-52.52s  [%s]",
+                         krait_github_project_item_title(i),
+                         krait_github_project_item_status(i))
+            }
+            Text(line, (int)bounds.x + pad, y, ScaleUIPx(11), GetThemeText())
+            y = y + ScaleUIPx(16)
+        }
+        EndScissorMode()
+        y = y + ScaleUIPx(6)
+    }
+
+    # --- repo + login line ---
     repo_line: [320] char
     snprintf(repo_line, sizeof(repo_line), "%s  %s", krait_github_slug(),
              krait_github_repo_desc())
@@ -457,6 +544,38 @@ draw_github :: (bounds: Rectangle, st: state.IdeState*, pad: int, row_h: int) {
     if prs == 0 {
         Text("(none open)", (int)bounds.x + pad, y, ScaleUIPx(11),
              GetThemeIcon())
+        y = y + ScaleUIPx(18)
+    }
+    EndScissorMode()
+
+    # --- repo issues ---
+    y = y + ScaleUIPx(6)
+    if StyledButton((int)bounds.x + pad, y, ScaleUIPx(90), ScaleUIPx(20),
+                           "Issues", ButtonStyleSecondary, 0, NULL) {
+        krait_github_issues_refresh()
+    }
+    issues := krait_github_issue_count()
+    Text(krait_git_status_text(), (int)bounds.x + pad + ScaleUIPx(100),
+         y + ScaleUIPx(4), ScaleUIPx(11), GetThemeLink())
+    y = y + ScaleUIPx(24)
+    BeginScissorMode((int)bounds.x, y, (int)bounds.width,
+                     (int)(bounds.y + bounds.height) - y - ScaleUIPx(40))
+    for int i = 0; i < issues; i++ {
+        line: [420] char
+        snprintf(line, sizeof(line), "#%-5d %-58.58s %-8s %s",
+                 krait_github_issue_number(i), krait_github_issue_title(i),
+                 krait_github_issue_state(i), krait_github_issue_labels(i))
+        row := (Rectangle){bounds.x + (float)pad, (float)y,
+                           (float)ScaleUIPx(420), (float)ScaleUIPx(16)}
+        Text(line, (int)row.x, (int)row.y, ScaleUIPx(11),
+             strcmp(krait_github_issue_state(i), "open") == 0
+                 ? GetThemeText() : GetThemeIcon())
+        if StyledButton((int)(bounds.x + bounds.width) - pad - ScaleUIPx(90),
+                               (int)row.y - ScaleUIPx(3), ScaleUIPx(84),
+                               ScaleUIPx(18), "to card",
+                               ButtonStyleSecondary, 0, NULL) {
+            krait_github_issue_to_card(i)
+        }
         y = y + ScaleUIPx(18)
     }
     EndScissorMode()
