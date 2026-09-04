@@ -3,6 +3,11 @@
 #import <string.h>
 state :: #import "ide/state"
 proj :: #import "ide/project"
+dc :: #import "ide/daochi"
+
+krait_daochi_has_account :: () -> int #extern
+krait_daochi_friends_refresh :: () -> int #extern
+krait_daochi_boards_refresh :: () -> int #extern
 
 krait_kanban_rescan :: () -> int #extern
 krait_kanban_count :: (col: int) -> int #extern
@@ -106,6 +111,28 @@ draw_board :: (bounds: Rectangle, st: state.IdeState*, pad: int, modal: int) {
                            ScaleUIPx(80), row_h, "Rescan",
                            ButtonStyleSecondary, modal, NULL) {
         krait_kanban_rescan()
+    }
+    if StyledButton((int)bounds.x + pad + ScaleUIPx(292),
+                           (int)bounds.y + ScaleUIPx(6),
+                           ScaleUIPx(70), row_h, "Share",
+                           ButtonStyleSecondary, modal, NULL) {
+        if dc.krait_daochi_has_account() != 0 {
+            title: [160] char
+            snprintf(title, sizeof(title), "%s", "Krait board")
+            dc.daochi_share_open = 1
+            dc.krait_daochi_friends_refresh()
+        } else {
+            state.project_set_status(st, "create a Daochi account in settings first")
+        }
+    }
+    if StyledButton((int)bounds.x + pad + ScaleUIPx(368),
+                           (int)bounds.y + ScaleUIPx(6),
+                           ScaleUIPx(80), row_h, "Shared",
+                           ButtonStyleSecondary, modal, NULL) {
+        if dc.krait_daochi_has_account() != 0 {
+            dc.krait_daochi_boards_refresh()
+            dc.daochi_shared_open = 1
+        }
     }
     if krait_kanban_ai_configured() == 0 {
         Text(krait_ai_config_hint(), (int)bounds.x + pad,

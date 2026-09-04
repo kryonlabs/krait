@@ -30,6 +30,7 @@ endif
 KRYON_BUILD_DIR ?= $(KRYON_DIR)/build/$(KRYON_PLATFORM)-$(KRYON_ARCH)
 
 KRAIT = $(BUILD_DIR)/bin/krait
+LEVEL = $(BUILD_DIR)/bin/level
 KRAIT_GEN = $(BUILD_DIR)/gen
 KRAIT_SRCS := $(wildcard ide/*.kry) $(wildcard modules/*/*.kry)
 KRAIT_OBJS := $(patsubst %.kry,$(KRAIT_GEN)/%.o,$(KRAIT_SRCS))
@@ -43,6 +44,10 @@ KAPSULE_EMULATOR_SRCS := terminal.c terminal_csi.c terminal_dcs.c \
 	terminal_search.c terminal_sgr.c terminal_sixel.c terminal_text.c \
 	terminal_view.c session.c selection.c input.c palette.c
 KAPSULE_OBJS := $(addprefix $(BUILD_DIR)/kapsule/,$(KAPSULE_EMULATOR_SRCS:.c=.o))
+# kryon's daochi/ksync layer (account keys, login, bearer transport) is
+# compiled as app sources like inbe does, not through libkryon.
+KSYNC_SRCS := $(wildcard $(KRYON_DIR)/src/ksync/*.c)
+KSYNC_OBJS := $(patsubst $(KRYON_DIR)/src/ksync/%.c,$(BUILD_DIR)/ksync/%.o,$(KSYNC_SRCS))
 
 K2C = $(KRYON_BUILD_DIR)/bin/k2c
 # Detect a k2c built for the wrong platform (e.g. a FreeBSD binary on Linux):
@@ -96,7 +101,7 @@ else
 KRYON_PLATFORM_LDLIBS ?=
 endif
 
-.PHONY: all krait run dev test smoke kanban-test engine-test clean install uninstall kryon-deps boundary-check docs-site appimage android-debug android-install android-clean
+.PHONY: all krait level run dev test smoke kanban-test daochi-test engine-test clean install uninstall kryon-deps boundary-check docs-site appimage android-debug android-install android-clean
 
 all: krait
 
@@ -142,9 +147,13 @@ $(BUILD_DIR)/kapsule/%.o: $(KAPSULE_DIR)/src/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
 
-$(KRAIT): kryon-deps $(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KAPSULE_OBJS) $(KRAIT_GEN)/.transpiled $(KRYON_LIB) $(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) | $(BUILD_DIR)/bin
+$(BUILD_DIR)/ksync/%.o: $(KRYON_DIR)/src/ksync/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(KRAIT): kryon-deps $(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KSYNC_OBJS) $(KAPSULE_OBJS) $(KRAIT_GEN)/.transpiled $(KRYON_LIB) $(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) $(KRYON_CMARK_GFM_A) $(KRYON_CMARK_GFM_EXTENSIONS_A) | $(BUILD_DIR)/bin
 	$(CC) $(CFLAGS) $(CPPFLAGS) -I$(KRAIT_GEN) $(RAY_CFLAGS) $(SYSTEM_THEME_CFLAGS) -o $@ \
-		$(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KAPSULE_OBJS) \
+		$(KRAIT_OBJS) $(KRAIT_NATIVE_OBJS) $(KSYNC_OBJS) $(KAPSULE_OBJS) \
 		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
 		$(RAYLIB_A) $(KRYON_BOX2D_A) $(RAY_LDLIBS) $(KRYON_LIBOQS_A) $(KRYON_CURL_LDLIBS) \
 		$(KRYON_MARKDOWN_LDLIBS) \
@@ -185,10 +194,24 @@ android-clean:
 	rm -rf build/android-arm64
 
 KANBAN_TEST = $(BUILD_DIR)/tests/kanban_test
+DAOCHI_TEST = $(BUILD_DIR)/tests/daochi_test
 AGENT_TEST = $(BUILD_DIR)/tests/agent_test
 ENGINE_TEST = $(BUILD_DIR)/tests/engine_test
 
-test: krait boundary-check kanban-test agent-test engine-test
+test: krait boundary-check kanban-test daochi-test agent-test engine-test
+
+daochi-test: $(DAOCHI_TEST)
+	$(DAOCHI_TEST)
+
+$(DAOCHI_TEST): tests/daochi_test.c $(BUILD_DIR)/src/native_daochi.o $(BUILD_DIR)/src/native_util.o $(KSYNC_OBJS) $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc -I$(KRAIT_GEN) -I$(KRYON_DIR)/include -o $@ tests/daochi_test.c \
+		$(BUILD_DIR)/src/native_daochi.o $(BUILD_DIR)/src/native_util.o $(KSYNC_OBJS) \
+		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
+		$(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) \
+		$(KRYON_CURL_LDLIBS) $(KRYON_MARKDOWN_LDLIBS) $(RAY_LDLIBS) \
+		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) \
+		-lbrotlidec -lbrotlicommon -lzstd -lz -lpthread -lm
 
 kanban-test: $(KANBAN_TEST)
 	$(KANBAN_TEST)
@@ -263,6 +286,18 @@ $(ENGINE_TEST): tests/engine_test.c $(BUILD_DIR)/src/native_engine.o $(BUILD_DIR
 		$(KRYON_CURL_LDLIBS) $(KRYON_MARKDOWN_LDLIBS) $(RAY_LDLIBS) \
 		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) \
 			-lbrotlidec -lbrotlicommon -lzstd -lz -lpthread -lm
+
+level: $(LEVEL)
+
+$(LEVEL): src/level_main.c $(BUILD_DIR)/src/native_level.o $(KRYON_LIB) $(RAYLIB_A) | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc -I$(KRAIT_GEN) -I$(KRYON_DIR)/include -o $@ src/level_main.c \
+		$(BUILD_DIR)/src/native_level.o \
+		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
+		$(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) \
+		$(KRYON_CURL_LDLIBS) $(KRYON_MARKDOWN_LDLIBS) $(RAY_LDLIBS) \
+		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) \
+		-lbrotlidec -lbrotlicommon -lzstd -lz -lpthread -lm -ldl
 
 smoke: test
 	@kryon_dir=$$(cd "$(KRYON_DIR)" && pwd); \

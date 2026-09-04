@@ -1,6 +1,9 @@
 #module "ide.settings"
 #import "kryon.h"
 state :: #import "ide/state"
+dc :: #import "ide/daochi"
+
+krait_daochi_available :: () -> int #extern
 
 #enum {
     SETTINGS_TAB_APPEARANCE,
@@ -8,6 +11,7 @@ state :: #import "ide/state"
     SETTINGS_TAB_PREVIEW,
     SETTINGS_TAB_PANES,
     SETTINGS_TAB_EXTENSIONS,
+    SETTINGS_TAB_DAOCHI,
 }
 
 krait_settings_save :: (st: state.IdeState*) -> int #extern
@@ -195,8 +199,15 @@ draw_settings :: (bounds: Rectangle, st: state.IdeState*) {
     draw_settings_tab(x, y, tab_w, "Panes", SETTINGS_TAB_PANES, st)
     y = y + ScaleUIPx(34)
     draw_settings_tab(x, y, tab_w, "Extensions", SETTINGS_TAB_EXTENSIONS, st)
+    y = y + ScaleUIPx(34)
+    draw_settings_tab(x, y, tab_w, "Daochi", SETTINGS_TAB_DAOCHI, st)
 
-    if st->settings_tab == SETTINGS_TAB_APPEARANCE {
+    if st->settings_tab == SETTINGS_TAB_DAOCHI {
+        bx := (int)body.x + ScaleUIPx(24)
+        by := (int)body.y + ScaleUIPx(22)
+        bw := (int)body.width - ScaleUIPx(48)
+        dc.draw_account_section(bx, by, bw, st)
+    } else if st->settings_tab == SETTINGS_TAB_APPEARANCE {
         draw_appearance(body, st)
     } else if st->settings_tab == SETTINGS_TAB_EXTENSIONS {
         draw_extensions(body, st)

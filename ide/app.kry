@@ -19,6 +19,7 @@ mods :: #import "ide/modules"
 	meta :: #import "ide/project_meta"
 	krb :: #import "ide/cartridge"
 	kb :: #import "ide/kanban"
+	dc :: #import "ide/daochi"
 		ag :: #import "ide/agent"
 		mdv :: #import "ide/mdview"
 		txt :: #import "ide/text_view"
@@ -27,6 +28,9 @@ mods :: #import "ide/modules"
 	krait_load_ui_font :: () -> int #extern
 krait_scaffold_project :: (path: const char*, status: char*, status_size: int) -> int #extern
 krait_kanban_create :: (col: int, title: const char*) -> int #extern
+krait_daochi_account_import_file :: (filename: const char*) -> int #extern
+krait_daochi_account_export_file :: (filename: const char*) -> int #extern
+krait_daochi_status :: () -> const char* #extern
 krait_kanban_new_project :: (col: int, index: int, path: const char*) -> int #extern
 krait_layout_load :: (st: state.IdeState*) -> int #extern
 krait_layout_save :: (st: state.IdeState*) -> int #extern
@@ -187,16 +191,9 @@ frame_throttle :: () {
     }
 }
 
-dbg_buf :: [96] char #global
-dbg_frames :: int #global
-
 App :: () #ui {
     Screen root: {
     frame_throttle()
-    dbg_frames = dbg_frames + 1
-    dbg_mp := GetMousePosition()
-    snprintf(dbg_buf, sizeof(dbg_buf), "m %.0f,%.0f f %d t %.1f", dbg_mp.x, dbg_mp.y, dbg_frames, GetTime())
-    Text(dbg_buf, 20, 84, 14, RED)
     w := GetScreenWidth()
     h := GetScreenHeight()
     apply_krait_theme()
@@ -205,6 +202,10 @@ App :: () #ui {
         BeginUIModalLayer()
     }
     if istate.picker_open != 0 {
+        BeginUIModalLayer()
+    }
+    if dc.daochi_share_open != 0 || dc.daochi_friends_open != 0 ||
+       dc.daochi_shared_open != 0 {
         BeginUIModalLayer()
     }
     draw_chrome(w, h)
@@ -264,6 +265,15 @@ App :: () #ui {
     }
     if istate.picker_open != 0 {
         start.draw_project_picker_modal(content, &istate)
+    }
+    if dc.daochi_share_open != 0 {
+        dc.draw_share_dialog(content, &istate)
+    }
+    if dc.daochi_friends_open != 0 {
+        dc.draw_friends_dialog(content, &istate)
+    }
+    if dc.daochi_shared_open != 0 {
+        dc.draw_shared_dialog(content, &istate)
     }
     update_dialog(&istate)
     if istate.layout_dirty != 0 {
@@ -1487,6 +1497,35 @@ update_dialog :: (st: state.IdeState*) {
             }
         } else {
             state.project_set_status(st, "New project cancelled")
+        }
+        project_dialog.confirmed = 0
+        project_dialog.result_path[0] = 0
+        st->dialog_mode = state.IDE_DIALOG_NONE
+    } else if st->dialog_mode == state.IDE_DIALOG_DAOCHI_IMPORT {
+        BeginLoadFilteredFileDialog(&project_dialog, "Import Daochi Account", "txt")
+        result := UpdateFileDialog(&project_dialog)
+        if result == 1 {
+            path := GetFileDialogPath(&project_dialog)
+            if dc.krait_daochi_account_import_file(path) != 0 {
+                state.project_set_status(st, dc.krait_daochi_status())
+            } else {
+                state.project_set_status(st, "account import failed")
+            }
+        }
+        project_dialog.confirmed = 0
+        project_dialog.result_path[0] = 0
+        st->dialog_mode = state.IDE_DIALOG_NONE
+    } else if st->dialog_mode == state.IDE_DIALOG_DAOCHI_EXPORT {
+        BeginSaveFileDialog(&project_dialog, "Export Daochi Account",
+                            "krait-daochi-account.txt")
+        result := UpdateFileDialog(&project_dialog)
+        if result == 1 {
+            path := GetFileDialogPath(&project_dialog)
+            if dc.krait_daochi_account_export_file(path) != 0 {
+                state.project_set_status(st, dc.krait_daochi_status())
+            } else {
+                state.project_set_status(st, "account export failed")
+            }
         }
         project_dialog.confirmed = 0
         project_dialog.result_path[0] = 0

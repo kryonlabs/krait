@@ -42,7 +42,7 @@ krait_settings_sanitize(IdeState *st)
                                                   : (ThemeStyle)st->theme_style);
     if(st->theme_style < THEME_STYLE_SYSTEM || st->theme_style > THEME_STYLE_MATERIAL)
         st->theme_style = THEME_STYLE_SYSTEM;
-    if(st->settings_tab < 0 || st->settings_tab > 4)
+    if(st->settings_tab < 0 || st->settings_tab > 5)
         st->settings_tab = 0;
     if(st->settings_scroll < 0)
         st->settings_scroll = 0;

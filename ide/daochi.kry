@@ -1,0 +1,579 @@
+#module "ide.daochi"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+
+krait_daochi_available :: () -> int #extern
+krait_daochi_has_account :: () -> int #extern
+krait_daochi_public_id :: () -> const char* #extern
+krait_daochi_account_create :: () -> int #extern
+krait_daochi_account_import_file :: (filename: const char*) -> int #extern
+krait_daochi_account_export_file :: (filename: const char*) -> int #extern
+krait_daochi_logout :: () -> int #extern
+krait_daochi_login :: () -> int #extern
+krait_daochi_ping :: () -> int #extern
+krait_daochi_set_alias :: (alias: const char*) -> int #extern
+krait_daochi_alias :: () -> const char* #extern
+krait_daochi_node_url :: () -> const char* #extern
+krait_daochi_set_node_url :: (url: const char*) -> int #extern
+krait_daochi_status :: () -> const char* #extern
+
+krait_daochi_friends_refresh :: () -> int #extern
+krait_daochi_friend_count :: () -> int #extern
+krait_daochi_friend_id :: (index: int) -> const char* #extern
+krait_daochi_friend_alias :: (index: int) -> const char* #extern
+krait_daochi_friend_requests_refresh :: () -> int #extern
+krait_daochi_friend_request_count :: () -> int #extern
+krait_daochi_friend_request_incoming :: (index: int) -> int #extern
+krait_daochi_friend_request_alias :: (index: int) -> const char* #extern
+krait_daochi_friend_request_id :: (index: int) -> const char* #extern
+krait_daochi_friend_request_send :: (target: const char*) -> int #extern
+krait_daochi_friend_request_accept :: (index: int) -> int #extern
+krait_daochi_friend_request_decline :: (index: int) -> int #extern
+krait_daochi_friend_remove :: (index: int) -> int #extern
+
+krait_daochi_boards_refresh :: () -> int #extern
+krait_daochi_board_count :: () -> int #extern
+krait_daochi_board_id :: (index: int) -> const char* #extern
+krait_daochi_board_title :: (index: int) -> const char* #extern
+krait_daochi_board_permission :: (index: int) -> const char* #extern
+krait_daochi_board_create :: (title: const char*) -> int #extern
+krait_daochi_board_select :: (index: int) -> int #extern
+krait_daochi_board_selected :: () -> int #extern
+krait_daochi_board_detail_refresh :: () -> int #extern
+krait_daochi_member_count :: () -> int #extern
+krait_daochi_member_id :: (index: int) -> const char* #extern
+krait_daochi_member_alias :: (index: int) -> const char* #extern
+krait_daochi_member_permission :: (index: int) -> const char* #extern
+krait_daochi_board_invite :: (target: const char*, permission: const char*) -> int #extern
+krait_daochi_member_set_permission :: (member_index: int, permission: const char*) -> int #extern
+krait_daochi_member_remove :: (member_index: int) -> int #extern
+krait_daochi_board_archive :: () -> int #extern
+krait_daochi_records_refresh :: () -> int #extern
+krait_daochi_record_count :: () -> int #extern
+krait_daochi_record_id :: (index: int) -> const char* #extern
+krait_daochi_record_payload :: (index: int) -> const char* #extern
+krait_daochi_record_deleted :: (index: int) -> int #extern
+krait_daochi_record_field :: (index: int, field: const char*) -> const char* #extern
+krait_daochi_record_put_fields :: (record_id: const char*, title: const char*,
+                                   body: const char*, column: const char*) -> int #extern
+krait_daochi_record_delete :: (record_id: const char*) -> int #extern
+krait_daochi_reset :: () #extern
+
+krait_kanban_count :: (col: int) -> int #extern
+krait_kanban_card_id :: (col: int, index: int) -> const char* #extern
+krait_kanban_card_title :: (col: int, index: int) -> const char* #extern
+krait_kanban_card_body :: (col: int, index: int) -> const char* #extern
+krait_kanban_column_name :: (col: int) -> const char* #extern
+
+#global
+daochi_share_open :: int #global
+daochi_share_title :: [160] char #global
+daochi_share_title_cursor :: int #global
+daochi_share_title_focused :: int #global
+daochi_share_invite :: [128] char #global
+daochi_invite_cursor :: int #global
+daochi_invite_focused :: int #global
+daochi_invite_permission :: int #global   # 0 read 1 write
+daochi_friends_open :: int #global
+daochi_add_target :: [160] char #global
+daochi_add_cursor :: int #global
+daochi_add_focused :: int #global
+daochi_shared_open :: int #global
+
+daochi_reset :: () {
+    daochi_share_open = 0
+    daochi_share_title[0] = 0
+    daochi_share_invite[0] = 0
+    daochi_invite_permission = 0
+    daochi_friends_open = 0
+    daochi_add_target[0] = 0
+    daochi_shared_open = 0
+}
+
+/* ------------------------------------------------------------------ */
+/* share dialog: publishes the local kanban board to the node and     */
+/* invites friends as members                                          */
+/* ------------------------------------------------------------------ */
+
+draw_share_dialog :: (bounds: Rectangle, st: state.IdeState*) {
+    w := (int)bounds.width - ScaleUIPx(160)
+    if w > ScaleUIPx(560) { w = ScaleUIPx(560) }
+    if w < ScaleUIPx(360) { w = ScaleUIPx(360) }
+    h := ScaleUIPx(380)
+    frame := ModalFrame(w, h, "Share board", (Texture2D){0}, (Texture2D){0})
+    if IsKeyPressed(KEY_ESCAPE) ||
+       (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+        !CheckCollisionPointRec(GetMousePosition(),
+                                (Rectangle){(float)frame.x, (float)frame.y,
+                                            (float)frame.w, (float)frame.h})) {
+        daochi_share_open = 0
+        return
+    }
+    panel := (Rectangle){(float)frame.content_x, (float)frame.content_y,
+                         (float)frame.content_w, (float)frame.content_h}
+    pad := ScaleUIPx(8)
+    row_h := ScaleUIPx(28)
+    y := (int)panel.y + pad
+
+    if krait_daochi_has_account() == 0 {
+        Text("No Daochi account yet - create one in Settings first.",
+             (int)panel.x + pad, y + ScaleUIPx(8), ScaleUIPx(12), GetThemeIcon())
+        return
+    }
+
+    input_style := (TextInputStyle){
+        GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
+        GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
+    }
+    Text("Board title", (int)panel.x + pad, y, ScaleUIPx(11), GetThemeText())
+    TextField((TextFieldProps){
+        (Rectangle){panel.x + (float)pad, (float)(y + ScaleUIPx(14)),
+                    panel.width - (float)(pad * 2), (float)row_h},
+        daochi_share_title, sizeof(daochi_share_title),
+        &daochi_share_title_cursor, &daochi_share_title_focused,
+        sizeof(daochi_share_title) - 1, ScaleUIPx(13), 7601,
+        input_style, (TextInputFilter){0}, NULL, NULL
+    })
+    y = y + ScaleUIPx(52)
+
+    Text("Invite a friend (alias or account id)", (int)panel.x + pad, y,
+         ScaleUIPx(11), GetThemeText())
+    TextField((TextFieldProps){
+        (Rectangle){panel.x + (float)pad, (float)(y + ScaleUIPx(14)),
+                    panel.width - (float)(pad * 2 + ScaleUIPx(110)), (float)row_h},
+        daochi_share_invite, sizeof(daochi_share_invite),
+        &daochi_invite_cursor, &daochi_invite_focused,
+        sizeof(daochi_share_invite) - 1, ScaleUIPx(13), 7602,
+        input_style, (TextInputFilter){0}, NULL, NULL
+    })
+    if StyledButton((int)(panel.x + panel.width) - pad - ScaleUIPx(100),
+                    y + ScaleUIPx(14), ScaleUIPx(100), row_h,
+                    daochi_invite_permission == 0 ? "can read" : "can edit",
+                    ButtonStyleSecondary, 0, NULL) {
+        daochi_invite_permission = daochi_invite_permission == 0 ? 1 : 0
+    }
+    y = y + ScaleUIPx(56)
+
+    # friend list for one-click invites
+    friends := krait_daochi_friend_count()
+    Text("Friends", (int)panel.x + pad, y, ScaleUIPx(11), GetThemeText())
+    y = y + ScaleUIPx(14)
+    if friends == 0 {
+        Text("(none yet - add friends from Settings)", (int)panel.x + pad, y,
+             ScaleUIPx(11), GetThemeIcon())
+        y = y + ScaleUIPx(18)
+    } else {
+        EndY := (int)(panel.y + panel.height) - ScaleUIPx(52)
+        i := 0
+        while i < friends && y + ScaleUIPx(24) < EndY {
+            alias := krait_daochi_friend_alias(i)
+            if strlen(alias) == 0 { alias = krait_daochi_friend_id(i) }
+            label: [160] char
+            snprintf(label, sizeof(label), "@%s", alias)
+            if StyledButton((int)panel.x + pad, y,
+                           ScaleUIPx(180), ScaleUIPx(22), label,
+                           ButtonStyleSecondary, 0, NULL) {
+                snprintf(daochi_share_invite, sizeof(daochi_share_invite), "%s",
+                         krait_daochi_friend_id(i))
+            }
+            y = y + ScaleUIPx(24)
+            i = i + 1
+        }
+    }
+
+    btn_y := (int)(panel.y + panel.height) - row_h - ScaleUIPx(10)
+    if StyledButton((int)panel.x + pad, btn_y, ScaleUIPx(90), row_h,
+                           "Share", ButtonStylePrimary, 0, NULL) {
+        share_current_board(st)
+    }
+    if StyledButton((int)panel.x + pad + ScaleUIPx(98), btn_y, ScaleUIPx(70),
+                           row_h, "Close", ButtonStyleSecondary, 0, NULL) {
+        daochi_share_open = 0
+    }
+    status := krait_daochi_status()
+    if strlen(status) > 0 {
+        Text(status, (int)(panel.x + panel.width) - pad - ScaleUIPx(300),
+             btn_y + ScaleUIPx(8), ScaleUIPx(11), GetThemeLink())
+    }
+}
+
+share_current_board :: (st: state.IdeState*) {
+    title := daochi_share_title
+    if strlen(title) == 0 {
+        title = "Krait board"
+    }
+    if krait_daochi_board_create(title) == 0 {
+        state.project_set_status(st, krait_daochi_status())
+        return
+    }
+    uploaded := 0
+    card_total := krait_kanban_count(0) + krait_kanban_count(1) +
+                  krait_kanban_count(2) + krait_kanban_count(3)
+    col := 0
+    while col < 4 {
+        count := krait_kanban_count(col)
+        i := 0
+        while i < count {
+            id := krait_kanban_card_id(col, i)
+            card_title := krait_kanban_card_title(col, i)
+            body := krait_kanban_card_body(col, i)
+            column_name := krait_kanban_column_name(col)
+            if krait_daochi_record_put_fields(id, card_title, body, column_name) != 0 {
+                uploaded = uploaded + 1
+            }
+            i = i + 1
+        }
+        col = col + 1
+    }
+    invited := ""
+    if strlen(daochi_share_invite) > 0 {
+        perm := daochi_invite_permission == 0 ? "read" : "write"
+        if krait_daochi_board_invite(daochi_share_invite, perm) != 0 {
+            invited = ", member invited"
+        }
+    }
+    share_msg: [160] char
+    snprintf(share_msg, sizeof(share_msg), "shared %d/%d cards%s", uploaded,
+             card_total, invited)
+    state.project_set_status(st, share_msg)
+    krait_daochi_records_refresh()
+    daochi_share_open = 0
+}
+
+/* ------------------------------------------------------------------ */
+/* shared boards browser                                               */
+/* ------------------------------------------------------------------ */
+
+draw_shared_dialog :: (bounds: Rectangle, st: state.IdeState*) {
+    w := (int)bounds.width - ScaleUIPx(120)
+    if w > ScaleUIPx(720) { w = ScaleUIPx(720) }
+    if w < ScaleUIPx(420) { w = ScaleUIPx(420) }
+    h := (int)bounds.height - ScaleUIPx(120)
+    if h > ScaleUIPx(560) { h = ScaleUIPx(560) }
+    if h < ScaleUIPx(360) { h = ScaleUIPx(360) }
+    frame := ModalFrame(w, h, "Shared boards", (Texture2D){0}, (Texture2D){0})
+    if IsKeyPressed(KEY_ESCAPE) ||
+       (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+        !CheckCollisionPointRec(GetMousePosition(),
+                                (Rectangle){(float)frame.x, (float)frame.y,
+                                            (float)frame.w, (float)frame.h})) {
+        daochi_shared_open = 0
+        return
+    }
+    panel := (Rectangle){(float)frame.content_x, (float)frame.content_y,
+                         (float)frame.content_w, (float)frame.content_h}
+    pad := ScaleUIPx(8)
+    y := (int)panel.y + pad
+
+    if StyledButton((int)panel.x + pad, y, ScaleUIPx(80), ScaleUIPx(24),
+                           "Refresh", ButtonStyleSecondary, 0, NULL) {
+        krait_daochi_boards_refresh()
+    }
+    Text(krait_daochi_status(), (int)panel.x + pad + ScaleUIPx(92),
+         y + ScaleUIPx(6), ScaleUIPx(11), GetThemeLink())
+    y = y + ScaleUIPx(32)
+
+    boards := krait_daochi_board_count()
+    if boards == 0 {
+        Text("No shared boards yet - share your kanban first.",
+             (int)panel.x + pad, y, ScaleUIPx(12), GetThemeIcon())
+        return
+    }
+    bottom := (int)(panel.y + panel.height) - pad
+    i := 0
+    while i < boards && y + ScaleUIPx(26) < bottom {
+        title := krait_daochi_board_title(i)
+        perm := krait_daochi_board_permission(i)
+        selected := krait_daochi_board_selected() == i
+        label: [192] char
+        snprintf(label, sizeof(label), "%s  [%s]", title, perm)
+        if StyledButton((int)panel.x + pad, y, ScaleUIPx(240), ScaleUIPx(24),
+                               label, selected ? ButtonStylePrimary
+                                               : ButtonStyleSecondary,
+                               0, NULL) {
+            if krait_daochi_board_select(i) != 0 {
+                krait_daochi_board_detail_refresh()
+                krait_daochi_records_refresh()
+            }
+        }
+        y = y + ScaleUIPx(28)
+        i = i + 1
+    }
+    selected_board := krait_daochi_board_selected()
+    if selected_board < 0 {
+        return
+    }
+    # members and records of the selected board fill the right half
+    hx := (int)(panel.x + panel.width / 2) + pad
+    hy := (int)panel.y + ScaleUIPx(44)
+    Text("Members", hx, hy, ScaleUIPx(12), GetThemeText())
+    hy = hy + ScaleUIPx(18)
+    m := 0
+    members := krait_daochi_member_count()
+    while m < members && hy + ScaleUIPx(20) < bottom {
+        member := krait_daochi_member_alias(m)
+        mperm := krait_daochi_member_permission(m)
+        line: [160] char
+        snprintf(line, sizeof(line), "%s (%s)", member, mperm)
+        Text(line, hx + ScaleUIPx(6), hy, ScaleUIPx(11),
+             strcmp(mperm, "owner") == 0 ? GetThemeText() : GetThemeIcon())
+        hy = hy + ScaleUIPx(18)
+        m = m + 1
+    }
+    hy = hy + ScaleUIPx(10)
+    Text("Cards", hx, hy, ScaleUIPx(12), GetThemeText())
+    hy = hy + ScaleUIPx(18)
+    r := 0
+    records := krait_daochi_record_count()
+    can_edit := strcmp(krait_daochi_board_permission(selected_board), "read") != 0
+    while r < records && hy + ScaleUIPx(20) < bottom {
+        if krait_daochi_record_deleted(r) != 0 {
+            r = r + 1
+            continue
+        }
+        record_title := krait_daochi_record_field(r, "title")
+        column := krait_daochi_record_field(r, "column")
+        line: [224] char
+        snprintf(line, sizeof(line), "[%s] %s",
+                 strlen(column) > 0 ? column : "-", record_title)
+        Text(line, hx + ScaleUIPx(6), hy, ScaleUIPx(11), GetThemeText())
+        if can_edit != 0 {
+            if StyledButton((int)(panel.x + panel.width) - pad - ScaleUIPx(56),
+                                   hy - ScaleUIPx(2), ScaleUIPx(52),
+                                   ScaleUIPx(16), "delete",
+                                   ButtonStyleSecondary, 0, NULL) {
+                if krait_daochi_record_delete(krait_daochi_record_id(r)) != 0 {
+                    krait_daochi_records_refresh()
+                }
+            }
+        }
+        hy = hy + ScaleUIPx(20)
+        r = r + 1
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* settings section                                                    */
+/* ------------------------------------------------------------------ */
+
+alias_buf :: [64] char #global
+alias_cursor :: int #global
+alias_focused :: int #global
+
+draw_account_section :: (x: int, y: int, w: int, st: state.IdeState*) -> int {
+    row_h := ScaleUIPx(26)
+    Text("Daochi Account", x, y, ScaleUIPx(15), GetThemeText())
+    y = y + ScaleUIPx(24)
+    if krait_daochi_available() == 0 {
+        Text("account keys unavailable (liboqs missing)", x, y, ScaleUIPx(12),
+             GetThemeIcon())
+        return y + ScaleUIPx(20)
+    }
+    if krait_daochi_has_account() != 0 {
+        id := krait_daochi_public_id()
+        id_line: [96] char
+        snprintf(id_line, sizeof(id_line), "account: %.*s...", 18, id)
+        Text(id_line, x, y, ScaleUIPx(12), GetThemeIcon())
+        y = y + ScaleUIPx(18)
+        node := krait_daochi_node_url()
+        node_line: [192] char
+        snprintf(node_line, sizeof(node_line), "node: %s", node)
+        Text(node_line, x, y, ScaleUIPx(12), GetThemeIcon())
+        y = y + ScaleUIPx(22)
+
+        input_style := (TextInputStyle){
+            GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
+            GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
+        }
+        Text("alias", x, y, ScaleUIPx(11), GetThemeText())
+        TextField((TextFieldProps){
+            (Rectangle){(float)(x + ScaleUIPx(48)), (float)y,
+                        (float)(w - ScaleUIPx(180)), (float)row_h},
+            alias_buf, sizeof(alias_buf), &alias_cursor, &alias_focused,
+            sizeof(alias_buf) - 1, ScaleUIPx(13), 7701,
+            input_style, (TextInputFilter){0}, NULL, NULL
+        })
+        if StyledButton(x + w - ScaleUIPx(120), y, ScaleUIPx(110), row_h,
+                               "Set alias", ButtonStyleSecondary, 0, NULL) {
+            if krait_daochi_set_alias(alias_buf) != 0 {
+                state.project_set_status(st, krait_daochi_status())
+            }
+        }
+        y = y + ScaleUIPx(34)
+
+        if StyledButton(x, y, ScaleUIPx(70), row_h, "Login",
+                               ButtonStylePrimary, 0, NULL) {
+            krait_daochi_login()
+        }
+        if StyledButton(x + ScaleUIPx(78), y, ScaleUIPx(70), row_h,
+                               "Test", ButtonStyleSecondary, 0, NULL) {
+            krait_daochi_ping()
+        }
+        if StyledButton(x + ScaleUIPx(156), y, ScaleUIPx(90), row_h,
+                               "Friends", ButtonStyleSecondary, 0, NULL) {
+            krait_daochi_friends_refresh()
+            krait_daochi_friend_requests_refresh()
+            daochi_friends_open = 1
+        }
+        if StyledButton(x + ScaleUIPx(252), y, ScaleUIPx(90), row_h,
+                               "Export", ButtonStyleSecondary, 0, NULL) {
+            st->dialog_mode = state.IDE_DIALOG_DAOCHI_EXPORT
+        }
+        if StyledButton(x + ScaleUIPx(348), y, ScaleUIPx(80), row_h,
+                               "Logout", ButtonStyleSecondary, 0, NULL) {
+            krait_daochi_logout()
+        }
+        y = y + ScaleUIPx(34)
+        status := krait_daochi_status()
+        if strlen(status) > 0 {
+            Text(status, x, y, ScaleUIPx(11), GetThemeLink())
+            y = y + ScaleUIPx(16)
+        }
+        friends := krait_daochi_friend_count()
+        if friends > 0 {
+            line: [96] char
+            snprintf(line, sizeof(line), "%d friend(s), %d board(s)", friends,
+                     krait_daochi_board_count())
+            Text(line, x, y, ScaleUIPx(11), GetThemeIcon())
+            y = y + ScaleUIPx(18)
+        }
+        return y
+    }
+    if StyledButton(x, y, ScaleUIPx(140), row_h, "Create account",
+                           ButtonStylePrimary, 0, NULL) {
+        if krait_daochi_account_create() != 0 {
+            state.project_set_status(st, krait_daochi_status())
+        }
+    }
+    if StyledButton(x + ScaleUIPx(148), y, ScaleUIPx(140), row_h,
+                           "Import key file", ButtonStyleSecondary, 0, NULL) {
+        st->dialog_mode = state.IDE_DIALOG_DAOCHI_IMPORT
+    }
+    y = y + ScaleUIPx(34)
+    Text("Accounts are post-quantum keys stored on this machine; the",
+         x, y, ScaleUIPx(11), GetThemeIcon())
+    y = y + ScaleUIPx(14)
+    Text("node never sees your private key.", x, y, ScaleUIPx(11),
+         GetThemeIcon())
+    return y + ScaleUIPx(18)
+}
+
+draw_friends_dialog :: (bounds: Rectangle, st: state.IdeState*) {
+    w := (int)bounds.width - ScaleUIPx(160)
+    if w > ScaleUIPx(560) { w = ScaleUIPx(560) }
+    if w < ScaleUIPx(360) { w = ScaleUIPx(360) }
+    h := ScaleUIPx(420)
+    frame := ModalFrame(w, h, "Friends", (Texture2D){0}, (Texture2D){0})
+    if IsKeyPressed(KEY_ESCAPE) ||
+       (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+        !CheckCollisionPointRec(GetMousePosition(),
+                                (Rectangle){(float)frame.x, (float)frame.y,
+                                            (float)frame.w, (float)frame.h})) {
+        daochi_friends_open = 0
+        return
+    }
+    panel := (Rectangle){(float)frame.content_x, (float)frame.content_y,
+                         (float)frame.content_w, (float)frame.content_h}
+    pad := ScaleUIPx(8)
+    y := (int)panel.y + pad
+    row_h := ScaleUIPx(24)
+
+    input_style := (TextInputStyle){
+        GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
+        GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
+    }
+    Text("add friend (their alias or account id)", (int)panel.x + pad, y,
+         ScaleUIPx(11), GetThemeText())
+    TextField((TextFieldProps){
+        (Rectangle){panel.x + (float)pad, (float)(y + ScaleUIPx(14)),
+                    panel.width - (float)(pad * 2 + ScaleUIPx(90)),
+                    (float)row_h},
+        daochi_add_target, sizeof(daochi_add_target),
+        &daochi_add_cursor, &daochi_add_focused,
+        sizeof(daochi_add_target) - 1, ScaleUIPx(13), 7801,
+        input_style, (TextInputFilter){0}, NULL, NULL
+    })
+    if StyledButton((int)(panel.x + panel.width) - pad - ScaleUIPx(80),
+                    y + ScaleUIPx(14), ScaleUIPx(80), row_h,
+                    "Request", ButtonStylePrimary, 0, NULL) {
+        if krait_daochi_friend_request_send(daochi_add_target) != 0 {
+            daochi_add_target[0] = 0
+            krait_daochi_friend_requests_refresh()
+        }
+    }
+    y = y + ScaleUIPx(56)
+
+    requests := krait_daochi_friend_request_count()
+    if requests > 0 {
+        Text("Requests", (int)panel.x + pad, y, ScaleUIPx(12), GetThemeText())
+        y = y + ScaleUIPx(16)
+        i := 0
+        while i < requests {
+            incoming := krait_daochi_friend_request_incoming(i)
+            alias := krait_daochi_friend_request_alias(i)
+            label: [128] char
+            if incoming != 0 {
+                snprintf(label, sizeof(label), "from %s", alias)
+            } else {
+                snprintf(label, sizeof(label), "to %s (pending)", alias)
+            }
+            Text(label, (int)panel.x + pad, y + ScaleUIPx(4), ScaleUIPx(11),
+                 incoming != 0 ? GetThemeText() : GetThemeIcon())
+            if incoming != 0 {
+                if StyledButton((int)(panel.x + panel.width) - pad - ScaleUIPx(130),
+                                       y, ScaleUIPx(60), row_h, "Accept",
+                                       ButtonStylePrimary, 0, NULL) {
+                    krait_daochi_friend_request_accept(i)
+                    krait_daochi_friends_refresh()
+                    krait_daochi_friend_requests_refresh()
+                    return
+                }
+                if StyledButton((int)(panel.x + panel.width) - pad - ScaleUIPx(64),
+                                       y, ScaleUIPx(60), row_h, "Decline",
+                                       ButtonStyleSecondary, 0, NULL) {
+                    krait_daochi_friend_request_decline(i)
+                    krait_daochi_friend_requests_refresh()
+                    return
+                }
+            }
+            y = y + ScaleUIPx(28)
+            i = i + 1
+        }
+        y = y + ScaleUIPx(8)
+    }
+
+    Text("Friends", (int)panel.x + pad, y, ScaleUIPx(12), GetThemeText())
+    y = y + ScaleUIPx(16)
+    friends := krait_daochi_friend_count()
+    if friends == 0 {
+        Text("(none yet)", (int)panel.x + pad, y, ScaleUIPx(11), GetThemeIcon())
+        y = y + ScaleUIPx(18)
+    } else {
+        bottom := (int)(panel.y + panel.height) - pad
+        i := 0
+        while i < friends && y + ScaleUIPx(26) < bottom {
+            alias := krait_daochi_friend_alias(i)
+            if strlen(alias) == 0 { alias = krait_daochi_friend_id(i) }
+            label: [160] char
+            snprintf(label, sizeof(label), "@%s", alias)
+            Text(label, (int)panel.x + pad, y + ScaleUIPx(4), ScaleUIPx(12),
+                 GetThemeText())
+            if StyledButton((int)(panel.x + panel.width) - pad - ScaleUIPx(80),
+                                   y, ScaleUIPx(80), row_h, "Remove",
+                                   ButtonStyleSecondary, 0, NULL) {
+                krait_daochi_friend_remove(i)
+                krait_daochi_friends_refresh()
+                return
+            }
+            y = y + ScaleUIPx(28)
+            i = i + 1
+        }
+    }
+    status := krait_daochi_status()
+    if strlen(status) > 0 {
+        Text(status, (int)panel.x + pad,
+             (int)(panel.y + panel.height) - ScaleUIPx(22), ScaleUIPx(11),
+             GetThemeLink())
+    }
+}
