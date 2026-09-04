@@ -4,9 +4,8 @@
  * The board IS files under ~/.kryon/krait/kanban, so the test redirects
  * HOME to a throwaway directory and exercises the native store: column
  * creation, card create/read/update, move-as-rename, project scaffold
- * binding, delete, and the no-key AI state. A live GLM round trip runs
- * only when KRAIT_KANBAN_LIVE=1 and ZAI_API_KEY are both set (it spends
- * a real API call).
+ * binding, delete, and the no-key AI state. A live provider round trip runs
+ * only when KRAIT_KANBAN_LIVE=1 and the selected provider has an API key.
  */
 #include "kryon.h"
 #include "ide/state.h"
@@ -88,7 +87,7 @@ test_ai_state_without_key(void)
     CHECK(krait_kanban_ai_run(0, 0) == 0);
 }
 
-/* Live loop: card -> GLM -> proposal -> k2c+cc gates -> apply. Opt-in
+/* Live loop: card -> model -> proposal -> k2c+cc gates -> apply. Opt-in
  * because it spends a real API call and needs the compiler toolchain.
  * The second card asks for constructs Kry rejects (let, comments) so a
  * first attempt that complies fails validation and the retry loop has

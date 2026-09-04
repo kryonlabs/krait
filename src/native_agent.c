@@ -1,8 +1,9 @@
 /*
  * native_agent.c - the agent-view conversation engine.
  *
- * A ZCode-style loop over the z.ai client: the model answers with plain
- * text or a JSON array of tool actions (list/read/write/compile/run).
+ * A ZCode-style loop over the selected coding-model provider: the model
+ * answers with plain text or a JSON array of tool actions
+ * (list/read/write/compile/run).
  * Actions run against the bound project directly - writes back up the
  * original file and land on disk, and every write batch is followed by
  * the shared compile gate whose diagnostics feed back into the next
@@ -61,7 +62,7 @@ typedef struct {
 typedef struct {
     char tool[32];
     char arg[192];
-    char result[1400];
+    char result[8192];
     int status;
     int dur_ms;
 } AgentToolRec;
@@ -155,14 +156,17 @@ static int agent_batch_start;
 
 static const char *const agent_system_prompt =
     "You are a coding agent working inside the Krait IDE on a Kryon "
-    "project. Kry (.kry) is a Python-indented UI language lowered to C. "
-    "STRICT syntax rules: no comments at all (// and # are errors); no "
-    "'let' (declare with 'name := expr' or 'name: Type = value'). Screens "
-    "look like: screen Name(viewport: Rectangle) { ... }. Widget calls: "
-    "StyledButton(x, y, w, h, \"label\", ButtonStylePrimary, "
-    "0, NULL) returns 1 when clicked; Text(text, x, y, "
-    "ScaleUIPx(16), GetThemeText()); DrawRectangleRec((Rectangle){x, y, w, "
-    "h}, GetThemeButton()). Coordinates are int pixels - wrap sizes with "
+    "project. Kry (.kry) is a Jai-like language lowered through KIR to the "
+    "project's target backend, commonly C or Go. "
+    "It uses explicit braces, :: declarations, C-style calls and structs, "
+    "and statement order inside blocks. STRICT syntax rules: no // comments; "
+    "no 'let' (declare with 'name := expr' or 'name: Type = value'). "
+    "UI entry points look like: "
+    "Main :: () #ui { Screen root: { ... } }. Widget calls: "
+    "StyledButton(x, y, w, h, \"label\", ButtonStylePrimary, 0, NULL) "
+    "returns 1 when clicked; Text(text, x, y, ScaleUIPx(16), "
+    "GetThemeText()); DrawRectangleRec((Rectangle){x, y, w, h}, "
+    "GetThemeButton()). Coordinates are int pixels - wrap sizes with "
     "ScaleUIPx(n), use (int) casts on floats. Read main.kry first and "
     "copy its idioms exactly; write complete file contents, never diffs. "
     "TOOLS: reply EITHER with plain text for the user OR with ONLY a "
@@ -587,8 +591,11 @@ agent_tool_compile(char *out, size_t out_size)
         agent_compile_errors[0] = '\0';
         snprintf(out + used, out_size - used, "[compile] ok\n");
     } else {
-        snprintf(out + used, out_size - used,
-                 "[compile] FAILED: %s\n", err[0] != '\0' ? err : "unknown");
+        used += (size_t)snprintf(out + used, out_size - used,
+                                 "[compile] FAILED: %s\n",
+                                 err[0] != '\0' ? err : "unknown");
+        if(agent_compile_errors[0] != '\0' && used < out_size - 1)
+            snprintf(out + used, out_size - used, "%s", agent_compile_errors);
     }
 }
 
@@ -925,6 +932,38 @@ agent_reply_is_actions(const char *text)
     return is_actions;
 }
 
+/* Some providers occasionally prepend a short sentence before the JSON tool
+ * batch. Keep the prompt strict, but recover by extracting the first valid
+ * tool array so the agent loop still makes progress. */
+static int
+agent_extract_action_array(char *text)
+{
+    char *start;
+    char *end;
+
+    if(text == NULL || agent_reply_is_actions(text))
+        return text != NULL;
+    for(start = strchr(text, '['); start != NULL; start = strchr(start + 1, '[')) {
+        for(end = strrchr(start, ']'); end != NULL && end > start;) {
+            char saved = end[1];
+            char *prev;
+
+            end[1] = '\0';
+            if(agent_reply_is_actions(start)) {
+                if(start != text)
+                    memmove(text, start, strlen(start) + 1);
+                return 1;
+            }
+            end[1] = saved;
+            prev = end - 1;
+            while(prev > start && *prev != ']')
+                prev--;
+            end = prev > start ? prev : NULL;
+        }
+    }
+    return 0;
+}
+
 /* Strip one markdown fence pair and surrounding whitespace, in place. */
 static char *
 agent_strip_reply(char *text)
@@ -932,6 +971,8 @@ agent_strip_reply(char *text)
     char *json = text;
     size_t n;
 
+    if(text == NULL)
+        return NULL;
     while(*json == '\n' || *json == ' ')
         json++;
     n = strlen(json);
@@ -949,7 +990,9 @@ agent_strip_reply(char *text)
         if(end != NULL)
             *end = '\0';
     }
-    return json;
+    if(json != text)
+        memmove(text, json, strlen(json) + 1);
+    return text;
 }
 
 /* Build the message list for the next request: system prompt plus the
@@ -1047,12 +1090,17 @@ agent_remember_tool_results(char *blob)
     }
     for(i = 0; i < agent_rec_count; i++) {
         AgentToolRec *r = &agent_recs[i];
-        char head[288];
+        char *head;
+        size_t need = strlen(r->tool) + strlen(r->arg) + strlen(r->result) + 16;
 
-        snprintf(head, sizeof(head), "[%s %s] %s", r->tool,
+        head = malloc(need);
+        if(head == NULL)
+            continue;
+        snprintf(head, need, "[%s %s] %s", r->tool,
                  r->arg[0] != '\0' ? r->arg : "-", r->result);
         agent_append_full(AGENT_MSG_TOOL, head, r->tool, r->arg, r->status,
                           r->dur_ms);
+        free(head);
         agent_persist_msg(&agent_msgs[agent_msg_count - 1]);
     }
     free(blob);
@@ -1137,6 +1185,18 @@ krait_agent_permission_respond(int allow, int always)
     agent_busy = 0;
     agent_set_status("tools denied");
     agent_remember(AGENT_MSG_ERROR, "tool batch denied by user");
+}
+
+int
+krait_agent_full_access_enabled(void)
+{
+    return agent_perm_always;
+}
+
+void
+krait_agent_set_full_access(int enabled)
+{
+    agent_perm_always = enabled != 0 ? 1 : 0;
 }
 
 /* ---- retry: replay a user turn from the transcript ---- */
@@ -1471,7 +1531,7 @@ krait_agent_send(const char *text)
     if(agent_busy)
         return 0;
     if(!krait_ai_configured()) {
-        agent_remember(AGENT_MSG_ERROR, "AI off: set ZAI_API_KEY");
+        agent_remember(AGENT_MSG_ERROR, krait_ai_config_hint());
         return 0;
     }
     agent_remember(AGENT_MSG_USER, text);
@@ -1602,6 +1662,12 @@ krait_agent_poll(void)
                                      krait_ai_text(agent_req) : ""));
     krait_ai_free(agent_req);
     agent_req = NULL;
+    if(reply == NULL) {
+        agent_busy = 0;
+        agent_set_status("out of memory");
+        agent_remember(AGENT_MSG_ERROR, "out of memory");
+        return 0;
+    }
     if(agent_stop_requested) {
         agent_busy = 0;
         agent_set_status("stopped");
@@ -1610,7 +1676,7 @@ krait_agent_poll(void)
         free(reply);
         return 0;
     }
-    if(agent_reply_is_actions(reply)) {
+    if(agent_extract_action_array(reply)) {
         if(!agent_perm_always) {
             free(agent_perm_json);
             agent_build_perm_lines(reply);

@@ -22,6 +22,7 @@ mods :: #import "ide/modules"
 		ag :: #import "ide/agent"
 		mdv :: #import "ide/mdview"
 		txt :: #import "ide/text_view"
+		game :: #import "ide/game"
 
 	krait_load_ui_font :: () -> int #extern
 krait_scaffold_project :: (path: const char*, status: char*, status_size: int) -> int #extern
@@ -42,7 +43,7 @@ top_menu_open :: int #global
 top_menus :: [5] Menu #global
 file_menu_items :: [4] MenuItem #global
 edit_menu_items :: [2] MenuItem #global
-view_menu_items :: [4] MenuItem #global
+view_menu_items :: [5] MenuItem #global
 tools_menu_items :: [3] MenuItem #global
 project_menu_items :: [2] MenuItem #global
 pane_tabs :: [state.IDE_MAX_PANE_TABS] Tab #global
@@ -59,6 +60,7 @@ pane_tab_scroll :: [state.IDE_MAX_PANE_GROUPS] int #global
     MENU_VIEW_AGENT,
     MENU_VIEW_TEXT,
     MENU_VIEW_KANBAN,
+    MENU_VIEW_GAME,
     MENU_TOOLS_SEARCH,
     MENU_TOOLS_CONSOLE,
     MENU_TOOLS_OUTPUT,
@@ -79,7 +81,7 @@ init :: () {
     krait_settings_load(&istate)
     apply_krait_theme()
     con.console_init(&istate)
-    istate.view = state.IDE_VIEW_TEXT
+    istate.view = state.IDE_VIEW_START
     top_menu_open = -1
     istate.layout_mode = state.IDE_LAYOUT_SPLIT
     init_panes(&istate)
@@ -93,9 +95,11 @@ init :: () {
 krait_agent_shutdown :: () #extern
 krait_agent_busy :: () -> int #extern
 krait_agent_streaming_text :: () -> const char* #extern
+krait_engine_shutdown :: () #extern
 
 shutdown :: () {
     krait_preview_unload()
+    krait_engine_shutdown()
     con.console_stop(&istate)
     con.console_shutdown(&istate)
     krait_agent_shutdown()
@@ -116,6 +120,7 @@ shutdown :: () {
 # running agent or console - keeps the full rate; any input snaps back.
 frame_active :: int #global
 frame_idle_frames :: int #global
+frame_last_fps :: int #global
 
 frame_throttle :: () {
     active := 0
@@ -132,7 +137,21 @@ frame_throttle :: () {
     if istate.console_focused != 0 {
         active = 1
     }
+    # The game engine view animates (physics, behaviors) and owns its own
+    # per-frame simulation, so it always runs at full rate.
+    if istate.view == state.IDE_VIEW_GAME {
+        active = 1
+    }
     if ag.agent_input_focused != 0 {
+        active = 1
+    }
+    if ag.agent_account_key_focused != 0 {
+        active = 1
+    }
+    if ag.agent_account_model_focused != 0 {
+        active = 1
+    }
+    if ag.agent_account_base_focused != 0 {
         active = 1
     }
     i := 0
@@ -154,16 +173,30 @@ frame_throttle :: () {
         frame_idle_frames = frame_idle_frames + 1
     }
     frame_active = active
+    # raylib re-anchors its frame clock on every SetTargetFPS call, so
+    # calling it per frame defeats the wait entirely and the app spins
+    # at thousands of fps (which freezes the window and floods the log).
+    # Only switch the target when it actually changes.
+    want_fps := 10
     if frame_idle_frames < 6 {
-        SetTargetFPS(60)
-    } else {
-        SetTargetFPS(10)
+        want_fps = 60
+    }
+    if frame_last_fps != want_fps {
+        SetTargetFPS(want_fps)
+        frame_last_fps = want_fps
     }
 }
+
+dbg_buf :: [96] char #global
+dbg_frames :: int #global
 
 App :: () #ui {
     Screen root: {
     frame_throttle()
+    dbg_frames = dbg_frames + 1
+    dbg_mp := GetMousePosition()
+    snprintf(dbg_buf, sizeof(dbg_buf), "m %.0f,%.0f f %d t %.1f", dbg_mp.x, dbg_mp.y, dbg_frames, GetTime())
+    Text(dbg_buf, 20, 84, 14, RED)
     w := GetScreenWidth()
     h := GetScreenHeight()
     apply_krait_theme()
@@ -183,6 +216,8 @@ App :: () #ui {
         txt.draw_text_view(content, &istate)
     } else if istate.view == state.IDE_VIEW_MD {
         mdv.draw_md_view(content, &istate)
+    } else if istate.view == state.IDE_VIEW_GAME {
+        game.draw_game_engine(content, &istate)
     } else if istate.view == state.IDE_VIEW_KANBAN {
         kb.draw_kanban(content, &istate)
         if kb.kanban_detail_open != 0 && kb.kanban_valid_selection() != 0 {
@@ -283,6 +318,8 @@ prepare_top_menus :: () {
                   MENU_VIEW_TEXT, 0, istate.view == state.IDE_VIEW_TEXT ? 1 : 0)
     set_menu_item(&view_menu_items[3], MenuCommand, "Kanban", "",
                   MENU_VIEW_KANBAN, 0, istate.view == state.IDE_VIEW_KANBAN ? 1 : 0)
+    set_menu_item(&view_menu_items[4], MenuCommand, "Game Engine", "",
+                  MENU_VIEW_GAME, 0, istate.view == state.IDE_VIEW_GAME ? 1 : 0)
 
     set_menu_item(&tools_menu_items[0], MenuCommand, "Search", "Ctrl+Shift+F",
                   MENU_TOOLS_SEARCH, has_project == 0 ? 1 : 0, 0)
@@ -304,7 +341,7 @@ prepare_top_menus :: () {
     top_menus[1].item_count = 2
     top_menus[2].label = "View"
     top_menus[2].items = view_menu_items
-    top_menus[2].item_count = 4
+    top_menus[2].item_count = 5
     top_menus[3].label = "Tools"
     top_menus[3].items = tools_menu_items
     top_menus[3].item_count = 3
@@ -338,6 +375,8 @@ handle_top_menu :: (cmd: int) {
         istate.view = state.IDE_VIEW_TEXT
     } else if cmd == MENU_VIEW_KANBAN {
         istate.view = state.IDE_VIEW_KANBAN
+    } else if cmd == MENU_VIEW_GAME {
+        istate.view = state.IDE_VIEW_GAME
     } else if cmd == MENU_TOOLS_SEARCH {
         srch.search_focus(&istate, 0)
         show_tool_bottom(&istate, state.IDE_PANE_VIEW_SEARCH)
@@ -425,23 +464,27 @@ draw_top_actions :: (view_w: int, top_h: int) {
                 con.console_focus(&istate)
             }
         }
-        view_options: [4] const char* = {"Studio", "Agent", "Text", "Kanban"}
+        view_options: [5] const char* = {"Studio", "Agent", "Game", "Text", "Kanban"}
         view_selected := 0
         if istate.view == state.IDE_VIEW_AGENT {
             view_selected = 1
-        } else if istate.view == state.IDE_VIEW_TEXT {
+        } else if istate.view == state.IDE_VIEW_GAME {
             view_selected = 2
-        } else if istate.view == state.IDE_VIEW_KANBAN {
+        } else if istate.view == state.IDE_VIEW_TEXT {
             view_selected = 3
+        } else if istate.view == state.IDE_VIEW_KANBAN {
+            view_selected = 4
         }
         picked := view_selected
-        Dropdown(7800, x, y, view_w, btn_h, view_options, 4, &picked)
+        Dropdown(7800, x, y, view_w, btn_h, view_options, 5, &picked)
         if picked != view_selected {
             if picked == 1 {
                 istate.view = state.IDE_VIEW_AGENT
             } else if picked == 2 {
-                istate.view = state.IDE_VIEW_TEXT
+                istate.view = state.IDE_VIEW_GAME
             } else if picked == 3 {
+                istate.view = state.IDE_VIEW_TEXT
+            } else if picked == 4 {
                 istate.view = state.IDE_VIEW_KANBAN
             } else if istate.project.loaded {
                 istate.view = state.IDE_VIEW_PROJECT
@@ -1063,7 +1106,7 @@ draw_mobile_nav :: (content: Rectangle, st: state.IdeState*) {
     cw := (int)content.width
     DrawRectangle((int)content.x, nav_y, cw, nav_h, GetThemeSurface())
     DrawLine((int)content.x, nav_y, (int)content.x + cw, nav_y, GetThemeButton())
-    count := 6
+    count := 7
     btn_w := cw / count
     btn_h := nav_h - ScaleUIPx(16)
     by := nav_y + ScaleUIPx(8)
@@ -1075,6 +1118,15 @@ draw_mobile_nav :: (content: Rectangle, st: state.IdeState*) {
                            0, NULL) {
         st->view = st->view == state.IDE_VIEW_AGENT ?
                    state.IDE_VIEW_PROJECT : state.IDE_VIEW_AGENT
+    }
+    bx = bx + btn_w
+    if StyledButton(bx + ScaleUIPx(4), by, btn_w - ScaleUIPx(8), btn_h,
+                           "Game", st->view == state.IDE_VIEW_GAME ?
+                               ButtonStyleTabSelected :
+                               ButtonStyleTab,
+                           0, NULL) {
+        st->view = st->view == state.IDE_VIEW_GAME ?
+                   state.IDE_VIEW_PROJECT : state.IDE_VIEW_GAME
     }
     bx = bx + btn_w
     mobile_nav_button(bx, by, btn_w, btn_h, "Canvas", state.IDE_PANE_VIEW_PREVIEW, st)

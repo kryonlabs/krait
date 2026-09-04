@@ -408,6 +408,7 @@ int
 krait_preview_build(IdeState *st, char *status, int status_size)
 {
     const char *kryon_dir;
+    char kryon_dir_buf[KRAIT_PATH_MAX];
     char build_dir[KRAIT_PATH_MAX];
     char shim_path[KRAIT_PATH_MAX];
     char host_path[KRAIT_PATH_MAX];
@@ -431,9 +432,8 @@ krait_preview_build(IdeState *st, char *status, int status_size)
         return krait_preview_build_poll(status, status_size);
     if(g_preview_build.running)
         krait_preview_build_close();
-    kryon_dir = getenv("KRYON_DIR");
-    if(kryon_dir == NULL || kryon_dir[0] == '\0')
-        kryon_dir = "vendor/kryon";
+    krait_kryon_dir(kryon_dir_buf, sizeof(kryon_dir_buf));
+    kryon_dir = kryon_dir_buf;
     if(!krait_shell_quote(q_kryon, sizeof(q_kryon), kryon_dir)) {
         if(status != NULL && status_size > 0)
             snprintf(status, (size_t)status_size, "Preview path too long");
@@ -614,16 +614,20 @@ krait_live_draw_canvas_ex(const char *root, const char *rel_path, int w,
            (krait_project_preview_config(root, configured_live,
                                          sizeof(configured_live), NULL, 0) &&
             configured_live[0] != '\0')) {
-        IdeState st;
+        /* IdeState is ~10 MB (12 open-file slots of 128 KB buffers
+         * each): it must live on the heap, a stack local blew the
+         * 8 MB thread stack in every caller of this function. */
+        IdeState *st = calloc(1, sizeof(*st));
         RenderTexture2D target;
         char build_status[512];
         int ready = 0;
         int ok;
 
-        memset(&st, 0, sizeof(st));
-        st.project.loaded = 1;
-        snprintf(st.project.path, sizeof(st.project.path), "%s", root);
-        snprintf(st.project.name, sizeof(st.project.name), "%s",
+        if(st == NULL)
+            return 0;
+        st->project.loaded = 1;
+        snprintf(st->project.path, sizeof(st->project.path), "%s", root);
+        snprintf(st->project.name, sizeof(st->project.name), "%s",
                  krait_basename(root));
         if(w <= 0)
             w = 640;
@@ -631,7 +635,7 @@ krait_live_draw_canvas_ex(const char *root, const char *rel_path, int w,
             h = 480;
         for(int i = 0; i < 600; i++) {
             build_status[0] = '\0';
-            if(krait_preview_build(&st, build_status, sizeof(build_status))) {
+            if(krait_preview_build(st, build_status, sizeof(build_status))) {
                 ready = 1;
                 break;
             }
@@ -644,6 +648,8 @@ krait_live_draw_canvas_ex(const char *root, const char *rel_path, int w,
                 snprintf(status, (size_t)status_size, "%s",
                          build_status[0] != '\0' ? build_status :
                          "Preview build timed out");
+            krait_preview_unload();
+            free(st);
             return 0;
         }
 
@@ -651,7 +657,7 @@ krait_live_draw_canvas_ex(const char *root, const char *rel_path, int w,
         BeginTextureMode(target);
         ClearBackground(GetThemeBackground());
         BeginUIFrame(w, h, 1.0);
-        ok = krait_preview_draw(&st, rel_path,
+        ok = krait_preview_draw(st, rel_path,
                                 (Rectangle){0, 0, (float)w, (float)h},
                                 status, status_size);
         if(!ok && status != NULL &&
@@ -671,6 +677,8 @@ krait_live_draw_canvas_ex(const char *root, const char *rel_path, int w,
             UnloadImage(shot);
         }
         UnloadRenderTexture(target);
+        krait_preview_unload();
+        free(st);
         return ok;
         }
     }

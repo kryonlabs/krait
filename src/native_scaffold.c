@@ -44,11 +44,13 @@ krait_scaffold_project(const char *dir, char *status, int status_size)
 {
     char project_kryon[KRAIT_PATH_MAX];
     char main_kry[KRAIT_PATH_MAX];
+    char game_scene[KRAIT_PATH_MAX];
     char makefile_path[KRAIT_PATH_MAX];
     char name[96];
     char project_file[256];
     char makefile_contents[4096];
     const char *kryon_dir;
+    char kryon_dir_buf[KRAIT_PATH_MAX];
     const char *main_kry_contents =
         "#import \"kryon.h\"\n"
         "\n"
@@ -62,7 +64,8 @@ krait_scaffold_project(const char *dir, char *status, int status_size)
         "    click_count: int = 0\n"
         "}\n"
         "\n"
-        "screen Main(viewport: Rectangle) {\n"
+        "Main :: () #ui {\n"
+        "    Screen root: {\n"
         "    Background(GetThemeBackground())\n"
         "    Text(\"Hello, Kryon!\", ScaleUIPx(20), ScaleUIPx(20), ScaleUIPx(24), GetThemeText())\n"
         "    Text(\"Edit main.kry and the canvas reloads.\", ScaleUIPx(20), ScaleUIPx(54), ScaleUIPx(16), GetThemeIcon())\n"
@@ -74,7 +77,79 @@ krait_scaffold_project(const char *dir, char *status, int status_size)
         "        click_count++\n"
         "    }\n"
         "    Text(TextFormat(\"Clicks: %d\", click_count), ScaleUIPx(20), ScaleUIPx(160), ScaleUIPx(16), GetThemeText())\n"
+        "    }\n"
         "}\n";
+    /* Starter game scene for the Game Engine mode: a tiny platformer with
+     * collectible coins, a win exit and a score timer, all wired through
+     * the trigger system. Same format krait_engine_load() reads. */
+    const char *game_scene_contents =
+        "# krait game scene 1\n"
+        "name \"Main\"\n"
+        "gravity 0 980\n"
+        "view 640 360\n"
+        "node 1 0 Body2D \"Ground\"\n"
+        "x 320\n"
+        "y 332\n"
+        "size 640 56\n"
+        "body static\n"
+        "shape box\n"
+        "\n"
+        "node 2 0 Body2D \"Platform\"\n"
+        "x 180\n"
+        "y 232\n"
+        "size 160 16\n"
+        "body static\n"
+        "shape box\n"
+        "\n"
+        "node 3 0 Body2D \"Player\"\n"
+        "x 80\n"
+        "y 280\n"
+        "behavior player\n"
+        "size 28 44\n"
+        "body dynamic\n"
+        "fixed_rot 1\n"
+        "shape box\n"
+        "color 240 150 60 255\n"
+        "\n"
+        "node 4 0 Area2D \"Coin\"\n"
+        "x 260\n"
+        "y 180\n"
+        "size 24 24\n"
+        "shape circle\n"
+        "color 240 200 60 255\n"
+        "trigger collect\n"
+        "\n"
+        "node 5 0 Area2D \"Coin2\"\n"
+        "x 420\n"
+        "y 120\n"
+        "size 24 24\n"
+        "shape circle\n"
+        "color 240 200 60 255\n"
+        "trigger collect\n"
+        "\n"
+        "node 6 0 Area2D \"Exit\"\n"
+        "x 560\n"
+        "y 300\n"
+        "size 48 48\n"
+        "shape box\n"
+        "color 120 220 140 255\n"
+        "trigger win\n"
+        "\n"
+        "node 7 0 Timer \"ScoreTicker\"\n"
+        "timer 1 1 1\n"
+        "trigger score\n"
+        "\n"
+        "node 8 0 AnimationPlayer \"FloatAnim\"\n"
+        "anim 1 1 1\n"
+        "atrack \"Coin2\" posy 2\n"
+        "akey 0 120\n"
+        "akey 1.5 90\n"
+        "\n"
+        "node 9 0 Camera2D \"Camera\"\n"
+        "x 320\n"
+        "y 180\n"
+        "camera 1 1\n"
+        "\n";
 
     if(dir == NULL || dir[0] == '\0') {
         if(status != NULL && status_size > 0)
@@ -105,9 +180,14 @@ krait_scaffold_project(const char *dir, char *status, int status_size)
             snprintf(status, (size_t)status_size, "Cannot write %s", main_kry);
         return 0;
     }
-    kryon_dir = getenv("KRYON_DIR");
-    if(kryon_dir == NULL || kryon_dir[0] == '\0')
-        kryon_dir = "/usr/home/wao/src/krait/vendor/kryon";
+    krait_join(game_scene, sizeof(game_scene), dir, "game.scene");
+    if(!krait_write_text_file(game_scene, game_scene_contents)) {
+        if(status != NULL && status_size > 0)
+            snprintf(status, (size_t)status_size, "Cannot write %s", game_scene);
+        return 0;
+    }
+    krait_kryon_dir(kryon_dir_buf, sizeof(kryon_dir_buf));
+    kryon_dir = kryon_dir_buf;
     snprintf(makefile_contents, sizeof(makefile_contents),
              "CC ?= cc\n"
              "KRYON_DIR ?= %s\n"
@@ -153,4 +233,3 @@ krait_scaffold_project(const char *dir, char *status, int status_size)
         snprintf(status, (size_t)status_size, "Scaffolded project at %s", dir);
     return 1;
 }
-

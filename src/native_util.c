@@ -69,29 +69,22 @@ krait_path_exists(const char *path)
 }
 
 void
-krait_kryon_tool_path(char *out, size_t out_size, const char *tool)
+krait_kryon_dir(char *out, size_t out_size)
 {
-    /* kryon builds its tools (k2ir/k2b/k2c) into the platform-tagged dir
-     * <kryon_dir>/build/<platform>-<arch>/bin/, never the legacy flat
-     * build/bin/, so derive the host platform/arch the same way kryon's
-     * Makefile does (amd64 -> x86_64; Linux/FreeBSD/Darwin -> the lower
-     * kryon name). <kryon_dir> is $KRYON_DIR, default "vendor/kryon". */
+    /* $KRYON_DIR wins when set. Otherwise derive from the binary location
+     * (<krait>/build/<plat>-<arch>/bin/krait -> <krait>/vendor/kryon) so a
+     * launch from outside the checkout still finds the vendored runtime;
+     * last resort is the cwd-relative path. */
     const char *dir = getenv("KRYON_DIR");
-    const char *plat = "linux";
-    const char *arch = "x86_64";
-    struct utsname u;
     char exe[KRAIT_PATH_MAX];
     char root[KRAIT_PATH_MAX];
-    static char candidate[KRAIT_PATH_MAX];   /* must outlive the block:
-                                                dir aliases it until the
-                                                final snprintf below */
+    char candidate[KRAIT_PATH_MAX];
     ssize_t n;
 
-    if(dir == NULL || dir[0] == '\0')
-        dir = "vendor/kryon";
-    /* cwd-relative tool lookup breaks when krait launches from anywhere
-     * but its own checkout; derive the kryon dir from the binary instead:
-     * <krait>/build/<plat>-<arch>/bin/krait -> <krait>/vendor/kryon */
+    if(dir != NULL && dir[0] != '\0') {
+        snprintf(out, out_size, "%s", dir);
+        return;
+    }
     n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
     if(n <= 0)
         n = readlink("/proc/curproc/file", exe, sizeof(exe) - 1);
@@ -109,10 +102,29 @@ krait_kryon_tool_path(char *out, size_t out_size, const char *tool)
         }
         if(p != NULL) {
             snprintf(candidate, sizeof(candidate), "%s/vendor/kryon", root);
-            if(krait_path_exists(candidate))
-                dir = candidate;
+            if(krait_path_exists(candidate)) {
+                snprintf(out, out_size, "%s", candidate);
+                return;
+            }
         }
     }
+    snprintf(out, out_size, "%s", "vendor/kryon");
+}
+
+void
+krait_kryon_tool_path(char *out, size_t out_size, const char *tool)
+{
+    /* kryon builds its tools (k2ir/k2b/k2c) into the platform-tagged dir
+     * <kryon_dir>/build/<platform>-<arch>/bin/, never the legacy flat
+     * build/bin/, so derive the host platform/arch the same way kryon's
+     * Makefile does (amd64 -> x86_64; Linux/FreeBSD/Darwin -> the lower
+     * kryon name). */
+    const char *plat = "linux";
+    const char *arch = "x86_64";
+    struct utsname u;
+    char dir[KRAIT_PATH_MAX];
+
+    krait_kryon_dir(dir, sizeof(dir));
     if(uname(&u) == 0) {
         if(strcmp(u.sysname, "FreeBSD") == 0)
             plat = "freebsd";

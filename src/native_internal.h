@@ -51,8 +51,9 @@ typedef struct {
     int value;
 } KraitLiveVar;
 
-/* ---- native_ai.c: z.ai GLM chat client (krait is the harness; kryon
- * supplies only the provider-neutral kry_http + kry_json transport) ---- */
+/* ---- native_ai.c: provider-selectable coding chat client (krait is the
+ * harness; kryon supplies only the provider-neutral kry_http + kry_json
+ * transport) ---- */
 typedef struct KraitAiRequest KraitAiRequest;
 
 typedef enum {
@@ -68,9 +69,27 @@ typedef struct {
     const char *image_b64;   /* optional PNG base64 -> multimodal turn */
 } KraitAiMessage;
 
+int krait_ai_provider_count(void);
+const char *krait_ai_provider_id(int index);
+const char *krait_ai_provider_name(int index);
+const char *krait_ai_provider_key_env(int index);
+const char *krait_ai_provider_model(int index);
+const char *krait_ai_provider_base_url(int index);
+int krait_ai_provider_configured(int index);
+int krait_ai_active_provider(void);
+int krait_ai_set_provider(int index);
+void krait_ai_set_provider_key(int index, const char *api_key);
+void krait_ai_set_provider_base_url(int index, const char *base_url);
+void krait_ai_set_provider_model(int index, const char *model);
+int krait_ai_effort_count(void);
+const char *krait_ai_effort_name(int index);
+int krait_ai_active_effort(void);
+int krait_ai_set_effort(int index);
+const char *krait_ai_config_hint(void);
 void krait_ai_set_key(const char *api_key);
 char *krait_ai_base64_file(const char *path);
 char *krait_ai_build_body(const KraitAiMessage *messages, int count);
+int krait_ai_extract_response_text(const char *response, char **out);
 const char *krait_ai_last_usage(void);
 char *krait_ai_stream_text(KraitAiRequest *request);
 int krait_ai_configured(void);
@@ -111,6 +130,7 @@ void krait_kanban_shutdown(void);
 
 /* ---- native_scaffold.c ---- */
 int krait_scaffold_project(const char *dir, char *status, int status_size);
+int krait_mkdir_p(const char *dir);
 
 /* ---- native_util.c: shared string/filesystem helpers ---- */
 void krait_join(char *dst, size_t dst_size, const char *a, const char *b);
@@ -132,6 +152,7 @@ int krait_ident_start(int ch);
 int krait_ident_char(int ch);
 void krait_title_from_file(char *dst, size_t dst_size, const char *file);
 void krait_kryon_tool_path(char *out, size_t out_size, const char *tool);
+void krait_kryon_dir(char *out, size_t out_size);
 
 /* ---- native_project.c: in-project content search ---- */
 int krait_search_project(const char *root, const char *query,
@@ -188,6 +209,8 @@ int krait_agent_permission_pending(void);
 int krait_agent_permission_count(void);
 const char *krait_agent_permission_line(int index);
 void krait_agent_permission_respond(int allow, int always);
+int krait_agent_full_access_enabled(void);
+void krait_agent_set_full_access(int enabled);
 int krait_agent_retry(int index);
 int krait_agent_session_count(void);
 const char *krait_agent_session_name(int index);
@@ -267,5 +290,75 @@ int krait_game_node_args(const char *q, char args[8][256], char *type,
                          size_t type_size, char *label, size_t label_size,
                          int *x, int *y, int *w, int *h);
 void krait_draw_game_node(const char *type, const char *label, int x, int y, int w, int h);
+
+/* ---- native_engine.c: Game Engine mode (document editor around the
+ * Kryon Game2D scene tree; ide/game.kry is a one-call shim) ---- */
+void krait_engine_reset(const char *project_dir);
+int krait_engine_add_node(int kind_index, const char *name);
+int krait_engine_delete_selected(void);
+/* behavior registry: builtins (player/spin/patrol) and plugin behaviors
+ * share one public surface; fns run per-frame while playing */
+typedef void (*KraitBehaviorFn)(Scene *scene, NodeId node, float dt,
+                                const float *params, int param_count,
+                                void *user);
+int krait_engine_behavior_register(const char *id, const char *label,
+                                   const char *const *param_names,
+                                   const float *param_defaults,
+                                   int param_count, KraitBehaviorFn fn,
+                                   void *user);
+int krait_engine_behavior_count(void);
+const char *krait_engine_behavior_id(int index);
+const char *krait_engine_behavior_label(int index);
+int krait_engine_behavior_param_count(int index);
+const char *krait_engine_behavior_param_name(int index, int param);
+int krait_engine_set_behavior_id(int node_id, const char *behavior_id);
+int krait_engine_set_behavior_param(int node_id, int param, float value);
+int krait_engine_set_trigger(int id, int trigger);
+int krait_engine_node_count(void);
+const char *krait_engine_node_name(int id);
+int krait_engine_node_pos(int id, float *x, float *y);
+int krait_engine_node_tile(int id, int tx, int ty);
+int krait_engine_timer_fired(int id);
+int krait_engine_set_particles(int id, float rate, float lifetime,
+                               float speed, float spread);
+int krait_engine_particle_count(int id);
+/* 3D nodes (Node3D / MeshInstance3D / Camera3D) */
+int krait_engine_set_3d(int id, float z, float rot_y, float scale);
+int krait_engine_set_mesh(int id, int mesh_kind);
+int krait_engine_set_3d_target(int id, float tx, float ty, float tz);
+int krait_engine_get_3d(int id, float *z, float *rot_y, float *scale);
+int krait_engine_node_set_pos3(int id, float x, float y, float z);
+int krait_engine_node_pos3(int id, float *x, float *y, float *z);
+int krait_engine_get_mesh(int id);
+int krait_engine_scene_is_3d(void);
+/* timeline editing over an AnimationPlayer node */
+int krait_engine_anim_add_key(int id, int track, float time, float value);
+int krait_engine_anim_move_key(int id, int track, int key, float time);
+int krait_engine_anim_delete_key(int id, int track, int key);
+int krait_engine_anim_key_count(int id, int track);
+int krait_engine_anim_key_get(int id, int track, int key, float *time,
+                              float *value);
+int krait_engine_timeline_scrub(int id, float t);
+int krait_engine_node_set_script(int id, const char *text);
+int krait_engine_score(void);
+int krait_engine_won(void);
+int krait_engine_playing(void);
+int krait_engine_paused(void);
+void krait_engine_play(void);
+void krait_engine_pause(void);
+void krait_engine_stop(void);
+void krait_engine_advance(float dt);
+int krait_engine_save(const char *path);
+int krait_engine_load(const char *path);
+int krait_engine_smoke_test(void);
+void krait_engine_draw_view(Rectangle bounds, IdeState *st);
+void krait_engine_shutdown(void);
+/* standalone player mode (krait --play-game): own window, no editor UI */
+int krait_engine_play_scene(const char *path_or_dir);
+void krait_engine_draw_play(Rectangle bounds);
+void krait_engine_view_size(int *w, int *h);
+const char *krait_engine_scene_name(void);
+int krait_engine_run_game(void);
+int krait_engine_export_game(char *status, int status_size);
 
 #endif /* KRAIT_NATIVE_INTERNAL_H */

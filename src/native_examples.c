@@ -26,7 +26,8 @@ static int g_examples_loaded;
 static void
 krait_load_examples(void)
 {
-    const char *kryon_dir = getenv("KRYON_DIR");
+    char kryon_dir_buf[KRAIT_PATH_MAX];
+    const char *kryon_dir = kryon_dir_buf;
     char dir_path[KRAIT_PATH_MAX];
     DIR *dir;
     struct dirent *ent;
@@ -34,8 +35,7 @@ krait_load_examples(void)
     if(g_examples_loaded)
         return;
     g_examples_loaded = 1;
-    if(kryon_dir == NULL || kryon_dir[0] == '\0')
-        kryon_dir = "vendor/kryon";
+    krait_kryon_dir(kryon_dir_buf, sizeof(kryon_dir_buf));
     krait_join(dir_path, sizeof(dir_path), kryon_dir, "examples");
     dir = opendir(dir_path);
     if(dir == NULL)

@@ -3,9 +3,9 @@
  *
  * Hermetic: history persist/load round-trip against a redirected HOME,
  * compile-gate verdicts on a scaffold project (clean and deliberately
- * broken overlays), and the bounded command runner. A live GLM round
- * trip with real tool use runs only when KRAIT_AGENT_LIVE=1 and
- * ZAI_API_KEY are both set.
+ * broken overlays), and the bounded command runner. A live provider round
+ * trip with real tool use runs only when KRAIT_AGENT_LIVE=1 and the selected
+ * provider has an API key.
  */
 #include "kryon.h"
 #include "ide/state.h"
@@ -14,6 +14,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static int failures;
@@ -24,6 +26,17 @@ static int failures;
         fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
     } \
 } while(0)
+
+static int
+config_child_check(void)
+{
+    return krait_ai_active_provider() == 2 &&
+           krait_ai_active_effort() == 1 &&
+           krait_ai_provider_configured(2) == 1 &&
+           strcmp(krait_ai_provider_model(2), "claude-test-model") == 0 &&
+           strcmp(krait_ai_provider_base_url(2),
+                  "https://claude.example/v1") == 0 ? 0 : 1;
+}
 
 static void
 test_history_roundtrip(void)
@@ -43,7 +56,7 @@ test_history_roundtrip(void)
     krait_agent_bind("/tmp/krait-agent-test-proj");
     CHECK(krait_agent_count() == 1);
     CHECK(krait_agent_kind(0) == 3);
-    CHECK(strstr(krait_agent_text(0), "ZAI_API_KEY") != NULL);
+    CHECK(strstr(krait_agent_text(0), "OPENAI_API_KEY") != NULL);
 
     krait_agent_clear();
     CHECK(krait_agent_count() == 0);
@@ -66,7 +79,7 @@ test_compile_gate(void)
                                  err, sizeof(err), NULL, 0) == 0);
 
     paths[0] = "broken.kry";
-    bodies[0] = "screen Bad(viewport: Rectangle) {\n    let x := 5\n}\n";
+    bodies[0] = "Bad :: () #ui {\n    Screen root: {\n    let x := 5\n    }\n}\n";
     err[0] = '\0';
     char all_errs[1024] = {0};
 
@@ -104,9 +117,9 @@ test_tools(void)
     krait_agent_bind("/tmp/krait-agent-tools-proj");
 
     results = krait_agent_run_tools(
-        "[{\"tool\":\"search\",\"query\":\"screen\"}]");
+        "[{\"tool\":\"search\",\"query\":\"Screen\"}]");
     CHECK(results != NULL);
-    CHECK(strstr(results, "[search 'screen']") != NULL);
+    CHECK(strstr(results, "[search 'Screen']") != NULL);
     CHECK(strstr(results, "main.kry") != NULL);
     free(results);
 
@@ -223,6 +236,7 @@ test_vision_body(void)
     char *body;
     KraitAiMessage msgs[2];
 
+    CHECK(krait_ai_set_provider(1) == 1);   /* Z.ai keeps the vision default */
     snprintf(png, sizeof(png), "/tmp/krait-agent-b64-test.png");
     {
         const unsigned char png_magic[16] = {0x89, 'P', 'N', 'G', 0x0d, 0x0a,
@@ -258,7 +272,7 @@ test_vision_body(void)
         CHECK(strstr(body, "image_url") != NULL);
         CHECK(strstr(body, "data:image/png;base64,QUJD") != NULL);
         CHECK(strstr(body, "\"text\":\"look\"") != NULL);
-        CHECK(strstr(body, "glm-4.6v") != NULL);   /* vision model for image turns */
+        CHECK(strstr(body, "glm-5v-turbo") != NULL);   /* vision model for image turns */
         free(body);
     }
 
@@ -267,10 +281,202 @@ test_vision_body(void)
     CHECK(body != NULL);
     if(body != NULL) {
         CHECK(strstr(body, "image_url") == NULL);
-        CHECK(strstr(body, "glm-4.6v") == NULL);
+        CHECK(strstr(body, "glm-5v-turbo") == NULL);
+        free(body);
+    }
+
+    CHECK(krait_ai_set_provider(2) == 1);
+    msgs[1].image_b64 = "QUJD";
+    body = krait_ai_build_body(msgs, 2);
+    CHECK(body != NULL);
+    if(body != NULL) {
+        CHECK(strstr(body, "\"type\":\"image\"") != NULL);
+        CHECK(strstr(body, "\"source\"") != NULL);
+        CHECK(strstr(body, "\"media_type\":\"image/png\"") != NULL);
+        CHECK(strstr(body, "\"data\":\"QUJD\"") != NULL);
+        CHECK(strstr(body, "\"image_url\"") == NULL);
         free(body);
     }
     unlink(png);
+}
+
+static void
+test_provider_selection(void)
+{
+    KraitAiMessage msgs[2];
+    char *body;
+
+    CHECK(krait_ai_provider_count() == 3);
+    CHECK(strcmp(krait_ai_provider_id(0), "codex") == 0);
+    CHECK(strcmp(krait_ai_provider_id(1), "zai") == 0);
+    CHECK(strcmp(krait_ai_provider_id(2), "claude") == 0);
+    CHECK(krait_ai_effort_count() == 4);
+    CHECK(strcmp(krait_ai_effort_name(3), "Max") == 0);
+    CHECK(krait_ai_set_effort(3) == 1);
+    CHECK(krait_ai_active_effort() == 3);
+
+    msgs[0].role = "system";
+    msgs[0].content = "sys";
+    msgs[0].image_b64 = NULL;
+    msgs[1].role = "user";
+    msgs[1].content = "hi";
+    msgs[1].image_b64 = NULL;
+
+    CHECK(krait_ai_set_provider(0) == 1);
+    body = krait_ai_build_body(msgs, 2);
+    CHECK(body != NULL);
+    if(body != NULL) {
+        CHECK(strstr(body, krait_ai_provider_model(0)) != NULL);
+        CHECK(strstr(body, "\"reasoning\":{\"effort\":\"xhigh\"}") != NULL);
+        CHECK(strstr(body, "\"thinking\"") == NULL);
+        free(body);
+    }
+
+    CHECK(krait_ai_set_provider(2) == 1);
+    body = krait_ai_build_body(msgs, 2);
+    CHECK(body != NULL);
+    if(body != NULL) {
+        CHECK(strstr(body, krait_ai_provider_model(2)) != NULL);
+        CHECK(strstr(body, "\"system\":\"sys\"") != NULL);
+        CHECK(strstr(body, "\"messages\"") != NULL);
+        CHECK(strstr(body, "\"max_tokens\"") != NULL);
+        CHECK(strstr(body, "\"stream\":true") != NULL);
+        CHECK(strstr(body, "\"input\"") == NULL);
+        CHECK(strstr(body, "\"reasoning\"") == NULL);
+        CHECK(strstr(body, "\"thinking\"") == NULL);
+        CHECK(strstr(body, "\"role\":\"system\"") == NULL);
+        free(body);
+    }
+
+    CHECK(krait_ai_set_provider(1) == 1);
+    body = krait_ai_build_body(msgs, 2);
+    CHECK(body != NULL);
+    if(body != NULL) {
+        CHECK(strstr(body, krait_ai_provider_model(1)) != NULL);
+        CHECK(strstr(body, "\"thinking\":{\"type\":\"enabled\"}") != NULL);
+        CHECK(strstr(body, "\"reasoning_effort\":\"max\"") != NULL);
+        free(body);
+    }
+}
+
+static void
+test_response_parsers(void)
+{
+    char *text = NULL;
+
+    CHECK(krait_ai_extract_response_text(
+        "{\"output_text\":\"codex ok\"}", &text) == 1);
+    if(text != NULL) {
+        CHECK(strcmp(text, "codex ok") == 0);
+        free(text);
+        text = NULL;
+    }
+    CHECK(krait_ai_extract_response_text(
+        "{\"choices\":[{\"message\":{\"content\":\"chat ok\"}}]}", &text) == 1);
+    if(text != NULL) {
+        CHECK(strcmp(text, "chat ok") == 0);
+        free(text);
+        text = NULL;
+    }
+    CHECK(krait_ai_extract_response_text(
+        "{\"choices\":[{\"message\":{\"content\":[{\"type\":\"text\","
+        "\"text\":\"parts ok\"}]}}]}", &text) == 1);
+    if(text != NULL) {
+        CHECK(strcmp(text, "parts ok") == 0);
+        free(text);
+        text = NULL;
+    }
+    CHECK(krait_ai_extract_response_text(
+        "{\"content\":[{\"type\":\"text\",\"text\":\"claude ok\"}]}", &text)
+          == 1);
+    if(text != NULL) {
+        CHECK(strcmp(text, "claude ok") == 0);
+        free(text);
+        text = NULL;
+    }
+    CHECK(krait_ai_extract_response_text(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n"
+        "data: [DONE]\n", &text) == 1);
+    if(text != NULL) {
+        CHECK(strcmp(text, "hello") == 0);
+        free(text);
+        text = NULL;
+    }
+    CHECK(krait_ai_extract_response_text(
+        "event: response.output_text.delta\n"
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n"
+        "data: [DONE]\n", &text) == 1);
+    if(text != NULL) {
+        CHECK(strcmp(text, "hi") == 0);
+        free(text);
+        text = NULL;
+    }
+    CHECK(krait_ai_extract_response_text(
+        "event: content_block_delta\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":0,"
+        "\"delta\":{\"type\":\"text_delta\",\"text\":\"claude\"}}\n"
+        "event: content_block_delta\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":0,"
+        "\"delta\":{\"type\":\"text_delta\",\"text\":\" stream\"}}\n"
+        "event: message_stop\n"
+        "data: {\"type\":\"message_stop\"}\n", &text) == 1);
+    if(text != NULL) {
+        CHECK(strcmp(text, "claude stream") == 0);
+        free(text);
+    }
+}
+
+static void
+test_account_config_persistence(const char *argv0)
+{
+    char path[512];
+    char *text = NULL;
+    long len = 0;
+    struct stat st;
+    const char *home = getenv("HOME");
+    pid_t pid;
+    int status = 1;
+
+    CHECK(krait_ai_set_provider(2) == 1);
+    CHECK(krait_ai_set_effort(1) == 1);
+    krait_ai_set_provider_key(2, "test-claude-key");
+    krait_ai_set_provider_model(2, "claude-test-model");
+    krait_ai_set_provider_base_url(2, "https://claude.example/v1");
+    snprintf(path, sizeof(path), "%s/.kryon/krait/ai.conf",
+             home != NULL ? home : ".");
+    CHECK(krait_read_file_alloc(path, &text, &len) == 1);
+    CHECK(text != NULL);
+    if(text != NULL) {
+        CHECK(strstr(text, "provider=claude") != NULL);
+        CHECK(strstr(text, "effort=medium") != NULL);
+        CHECK(strstr(text, "key.claude=test-claude-key") != NULL);
+        CHECK(strstr(text, "model.claude=claude-test-model") != NULL);
+        CHECK(strstr(text, "base.claude=https://claude.example/v1") != NULL);
+        free(text);
+    }
+    CHECK(stat(path, &st) == 0);
+    if(stat(path, &st) == 0)
+        CHECK((st.st_mode & 0777) == 0600);
+    CHECK(krait_ai_provider_configured(2) == 1);
+
+    pid = fork();
+    CHECK(pid >= 0);
+    if(pid == 0) {
+        setenv("KRAIT_AGENT_CONFIG_CHILD", "1", 1);
+        unsetenv("KRAIT_AI_PROVIDER");
+        unsetenv("AI_PROVIDER");
+        unsetenv("KRAIT_AI_REASONING_EFFORT");
+        unsetenv("AI_REASONING_EFFORT");
+        execl(argv0, argv0, (char *)NULL);
+        _exit(127);
+    }
+    if(pid > 0) {
+        CHECK(waitpid(pid, &status, 0) == pid);
+        CHECK(WIFEXITED(status));
+        if(WIFEXITED(status))
+            CHECK(WEXITSTATUS(status) == 0);
+    }
 }
 
 /* Live vision: capture the rendered screen offscreen, send it as an
@@ -337,6 +543,7 @@ test_stream_body(void)
     msgs[1].role = "user";
     msgs[1].content = "hi";
     msgs[1].image_b64 = NULL;
+    CHECK(krait_ai_set_provider(1) == 1);
     body = krait_ai_build_body(msgs, 2);
     CHECK(body != NULL);
     if(body != NULL) {
@@ -345,7 +552,7 @@ test_stream_body(void)
     }
 }
 
-/* Live: user message -> GLM -> tool actions (read/write) -> compile
+/* Live: user message -> model -> tool actions (read/write) -> compile
  * feedback -> final text, with the file really on disk. */
 static void
 test_live_agent_gated(void)
@@ -362,10 +569,12 @@ test_live_agent_gated(void)
     CHECK(krait_scaffold_project("/tmp/krait-agent-live-proj", status,
                                  sizeof(status)) == 1);
     krait_agent_clear();
+    krait_agent_set_full_access(1);
     krait_agent_bind("/tmp/krait-agent-live-proj");
     CHECK(krait_agent_send(
-        "Read main.kry, then add a new file go.kry with a screen Go that "
-        "draws a centered Button labeled Go. Compile to verify.") == 1);
+        "Read main.kry, then add a new file go.kry with a Go :: () #ui "
+        "entry that draws a centered Button labeled Go. Compile to verify.")
+          == 1);
     while(spins++ < 1600 && krait_agent_busy()) {
         krait_agent_poll();
         usleep(250 * 1000);
@@ -460,16 +669,25 @@ static void
 test_permission_and_retry_guards(void)
 {
     CHECK(krait_agent_permission_pending() == 0);
+    CHECK(krait_agent_full_access_enabled() == 0);
+    krait_agent_set_full_access(1);
+    CHECK(krait_agent_full_access_enabled() == 1);
+    krait_agent_set_full_access(0);
+    CHECK(krait_agent_full_access_enabled() == 0);
     krait_agent_permission_respond(0, 0);   /* nothing pending: no-op */
     CHECK(krait_agent_retry(-1) == 0);
     CHECK(krait_agent_retry(9999) == 0);
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
     char home[256];
     const char *tmp = getenv("TMPDIR");
+
+    (void)argc;
+    if(getenv("KRAIT_AGENT_CONFIG_CHILD") != NULL)
+        return config_child_check();
 
     snprintf(home, sizeof(home), "%s/krait-agent-test-home.%d",
              tmp != NULL ? tmp : "/tmp", (int)getpid());
@@ -482,6 +700,9 @@ main(void)
     test_run_capture();
     test_tools();
     test_hex_editor();
+    test_provider_selection();
+    test_response_parsers();
+    test_account_config_persistence(argv[0]);
     test_vision_body();
     test_stream_body();
     test_markdown_layout();

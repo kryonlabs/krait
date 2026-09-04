@@ -37,20 +37,55 @@ krait_agent_permission_pending :: () -> int #extern
 krait_agent_permission_count :: () -> int #extern
 krait_agent_permission_line :: (index: int) -> const char* #extern
 krait_agent_permission_respond :: (allow: int, always: int) #extern
+krait_agent_full_access_enabled :: () -> int #extern
+krait_agent_set_full_access :: (enabled: int) #extern
 krait_agent_retry :: (index: int) -> int #extern
 krait_agent_session_count :: () -> int #extern
 krait_agent_session_name :: (index: int) -> const char* #extern
 krait_agent_session_project :: (index: int) -> const char* #extern
 krait_agent_open_session :: (index: int) -> int #extern
+krait_ai_provider_count :: () -> int #extern
+krait_ai_provider_name :: (index: int) -> const char* #extern
+krait_ai_provider_key_env :: (index: int) -> const char* #extern
+krait_ai_provider_model :: (index: int) -> const char* #extern
+krait_ai_provider_base_url :: (index: int) -> const char* #extern
+krait_ai_provider_configured :: (index: int) -> int #extern
+krait_ai_active_provider :: () -> int #extern
+krait_ai_set_provider :: (index: int) -> int #extern
+krait_ai_set_provider_key :: (index: int, api_key: const char*) #extern
+krait_ai_set_provider_base_url :: (index: int, base_url: const char*) #extern
+krait_ai_set_provider_model :: (index: int, model: const char*) #extern
+krait_ai_effort_count :: () -> int #extern
+krait_ai_effort_name :: (index: int) -> const char* #extern
+krait_ai_active_effort :: () -> int #extern
+krait_ai_set_effort :: (index: int) -> int #extern
+krait_ai_config_hint :: () -> const char* #extern
+krait_kanban_count :: (col: int) -> int #extern
+krait_kanban_column_name :: (col: int) -> const char* #extern
+krait_kanban_card_title :: (col: int, index: int) -> const char* #extern
+krait_kanban_card_project :: (col: int, index: int) -> const char* #extern
+krait_agent_bridge_card :: (col: int, index: int) -> int #extern
 
 agent_input :: [2048] char #global
 agent_input_cursor :: int #global
 agent_input_focused :: int #global
+agent_account_key :: [512] char #global
+agent_account_key_cursor :: int #global
+agent_account_key_focused :: int #global
+agent_account_model :: [160] char #global
+agent_account_model_cursor :: int #global
+agent_account_model_focused :: int #global
+agent_account_base :: [512] char #global
+agent_account_base_cursor :: int #global
+agent_account_base_focused :: int #global
+agent_account_loaded_provider :: int #global = -1
 agent_scroll :: int #global
 agent_bound :: int #global
 agent_expanded :: int #global
 agent_pinned :: int #global
 agent_sessions_open :: int #global
+agent_accounts_open :: int #global
+agent_sidebar_scroll :: int #global
 
 
 agent_bind :: (st: state.IdeState*) {
@@ -207,9 +242,22 @@ agent_msg_height :: (i: int, wrap_w: int, fnt: int, line_h: int) -> int {
         return h
     }
     text := krait_agent_text(i)
-    body := mdv.md_height(text, wrap_w - ScaleUIPx(20), fnt, line_h)
+    body_w := wrap_w
+    if kind == 0 {
+        body_w = wrap_w * 62 / 100
+        if body_w < ScaleUIPx(220) {
+            body_w = ScaleUIPx(220)
+        }
+        if body_w > wrap_w - ScaleUIPx(20) {
+            body_w = wrap_w - ScaleUIPx(20)
+        }
+    }
+    body := mdv.md_height(text, body_w - ScaleUIPx(20), fnt, line_h)
     if body < line_h {
         body = line_h
+    }
+    if kind == 0 {
+        return body + ScaleUIPx(28)
     }
     return body + line_h + ScaleUIPx(12)
 }
@@ -272,6 +320,41 @@ agent_draw_msg :: (i: int, x: int, y: int, wrap_w: int, fnt: int,
     if kind == 2 {
         return agent_draw_tool_card(i, x, y, wrap_w, fnt, line_h)
     }
+    if kind == 0 {
+        bubble_w := wrap_w * 62 / 100
+        if bubble_w < ScaleUIPx(220) {
+            bubble_w = ScaleUIPx(220)
+        }
+        if bubble_w > wrap_w - ScaleUIPx(20) {
+            bubble_w = wrap_w - ScaleUIPx(20)
+        }
+        body_h := mdv.md_height(text, bubble_w - ScaleUIPx(20), fnt, line_h)
+        if body_h < line_h {
+            body_h = line_h
+        }
+        bx := x + wrap_w - bubble_w
+        bubble := (Rectangle){(float)bx, (float)y, (float)bubble_w,
+                              (float)(body_h + ScaleUIPx(18))}
+        DrawRectangleRounded(bubble, 0.10, 8, GetThemeSurface())
+        DrawRectangleRoundedLinesEx(bubble, 0.10, 8, 1.0, GetThemeButton())
+        mdv.md_draw(text, bx + ScaleUIPx(10), y + ScaleUIPx(9),
+                    bubble_w - ScaleUIPx(20), fnt, line_h)
+        bh := ScaleUIPx(18)
+        bw := ScaleUIPx(42)
+        by := y + body_h + ScaleUIPx(23)
+        if StyledButton(bx + bubble_w - bw * 2 - ScaleUIPx(4), by, bw, bh,
+                               "retry", ButtonStyleSecondary, 0, NULL) {
+            if krait_agent_retry(i) != 0 {
+                agent_scroll = 0
+                agent_expanded = 0
+            }
+        }
+        if StyledButton(bx + bubble_w - bw, by, bw, bh, "copy",
+                               ButtonStyleSecondary, 0, NULL) {
+            SetClipboardText(text)
+        }
+        return by + bh + ScaleUIPx(8)
+    }
     label := "you"
     if kind == 1 {
         label = "agent"
@@ -320,6 +403,29 @@ agent_draw_msg :: (i: int, x: int, y: int, wrap_w: int, fnt: int,
     return body_y + h + ScaleUIPx(12)
 }
 
+draw_changed_files_summary :: (x: int, y: int, wrap_w: int) -> int {
+    h := ScaleUIPx(42)
+    card := (Rectangle){(float)x, (float)y, (float)wrap_w, (float)h}
+    DrawRectangleRounded(card, 0.12, 8, GetThemeSurface())
+    DrawRectangleRoundedLinesEx(card, 0.12, 8, 1.0, GetThemeButton())
+    count := krait_agent_written_count()
+    label: [96] char
+    snprintf(label, sizeof(label), "%d file%s changed", count,
+             count == 1 ? "" : "s")
+    Text(">", x + ScaleUIPx(14), y + ScaleUIPx(13), ScaleUIPx(12),
+               GetThemeIcon())
+    Text(label, x + ScaleUIPx(34), y + ScaleUIPx(13), ScaleUIPx(13),
+               GetThemeText())
+    if krait_agent_can_revert() != 0 {
+        if StyledButton(x + wrap_w - ScaleUIPx(78), y + ScaleUIPx(7),
+                               ScaleUIPx(66), ScaleUIPx(28), "Undo",
+                               ButtonStyleSecondary, 0, NULL) {
+            krait_agent_revert()
+        }
+    }
+    return y + h + ScaleUIPx(10)
+}
+
 draw_transcript :: (bounds: Rectangle, busy: int, st: state.IdeState*) {
     count := krait_agent_count()
     pad := ScaleUIPx(12)
@@ -329,6 +435,9 @@ draw_transcript :: (bounds: Rectangle, busy: int, st: state.IdeState*) {
 
     heights: [512] int
     content_h := 0
+    if krait_agent_can_revert() != 0 {
+        content_h = content_h + ScaleUIPx(52)
+    }
     i := 0
     while i < count && i < 512 {
         heights[i] = agent_msg_height(i, wrap_w, fnt, line_h)
@@ -386,6 +495,13 @@ draw_transcript :: (bounds: Rectangle, busy: int, st: state.IdeState*) {
     BeginScissorMode((int)bounds.x, (int)bounds.y, (int)bounds.width,
                      (int)bounds.height)
     y := (int)bounds.y + ScaleUIPx(8) - agent_scroll
+    if krait_agent_can_revert() != 0 {
+        if y + ScaleUIPx(52) > (int)bounds.y - line_h * 4 &&
+           y < (int)(bounds.y + bounds.height) {
+            draw_changed_files_summary((int)bounds.x + pad, y, wrap_w)
+        }
+        y = y + ScaleUIPx(52)
+    }
     i = 0
     while i < count && i < 512 {
         h := agent_msg_height(i, wrap_w, fnt, line_h)
@@ -422,6 +538,398 @@ draw_transcript :: (bounds: Rectangle, busy: int, st: state.IdeState*) {
     EndScissorMode()
 }
 
+agent_draw_sidebar_button :: (x: int, y: int, w: int, label: const char*,
+                              detail: const char*, selected: int) -> int {
+    h := ScaleUIPx(28)
+    row := (Rectangle){(float)x, (float)y, (float)w, (float)h}
+    hot := CheckCollisionPointRec(GetMousePosition(), row) ? 1 : 0
+    if selected != 0 {
+        DrawRectangleRec(row, GetThemeButtonHover())
+    } else if hot != 0 {
+        DrawRectangleRec(row, GetThemeButton())
+    }
+    BeginScissorMode(x + ScaleUIPx(8), y, w - ScaleUIPx(16), h)
+    Text(label, x + ScaleUIPx(8), y + ScaleUIPx(7), ScaleUIPx(12),
+               selected != 0 ? GetThemeText() : GetThemeIcon())
+    if detail != NULL && strlen(detail) > 0 {
+        Text(detail, x + w - ScaleUIPx(52), y + ScaleUIPx(7),
+                   ScaleUIPx(10), GetThemeLink())
+    }
+    EndScissorMode()
+    if hot != 0 && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
+        return 1
+    }
+    return 0
+}
+
+agent_first_task :: (col_out: int*, index_out: int*) -> int {
+    if krait_kanban_count(1) > 0 {
+        *col_out = 1
+        *index_out = 0
+        return 1
+    }
+    if krait_kanban_count(2) > 0 {
+        *col_out = 2
+        *index_out = 0
+        return 1
+    }
+    if krait_kanban_count(0) > 0 {
+        *col_out = 0
+        *index_out = 0
+        return 1
+    }
+    return 0
+}
+
+agent_draw_task_row :: (x: int, y: int, w: int, col: int, index: int,
+                        selected: int) -> int {
+    title := krait_kanban_card_title(col, index)
+    if strlen(title) == 0 {
+        return 0
+    }
+    return agent_draw_sidebar_button(x, y, w, title,
+                                     krait_kanban_column_name(col), selected)
+}
+
+agent_draw_task_pill :: (x: int, y: int, w: int, h: int, col: int,
+                         index: int) -> int {
+    title := krait_kanban_card_title(col, index)
+    if strlen(title) == 0 {
+        return 0
+    }
+    rect := (Rectangle){(float)x, (float)y, (float)w, (float)h}
+    hot := CheckCollisionPointRec(GetMousePosition(), rect) ? 1 : 0
+    DrawRectangleRounded(rect, 0.35, 8,
+                         hot != 0 ? GetThemeButtonHover() : GetThemeButton())
+    DrawRectangleRoundedLinesEx(rect, 0.35, 8, 1.0, GetThemeSurface())
+    BeginScissorMode(x + ScaleUIPx(12), y, w - ScaleUIPx(24), h)
+    label: [320] char
+    snprintf(label, sizeof(label), "%s", title)
+    Text(label, x + ScaleUIPx(14), y + ScaleUIPx(7), ScaleUIPx(12),
+               GetThemeText())
+    EndScissorMode()
+    if hot != 0 && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
+        return krait_agent_bridge_card(col, index)
+    }
+    return 0
+}
+
+agent_load_account_fields :: () {
+    provider := krait_ai_active_provider()
+    if provider < 0 {
+        provider = 0
+    }
+    if agent_account_loaded_provider == provider {
+        return
+    }
+    if agent_account_model_focused != 0 || agent_account_base_focused != 0 ||
+       agent_account_key_focused != 0 {
+        return
+    }
+    snprintf(agent_account_model, sizeof(agent_account_model), "%s",
+             krait_ai_provider_model(provider))
+    agent_account_model_cursor = (int)strlen(agent_account_model)
+    snprintf(agent_account_base, sizeof(agent_account_base), "%s",
+             krait_ai_provider_base_url(provider))
+    agent_account_base_cursor = (int)strlen(agent_account_base)
+    agent_account_key[0] = 0
+    agent_account_key_cursor = 0
+    agent_account_loaded_provider = provider
+}
+
+draw_agent_account_panel :: (bounds: Rectangle) {
+    pad := ScaleUIPx(10)
+    agent_load_account_fields()
+    DrawRectangleRec(bounds, GetThemeBackground())
+    DrawRectangleLinesEx(bounds, 1, GetThemeButton())
+    DrawLine((int)bounds.x, (int)bounds.y,
+             (int)(bounds.x + bounds.width), (int)bounds.y,
+             GetThemeButton())
+    Text("Configure accounts", (int)bounds.x + pad,
+               (int)bounds.y + ScaleUIPx(10),
+               ScaleUIPx(13), GetThemeText())
+    Text("Provider", (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(34),
+               ScaleUIPx(10), GetThemeIcon())
+    providers: [3] const char* = {"Codex", "Z.ai", "Claude"}
+    picked := krait_ai_active_provider()
+    if picked < 0 {
+        picked = 0
+    }
+    if picked > 2 {
+        picked = 2
+    }
+    Dropdown(7901, (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(50),
+             (int)bounds.width - pad * 2, ScaleUIPx(28), providers, 3,
+             &picked)
+    if picked != krait_ai_active_provider() {
+        krait_ai_set_provider(picked)
+        agent_account_loaded_provider = -1
+        agent_load_account_fields()
+    }
+
+    y := (int)bounds.y + ScaleUIPx(86)
+    i := 0
+    while i < krait_ai_provider_count() && i < 3 {
+        line: [192] char
+        status := krait_ai_provider_configured(i) != 0 ? "ready" :
+                  krait_ai_provider_key_env(i)
+        snprintf(line, sizeof(line), "%s  %s", krait_ai_provider_name(i),
+                 status)
+        Text(line, (int)bounds.x + pad, y, ScaleUIPx(10),
+                   i == krait_ai_active_provider() ? GetThemeText() :
+                   GetThemeIcon())
+        y = y + ScaleUIPx(15)
+        i = i + 1
+    }
+
+    style := (TextInputStyle){
+        GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
+        GetThemeText(), 0, ScaleUIPx(8), ScaleUIPx(6)
+    }
+    model_y := (int)bounds.y + ScaleUIPx(136)
+    Text("Model", (int)bounds.x + pad, model_y,
+               ScaleUIPx(10), GetThemeIcon())
+    TextField((TextFieldProps){
+        (Rectangle){bounds.x + (float)pad, (float)(model_y + ScaleUIPx(15)),
+                    bounds.width - (float)(pad * 2),
+                    (float)ScaleUIPx(28)},
+        agent_account_model, sizeof(agent_account_model),
+        &agent_account_model_cursor, &agent_account_model_focused,
+        sizeof(agent_account_model) - 1, ScaleUIPx(11), 7905,
+        style, (TextInputFilter){0}, NULL, NULL, 0, 0
+    })
+    base_y := model_y + ScaleUIPx(48)
+    Text("Base URL", (int)bounds.x + pad, base_y,
+               ScaleUIPx(10), GetThemeIcon())
+    TextField((TextFieldProps){
+        (Rectangle){bounds.x + (float)pad, (float)(base_y + ScaleUIPx(15)),
+                    bounds.width - (float)(pad * 2),
+                    (float)ScaleUIPx(28)},
+        agent_account_base, sizeof(agent_account_base),
+        &agent_account_base_cursor, &agent_account_base_focused,
+        sizeof(agent_account_base) - 1, ScaleUIPx(11), 7906,
+        style, (TextInputFilter){0}, NULL, NULL, 0, 0
+    })
+    key_y := base_y + ScaleUIPx(48)
+    Text("API key", (int)bounds.x + pad, key_y,
+               ScaleUIPx(10), GetThemeIcon())
+    TextField((TextFieldProps){
+        (Rectangle){bounds.x + (float)pad, (float)(key_y + ScaleUIPx(15)),
+                    bounds.width - (float)(pad * 2 + ScaleUIPx(58)),
+                    (float)ScaleUIPx(28)},
+        agent_account_key, sizeof(agent_account_key),
+        &agent_account_key_cursor, &agent_account_key_focused,
+        sizeof(agent_account_key) - 1, ScaleUIPx(11), 7902,
+        style, (TextInputFilter){0}, NULL, NULL, 1, 0
+    })
+    if StyledButton((int)bounds.x + (int)bounds.width - pad - ScaleUIPx(52),
+                           key_y + ScaleUIPx(15), ScaleUIPx(52),
+                           ScaleUIPx(28), "Apply", ButtonStyleSecondary,
+                           0, NULL) {
+        krait_ai_set_provider_model(krait_ai_active_provider(), agent_account_model)
+        krait_ai_set_provider_base_url(krait_ai_active_provider(), agent_account_base)
+        if strlen(agent_account_key) > 0 {
+            krait_ai_set_provider_key(krait_ai_active_provider(), agent_account_key)
+        }
+        agent_account_key[0] = 0
+        agent_account_key_cursor = 0
+        agent_account_loaded_provider = -1
+    }
+}
+
+draw_agent_account_footer :: (bounds: Rectangle) {
+    pad := ScaleUIPx(10)
+    row := (Rectangle){bounds.x + (float)pad,
+                       bounds.y + (float)ScaleUIPx(8),
+                       bounds.width - (float)(pad * 2),
+                       bounds.height - (float)ScaleUIPx(16)}
+    hot := CheckCollisionPointRec(GetMousePosition(), row) ? 1 : 0
+    DrawRectangleRec(bounds, GetThemeBackground())
+    DrawLine((int)bounds.x, (int)bounds.y,
+             (int)(bounds.x + bounds.width), (int)bounds.y,
+             GetThemeButton())
+    if hot != 0 || agent_accounts_open != 0 {
+        DrawRectangleRec(row, GetThemeButton())
+    }
+    cx := (int)row.x + ScaleUIPx(16)
+    cy := (int)row.y + ScaleUIPx(18)
+    DrawCircle(cx, cy, ScaleUIPx(15), GetThemeSurface())
+    DrawCircle(cx, cy, ScaleUIPx(8), GetThemeButtonHover())
+    Text("W", cx - ScaleUIPx(4), cy - ScaleUIPx(7), ScaleUIPx(13),
+               GetThemeText())
+
+    status := krait_ai_provider_configured(krait_ai_active_provider()) != 0 ?
+              "ready" : krait_ai_provider_key_env(krait_ai_active_provider())
+    line: [192] char
+    snprintf(line, sizeof(line), "%s  %s",
+             krait_ai_provider_name(krait_ai_active_provider()), status)
+    BeginScissorMode((int)row.x + ScaleUIPx(38), (int)row.y,
+                     (int)row.width - ScaleUIPx(78), (int)row.height)
+    Text(line, (int)row.x + ScaleUIPx(42), (int)row.y + ScaleUIPx(8),
+               ScaleUIPx(11), GetThemeText())
+    Text(krait_ai_provider_model(krait_ai_active_provider()),
+               (int)row.x + ScaleUIPx(42), (int)row.y + ScaleUIPx(24),
+               ScaleUIPx(10), GetThemeIcon())
+    EndScissorMode()
+    Text(agent_accounts_open != 0 ? "x" : "*",
+               (int)(row.x + row.width) - ScaleUIPx(22),
+               (int)row.y + ScaleUIPx(14), ScaleUIPx(13), GetThemeIcon())
+    if hot != 0 && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
+        agent_accounts_open = agent_accounts_open == 0 ? 1 : 0
+    }
+}
+
+draw_agent_sidebar :: (bounds: Rectangle, st: state.IdeState*) {
+    pad := ScaleUIPx(8)
+    footer_h := ScaleUIPx(56)
+    panel_h := agent_accounts_open != 0 ? ScaleUIPx(292) : 0
+    DrawRectangleRec(bounds, GetThemeSurface())
+    BeginScissorMode((int)bounds.x, (int)bounds.y,
+                     (int)bounds.width,
+                     (int)(bounds.height - (float)(footer_h + panel_h)))
+    Text("Krait", (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(12),
+               ScaleUIPx(17), GetThemeText())
+    y := (int)bounds.y + ScaleUIPx(52)
+    w := (int)bounds.width - pad * 2
+    if agent_draw_sidebar_button((int)bounds.x + pad, y, w, "+  New task",
+                                 "Ctrl+N", 0) != 0 {
+        agent_reset(st)
+    }
+    y = y + ScaleUIPx(34)
+    agent_draw_sidebar_button((int)bounds.x + pad, y, w, "Search",
+                              "Ctrl+K", 0)
+    y = y + ScaleUIPx(34)
+    agent_draw_sidebar_button((int)bounds.x + pad, y, w, "Automations", "",
+                              0)
+    y = y + ScaleUIPx(34)
+    agent_draw_sidebar_button((int)bounds.x + pad, y, w, "Plugin Marketplace",
+                              "", 0)
+    y = y + ScaleUIPx(38)
+
+    Text("Projects", (int)bounds.x + pad, y, ScaleUIPx(11), GetThemeIcon())
+    y = y + ScaleUIPx(22)
+    project_label := st->project.loaded != 0 ? st->project.name : "No project open"
+    agent_draw_sidebar_button((int)bounds.x + pad, y, w, project_label,
+                              st->project.loaded != 0 ? "now" : "", 1)
+    y = y + ScaleUIPx(42)
+
+    Text("Conversations", (int)bounds.x + pad, y, ScaleUIPx(11),
+               GetThemeIcon())
+    y = y + ScaleUIPx(22)
+    n := krait_agent_session_count()
+    if n == 0 {
+        Text("No conversations yet", (int)bounds.x + pad, y, ScaleUIPx(11),
+                   GetThemeIcon())
+        y = y + ScaleUIPx(24)
+    }
+    i := 0
+    while i < n && i < 6 {
+        label: [256] char
+        proj := krait_agent_session_project(i)
+        if strlen(proj) == 0 {
+            proj = krait_agent_session_name(i)
+        }
+        snprintf(label, sizeof(label), "%s", proj)
+        if agent_draw_sidebar_button((int)bounds.x + pad, y, w, label, "",
+                                     0) != 0 {
+            if krait_agent_open_session(i) != 0 {
+                agent_bound = 1
+                agent_scroll = 0
+                agent_expanded = 0
+            }
+        }
+        y = y + ScaleUIPx(30)
+        i = i + 1
+    }
+
+    y = y + ScaleUIPx(10)
+    Text("Tasks", (int)bounds.x + pad, y, ScaleUIPx(11), GetThemeIcon())
+    y = y + ScaleUIPx(22)
+    total_tasks := 0
+    col := 0
+    while col < 4 {
+        total_tasks = total_tasks + krait_kanban_count(col)
+        col = col + 1
+    }
+    if total_tasks == 0 {
+        Text("No tasks yet", (int)bounds.x + pad, y, ScaleUIPx(11),
+                   GetThemeIcon())
+        y = y + ScaleUIPx(20)
+    } else {
+        shown := 0
+        col_order: [4] int = {1, 2, 0, 3}
+        order_i := 0
+        while order_i < 4 && shown < 6 {
+            col = col_order[order_i]
+            i = 0
+            while i < krait_kanban_count(col) && shown < 6 {
+                if agent_draw_task_row((int)bounds.x + pad, y, w, col, i,
+                                       shown == 0 ? 1 : 0) != 0 {
+                    agent_scroll = 0
+                }
+                y = y + ScaleUIPx(30)
+                shown = shown + 1
+                i = i + 1
+            }
+            order_i = order_i + 1
+        }
+        if total_tasks > shown {
+            more: [64] char
+            snprintf(more, sizeof(more), "%d more", total_tasks - shown)
+            Text(more, (int)bounds.x + pad + ScaleUIPx(8), y,
+                       ScaleUIPx(10), GetThemeIcon())
+        }
+    }
+    EndScissorMode()
+
+    if agent_accounts_open != 0 {
+        draw_agent_account_panel((Rectangle){bounds.x,
+                                             bounds.y + bounds.height -
+                                             (float)(footer_h + panel_h),
+                                             bounds.width, (float)panel_h})
+    }
+    draw_agent_account_footer((Rectangle){bounds.x,
+                                          bounds.y + bounds.height -
+                                          (float)footer_h,
+                                          bounds.width, (float)footer_h})
+}
+
+draw_agent_header :: (bounds: Rectangle, st: state.IdeState*, busy: int) {
+    pad := ScaleUIPx(14)
+    DrawRectangleRec(bounds, GetThemeBackground())
+    DrawLine((int)bounds.x, (int)(bounds.y + bounds.height) - 1,
+             (int)(bounds.x + bounds.width),
+             (int)(bounds.y + bounds.height) - 1, GetThemeButton())
+    title := st->project.loaded != 0 ? st->project.name : "Agent"
+    Text(title, (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(10),
+               ScaleUIPx(15), GetThemeText())
+    subtitle: [256] char
+    snprintf(subtitle, sizeof(subtitle), "%s  %s",
+             krait_ai_provider_name(krait_ai_active_provider()),
+             krait_ai_provider_model(krait_ai_active_provider()))
+    Text(subtitle, (int)bounds.x + pad, (int)bounds.y + ScaleUIPx(30),
+               ScaleUIPx(11), GetThemeIcon())
+    x := (int)(bounds.x + bounds.width) - pad - ScaleUIPx(92)
+    if StyledButton(x, (int)bounds.y + ScaleUIPx(13), ScaleUIPx(92),
+                           ScaleUIPx(28), busy != 0 ? "Working" : "New task",
+                           ButtonStyleSecondary, busy != 0 ? 1 : 0, NULL) {
+        agent_reset(st)
+    }
+    task_col := 0
+    task_index := 0
+    if bounds.width > (float)ScaleUIPx(620) &&
+       agent_first_task(&task_col, &task_index) != 0 {
+        x = x - ScaleUIPx(246)
+        agent_draw_task_pill(x, (int)bounds.y + ScaleUIPx(13),
+                             ScaleUIPx(234), ScaleUIPx(28), task_col,
+                             task_index)
+    }
+    x = x - ScaleUIPx(88)
+    StyledButton(x, (int)bounds.y + ScaleUIPx(13), ScaleUIPx(78),
+                        ScaleUIPx(28), "Projects", ButtonStyleSecondary,
+                        0, NULL)
+}
+
 draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     agent_bind(st)
     krait_agent_poll()
@@ -444,10 +952,25 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
        agent_input_focused == 0 {
         krait_agent_stop()
     }
-    DrawRectangleRec(bounds, GetThemeBackground())
-    pad := ScaleUIPx(10)
-    row_h := ScaleUIPx(32)
     busy := krait_agent_busy()
+    DrawRectangleRec(bounds, GetThemeBackground())
+    if bounds.width >= (float)ScaleUIPx(760) {
+        side_w := ScaleUIPx(264)
+        side := (Rectangle){bounds.x, bounds.y, (float)side_w, bounds.height}
+        draw_agent_sidebar(side, st)
+        DrawLine((int)(bounds.x + (float)side_w), (int)bounds.y,
+                 (int)(bounds.x + (float)side_w),
+                 (int)(bounds.y + bounds.height), GetThemeButton())
+        bounds.x = bounds.x + (float)side_w
+        bounds.width = bounds.width - (float)side_w
+    }
+
+    pad := ScaleUIPx(12)
+    header_h := ScaleUIPx(56)
+    composer_h := ScaleUIPx(106)
+    field_h := ScaleUIPx(38)
+    draw_agent_header((Rectangle){bounds.x, bounds.y, bounds.width,
+                                  (float)header_h}, st, busy)
 
     perm_h := 0
     if krait_agent_permission_pending() != 0 {
@@ -460,14 +983,19 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     if agent_sessions_open != 0 {
         sess_h = ScaleUIPx(220)
     }
-    input_y := (int)bounds.y + (int)bounds.height - row_h - pad
+    input_y := (int)bounds.y + (int)bounds.height - composer_h - pad
     input_y = input_y - perm_h
     status := krait_agent_status_text()
-    transcript_h := (float)(input_y - (int)bounds.y) - (float)sess_h
+    content_top := (int)bounds.y + header_h
+    transcript_h := (float)(input_y - content_top) - (float)sess_h
     if strlen(status) > 0 {
         transcript_h = transcript_h - (float)ScaleUIPx(22)
     }
-    transcript := (Rectangle){bounds.x, bounds.y, bounds.width, transcript_h}
+    if transcript_h < (float)ScaleUIPx(40) {
+        transcript_h = (float)ScaleUIPx(40)
+    }
+    transcript := (Rectangle){bounds.x, (float)content_top, bounds.width,
+                              transcript_h}
     draw_transcript(transcript, busy, st)
     if strlen(status) > 0 {
         Text(status, (int)bounds.x + pad,
@@ -475,7 +1003,7 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     }
     if perm_h > 0 {
         draw_permission_bar((Rectangle){bounds.x,
-                                        (float)(input_y + row_h),
+                                        (float)(input_y + composer_h),
                                         bounds.width, (float)perm_h})
     }
     if agent_sessions_open != 0 {
@@ -488,41 +1016,100 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
         GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
         GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
     }
-    send_w := ScaleUIPx(64)
+    composer := (Rectangle){bounds.x + (float)pad, (float)input_y,
+                            bounds.width - (float)(pad * 2),
+                            (float)composer_h}
+    DrawRectangleRec(composer, GetThemeSurface())
+    DrawRectangleLinesEx(composer, 1, GetThemeButton())
+
+    send_w := ScaleUIPx(62)
     stop_w := ScaleUIPx(58)
-    sess_w := ScaleUIPx(70)
-    field_w := bounds.width - (float)(pad * 2 + send_w + stop_w + sess_w + ScaleUIPx(18))
+    sess_w := ScaleUIPx(72)
+    control_y := input_y + field_h + ScaleUIPx(24)
+    plus_w := ScaleUIPx(28)
+    field_w := composer.width - (float)(ScaleUIPx(32) + send_w + plus_w +
+                                        ScaleUIPx(12))
+    plus_rect := (Rectangle){composer.x + (float)ScaleUIPx(12),
+                             composer.y + (float)ScaleUIPx(14),
+                             (float)plus_w, (float)plus_w}
+    hot_plus := CheckCollisionPointRec(GetMousePosition(), plus_rect) ? 1 : 0
+    DrawRectangleRounded(plus_rect, 0.30, 8,
+                         hot_plus != 0 ? GetThemeButton() : GetThemeSurface())
+    DrawRectangleRoundedLinesEx(plus_rect, 0.30, 8, 1.0, GetThemeButton())
+    Text("+", (int)plus_rect.x + ScaleUIPx(9),
+               (int)plus_rect.y + ScaleUIPx(5), ScaleUIPx(15),
+               GetThemeIcon())
     TextField((TextFieldProps){
-        (Rectangle){bounds.x + (float)pad, (float)input_y,
-                    field_w, (float)row_h},
+        (Rectangle){composer.x + (float)(ScaleUIPx(16) + plus_w),
+                    composer.y + (float)ScaleUIPx(10),
+                    field_w, (float)field_h},
         agent_input, sizeof(agent_input),
         &agent_input_cursor, &agent_input_focused,
         sizeof(agent_input) - 1, ScaleUIPx(13), 7601,
-        style, (TextInputFilter){0}, NULL, NULL
+        style, (TextInputFilter){0}, NULL, NULL, 0, 0
     })
     if strlen(agent_input) > 0 && busy == 0 {
-        if StyledButton((int)bounds.x + pad + (int)field_w + ScaleUIPx(6),
-                               input_y, send_w, row_h, "Send",
+        if StyledButton((int)(composer.x + composer.width) - ScaleUIPx(12) -
+                               send_w,
+                               input_y + ScaleUIPx(10), send_w, field_h, "Send",
                                ButtonStylePrimary, 0, NULL) {
             agent_send_input()
         }
     }
+    providers: [3] const char* = {"Codex", "Z.ai", "Claude"}
+    picked := krait_ai_active_provider()
+    if picked < 0 {
+        picked = 0
+    }
+    if picked > 2 {
+        picked = 2
+    }
+    access_label := krait_agent_full_access_enabled() != 0 ?
+                    "Full access" : "Ask first"
+    if StyledButton((int)composer.x + ScaleUIPx(12), control_y,
+                           ScaleUIPx(96), ScaleUIPx(28), access_label,
+                           ButtonStyleSecondary, 0, NULL) {
+        krait_agent_set_full_access(krait_agent_full_access_enabled() == 0 ? 1 : 0)
+    }
+    Dropdown(7903, (int)composer.x + ScaleUIPx(116), control_y,
+             ScaleUIPx(112), ScaleUIPx(28), providers, 3, &picked)
+    if picked != krait_ai_active_provider() {
+        krait_ai_set_provider(picked)
+    }
+    Text(krait_ai_provider_model(krait_ai_active_provider()),
+               (int)composer.x + ScaleUIPx(238), control_y + ScaleUIPx(8),
+               ScaleUIPx(11), GetThemeIcon())
+    efforts: [4] const char* = {"Low", "Medium", "High", "Max"}
+    effort := krait_ai_active_effort()
+    if effort < 0 {
+        effort = 3
+    }
+    if effort > 3 {
+        effort = 3
+    }
+    Dropdown(7904, (int)composer.x + ScaleUIPx(12), control_y + ScaleUIPx(34),
+             ScaleUIPx(74), ScaleUIPx(24), efforts, 4, &effort)
+    if effort != krait_ai_active_effort() {
+        krait_ai_set_effort(effort)
+    }
     if krait_agent_can_revert() != 0 {
         rev_w := ScaleUIPx(70)
-        if StyledButton((int)bounds.x + (int)bounds.width - pad -
+        if StyledButton((int)(composer.x + composer.width) - ScaleUIPx(12) -
                                stop_w - sess_w - ScaleUIPx(12) - rev_w,
-                               input_y, rev_w, row_h, "Revert",
+                               control_y, rev_w, ScaleUIPx(28), "Revert",
                                ButtonStyleSecondary, 0, NULL) {
             krait_agent_revert()
         }
     }
-    if StyledButton((int)bounds.x + (int)bounds.width - pad - stop_w - sess_w - ScaleUIPx(6),
-                           input_y, sess_w, row_h, "Sessions",
+    if StyledButton((int)(composer.x + composer.width) - ScaleUIPx(12) -
+                           stop_w - sess_w - ScaleUIPx(6),
+                           control_y, sess_w, ScaleUIPx(28), "Sessions",
                            ButtonStyleSecondary, 0, NULL) {
         agent_sessions_open = agent_sessions_open == 0 ? 1 : 0
     }
-    if StyledButton((int)bounds.x + (int)bounds.width - pad - stop_w,
-                           input_y, stop_w, row_h, busy != 0 ? "Stop" : "Clear",
+    if StyledButton((int)(composer.x + composer.width) - ScaleUIPx(12) - stop_w,
+                           control_y, stop_w, ScaleUIPx(28),
+                           busy != 0 ? "Stop" : "Clear",
                            ButtonStyleSecondary, 0, NULL) {
         if busy != 0 {
             krait_agent_stop()

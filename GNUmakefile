@@ -96,7 +96,7 @@ else
 KRYON_PLATFORM_LDLIBS ?=
 endif
 
-.PHONY: all krait run dev test smoke kanban-test clean install uninstall kryon-deps boundary-check docs-site appimage android-debug android-install android-clean
+.PHONY: all krait run dev test smoke kanban-test engine-test clean install uninstall kryon-deps boundary-check docs-site appimage android-debug android-install android-clean
 
 all: krait
 
@@ -186,8 +186,9 @@ android-clean:
 
 KANBAN_TEST = $(BUILD_DIR)/tests/kanban_test
 AGENT_TEST = $(BUILD_DIR)/tests/agent_test
+ENGINE_TEST = $(BUILD_DIR)/tests/engine_test
 
-test: krait boundary-check kanban-test agent-test
+test: krait boundary-check kanban-test agent-test engine-test
 
 kanban-test: $(KANBAN_TEST)
 	$(KANBAN_TEST)
@@ -246,6 +247,23 @@ $(AGENT_TEST): tests/agent_test.c $(BUILD_DIR)/src/native_agent.o $(BUILD_DIR)/s
 		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) \
 			-lbrotlidec -lbrotlicommon -lzstd -lz -lpthread -lm
 
+engine-test: $(ENGINE_TEST)
+	$(ENGINE_TEST)
+
+$(ENGINE_TEST): tests/engine_test.c $(BUILD_DIR)/src/native_engine.o $(BUILD_DIR)/src/native_script.o $(BUILD_DIR)/src/native_util.o $(BUILD_DIR)/src/native_scaffold.o $(BUILD_DIR)/src/native_level.o $(KRYON_LIB) $(RAYLIB_A) $(KRYON_BOX2D_A) | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc -I$(KRAIT_GEN) -I$(KRYON_DIR)/include -o $@ tests/engine_test.c \
+		$(BUILD_DIR)/src/native_engine.o $(BUILD_DIR)/src/native_script.o \
+		$(BUILD_DIR)/src/native_util.o \
+		$(BUILD_DIR)/src/native_scaffold.o \
+		\
+		$(BUILD_DIR)/src/native_level.o \
+		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive \
+		$(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) \
+		$(KRYON_CURL_LDLIBS) $(KRYON_MARKDOWN_LDLIBS) $(RAY_LDLIBS) \
+		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) \
+			-lbrotlidec -lbrotlicommon -lzstd -lz -lpthread -lm
+
 smoke: test
 	@kryon_dir=$$(cd "$(KRYON_DIR)" && pwd); \
 	KRYON_DIR="$$kryon_dir" $(KRAIT) --smoke-screens samples/hello.kry /tmp/krait-smoke.png
@@ -253,6 +271,8 @@ smoke: test
 	KRYON_DIR="$$kryon_dir" $(KRAIT) --smoke-live samples hello.kry
 	@kryon_dir=$$(cd "$(KRYON_DIR)" && pwd); \
 	KRYON_DIR="$$kryon_dir" $(KRAIT) --smoke-live samples live_widgets.kry
+	@kryon_dir=$$(cd "$(KRYON_DIR)" && pwd); \
+	KRYON_DIR="$$kryon_dir" $(KRAIT) --smoke-engine
 
 install: $(KRAIT)
 	mkdir -p $(DESTDIR)$(BINDIR)

@@ -1,0 +1,27 @@
+#module "ide.game"
+#import "kryon.h"
+state :: #import "ide/state"
+
+# Game Engine mode: a Godot-style scene editor running on the Kryon Game2D
+# scene tree. All panels (toolbar, scene tree, palette, viewport, inspector)
+# are drawn by src/native_engine.c with Kryon widgets; this module is the
+# thin dispatch shim so the mode plugs into the App() view chain like every
+# other view.
+#
+# PlayGame is the standalone player surface (krait --play-game): no editor
+# chrome, just the running game letterboxed into the window.
+
+krait_engine_draw_view :: (bounds: Rectangle, st: state.IdeState*) #extern
+krait_engine_draw_play :: (bounds: Rectangle) #extern
+
+draw_game_engine :: (bounds: Rectangle, st: state.IdeState*) {
+    krait_engine_draw_view(bounds, st)
+}
+
+PlayGame :: () #ui {
+    Screen root: {
+    w := GetScreenWidth()
+    h := GetScreenHeight()
+    krait_engine_draw_play((Rectangle){0, 0, (float)w, (float)h})
+    }
+}

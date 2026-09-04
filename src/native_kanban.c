@@ -30,7 +30,7 @@ static const char *const kb_columns[4] = {"backlog", "doing", "review", "done"};
 static const char *const kb_column_names[4] = {"Backlog", "Doing", "Review",
                                                "Done"};
 
-/* One initial GLM call plus up to two retries after validation rejects
+/* One initial AI call plus up to two retries after validation rejects
  * the proposal. */
 #define KB_AI_MAX_ATTEMPTS 3
 
@@ -531,19 +531,20 @@ kb_build_prompt(KbCard *c, char *dst, size_t dst_size)
 
 static const char *const kb_system_prompt =
     "You are a coding agent working on Kryon projects. Kry (.kry) is a "
-    "Python-indented UI language lowered to C. STRICT syntax rules: no "
-    "comments at all (// and # are errors); no 'let' (declare with "
-    "'name := expr' or 'name: Type = value'); types use 'T name' order "
-    "when handwritten C is embedded. Screens look like: "
-    "screen Name(viewport: Rectangle) { ... }. Widget calls: "
-    "StyledButton(x, y, w, h, \"label\", ButtonStylePrimary, "
-    "0, NULL) returns 1 when clicked; Text(text, x, y, "
+    "Jai-like language lowered through KIR to the project's target backend, "
+    "commonly C or Go. It uses explicit braces, :: declarations, C-style "
+    "calls and structs, and statement order inside blocks. STRICT syntax "
+    "rules: no // comments; no 'let' (declare with 'name := expr' or "
+    "'name: Type = value'); types use 'T name' order when handwritten C is "
+    "embedded. UI entry points look like: Main :: () #ui { Screen root: "
+    "{ ... } }. Widget calls: StyledButton(x, y, w, h, \"label\", "
+    "ButtonStylePrimary, 0, NULL) returns 1 when clicked; Text(text, x, y, "
     "ScaleUIPx(16), GetThemeText()); DrawRectangleRec((Rectangle){x, y, w, "
-    "h}, GetThemeButton()). Coordinates are int pixels — wrap sizes with "
-    "ScaleUIPx(n), use (int) casts on floats. Study main.kry in the "
-    "context and copy its idioms exactly. Return complete file contents "
-    "for every file you create or change; the harness writes them "
-    "verbatim after review.";
+    "h}, GetThemeButton()). Coordinates are int pixels - wrap sizes with "
+    "ScaleUIPx(n), use (int) casts on floats. Study main.kry in the context "
+    "and copy its idioms exactly. Return complete file contents for every "
+    "file you create or change; the harness writes them verbatim after "
+    "review.";
 
 /* Drop a rejected attempt: free the in-memory copies and remove the
  * proposal dir so the next attempt starts from a clean slate. */
@@ -565,7 +566,7 @@ kb_clear_proposals(KbCard *c)
     }
 }
 
-/* Start (or restart) the GLM chat for a card. A retry_error means the
+/* Start (or restart) the AI chat for a card. A retry_error means the
  * previous attempt failed validation: the prompt is rebuilt with the
  * compiler diagnostic and the rejected files appended so the model can
  * correct itself, and the old proposals are cleared. */

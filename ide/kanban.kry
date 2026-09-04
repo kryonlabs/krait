@@ -29,6 +29,7 @@ krait_kanban_proposal_content :: (col: int, index: int, file_index: int) -> cons
 krait_kanban_apply :: (col: int, index: int) -> int #extern
 krait_kanban_agent_ready :: () -> int #extern
 krait_kanban_agent_bridge :: (col: int, index: int) -> int #extern
+krait_ai_config_hint :: () -> const char* #extern
 krait_kanban_reject :: (col: int, index: int) -> int #extern
 
 kanban_sel_col :: int #global
@@ -107,7 +108,7 @@ draw_board :: (bounds: Rectangle, st: state.IdeState*, pad: int, modal: int) {
         krait_kanban_rescan()
     }
     if krait_kanban_ai_configured() == 0 {
-        Text("AI off: set ZAI_API_KEY", (int)bounds.x + pad,
+        Text(krait_ai_config_hint(), (int)bounds.x + pad,
                    (int)bounds.y + row_h + ScaleUIPx(12), ScaleUIPx(11),
                    GetThemeIcon())
     }
@@ -361,7 +362,7 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
             kanban_ai_running = 1
         }
     } else {
-        Text("AI off: set ZAI_API_KEY", (int)bounds.x + pad + ScaleUIPx(78),
+        Text(krait_ai_config_hint(), (int)bounds.x + pad + ScaleUIPx(78),
                    btn_y + ScaleUIPx(9), ScaleUIPx(11), GetThemeIcon())
     }
     if proposals > 0 {

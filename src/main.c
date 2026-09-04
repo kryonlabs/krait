@@ -1,9 +1,12 @@
 #include "ide/app.h"
+#include "ide/agent.h"
 #include "ide/editor.h"
+#include "ide/game.h"
 #include "ide/modules.h"
 #include "ide/preview.h"
 #include "ide/project.h"
 #include "native_internal.h"
+#include "native_level.h"
 #include "ui_icons.h"
 #include "ui_inspect.h"
 #include "theme_style.h"
@@ -123,10 +126,86 @@ open_startup_project(const char *path)
     ide_project_project_open(&istate, path);
 }
 
+int krait_load_ui_font(void);   /* native_examples.c */
+
+/* Standalone player: run a game.scene in its own window without the
+ * editor. ESC quits, F5 restarts from the file. The frame cap and the
+ * screenshot path come from KRAIT_PLAY_FRAMES / KRAIT_PLAY_SHOT so the
+ * same path serves the smoke test. */
+static int
+run_player(const char *scene_arg, const char *shot_path)
+{
+    char title[160];
+    int vw = 640, vh = 360;
+    int frame_cap = 0;
+    int frames = 0;
+
+    if(!krait_engine_play_scene(scene_arg)) {
+        fprintf(stderr, "krait: cannot play %s\n", scene_arg);
+        return 2;
+    }
+    if(getenv("KRAIT_PLAY_FRAMES") != NULL)
+        frame_cap = atoi(getenv("KRAIT_PLAY_FRAMES"));
+    krait_engine_view_size(&vw, &vh);
+    snprintf(title, sizeof(title), "%s - Krait Player",
+             krait_engine_scene_name());
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    InitWindow(vw, vh, title);
+    if(InstanceRejected()) {
+        fprintf(stderr, "krait: another krait instance is already running\n");
+        if(IsNotificationSupported())
+            SendNotification("Krait",
+                             "Another krait instance is already running.");
+        return 1;
+    }
+    SetTargetFPS(60);
+    InitUI(vw, vh, 1.0f);
+    krait_load_ui_font();
+    SetThemeSource(GetDefaultPlatformThemeSource());
+    SetThemeMode(GetDefaultPlatformThemeMode());
+    SetThemeStyle(THEME_STYLE_SYSTEM);
+    SetCurrentTheme(GetDefaultThemeForThemeStyle(GetEffectiveThemeStyle()),
+                    GetEffectiveThemeDarkMode() ? 1 : 0);
+    while(!WindowShouldClose()) {
+        if(IsKeyPressed(KEY_ESCAPE))
+            break;
+        if(IsKeyPressed(KEY_F5)) {
+            if(!krait_engine_play_scene(scene_arg))
+                break;
+        }
+        UpdateKeyPlatformState();
+        BeginFrame();
+        BeginUIFrame(GetScreenWidth(), GetScreenHeight(), GetUIScale());
+        BeginUI(Key("ide_game_PlayGame"));
+        ide_game_PlayGame();
+        EndUI();
+        EndUIFrame();
+        EndFrame();
+        frames++;
+        if(frame_cap > 0 && frames >= frame_cap)
+            break;
+    }
+    if(shot_path != NULL && shot_path[0] != '\0') {
+        Image shot = LoadImageFromScreen();
+
+        if(shot.data != NULL) {
+            ExportImage(shot, shot_path);
+            UnloadImage(shot);
+            fprintf(stderr, "krait: screenshot saved to %s\n", shot_path);
+        } else {
+            fprintf(stderr,
+                    "krait: screenshot capture unavailable on this backend\n");
+            return 1;
+        }
+    }
+    krait_engine_shutdown();
+    CloseWindow();
+    return 0;
+}
+
 static int
 krait_view_from_name(const char *name)
-{
-    if(strcmp(name, "start") == 0)
+{    if(strcmp(name, "start") == 0)
         return IDE_VIEW_START;
     if(strcmp(name, "studio") == 0 || strcmp(name, "project") == 0)
         return IDE_VIEW_PROJECT;
@@ -136,45 +215,143 @@ krait_view_from_name(const char *name)
         return IDE_VIEW_KANBAN;
     if(strcmp(name, "agent") == 0)
         return IDE_VIEW_AGENT;
+    if(strcmp(name, "game") == 0)
+        return IDE_VIEW_GAME;
     if(strcmp(name, "settings") == 0)
         return IDE_VIEW_SETTINGS;
     return -1;
 }
 
 static int
-save_screen_image(const char *path)
+krait_ui_text_seen(const UIWidgetNode *nodes, int count, const char *text)
 {
-    Image image;
-    int ok;
+    int i;
 
-    if(path == NULL || path[0] == '\0')
-        return 1;
-    image = LoadImageFromScreen();
-    if(image.data == NULL)
+    if(nodes == NULL || text == NULL)
         return 0;
-    ok = ExportImage(image, path);
-    UnloadImage(image);
-    if(!ok)
-        fprintf(stderr, "krait: could not save screenshot: %s\n", path);
-    return ok;
+    for(i = 0; i < count; i++) {
+        if(nodes[i].kind == UI_WIDGET_TEXT_NODE &&
+           nodes[i].owned_text != NULL &&
+           strcmp(nodes[i].owned_text, text) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int
+krait_ui_control_seen(const UIWidgetNode *nodes, int count, UIWidgetKind kind,
+                      int id)
+{
+    int i;
+
+    if(nodes == NULL)
+        return 0;
+    for(i = 0; i < count; i++) {
+        if(nodes[i].kind == kind && nodes[i].id == id)
+            return 1;
+    }
+    return 0;
+}
+
+static int
+krait_smoke_assert_agent_ui(void)
+{
+    int count = 0;
+    const UIWidgetNode *nodes = UIGetTreeNodes(&count);
+    const char *required_text[] = {
+        "Krait",
+        "Projects",
+        "Conversations",
+        "Tasks",
+        "Configure accounts",
+        "Provider",
+        "Model",
+        "Base URL",
+        "API key",
+        NULL
+    };
+    int i;
+
+    if(count <= 0 || nodes == NULL) {
+        fprintf(stderr, "krait agent smoke: UI tree is empty\n");
+        return 0;
+    }
+    for(i = 0; required_text[i] != NULL; i++) {
+        if(!krait_ui_text_seen(nodes, count, required_text[i])) {
+            fprintf(stderr, "krait agent smoke: missing text '%s'\n",
+                    required_text[i]);
+            return 0;
+        }
+    }
+    if(!krait_ui_control_seen(nodes, count, UI_WIDGET_TEXT_FIELD_NODE, 7601)) {
+        fprintf(stderr, "krait agent smoke: missing composer text field\n");
+        return 0;
+    }
+    if(!krait_ui_control_seen(nodes, count, UI_WIDGET_TEXT_FIELD_NODE, 7905) ||
+       !krait_ui_control_seen(nodes, count, UI_WIDGET_TEXT_FIELD_NODE, 7906) ||
+       !krait_ui_control_seen(nodes, count, UI_WIDGET_TEXT_FIELD_NODE, 7902)) {
+        fprintf(stderr, "krait agent smoke: missing account text fields\n");
+        return 0;
+    }
+    if(!krait_ui_control_seen(nodes, count, UI_WIDGET_DROPDOWN_NODE, 7901) ||
+       !krait_ui_control_seen(nodes, count, UI_WIDGET_DROPDOWN_NODE, 7903) ||
+       !krait_ui_control_seen(nodes, count, UI_WIDGET_DROPDOWN_NODE, 7904)) {
+        fprintf(stderr, "krait agent smoke: missing provider/effort dropdowns\n");
+        return 0;
+    }
+    fprintf(stderr, "krait agent smoke: semantic UI ok (%d nodes)\n", count);
+    return 1;
 }
 
 static int
 run_smoke(const char *project_path, const char *screenshot_path, int build_preview)
 {
-    if(project_path != NULL)
-        open_startup_project(project_path);
+    int assert_agent = getenv("KRAIT_SMOKE_ASSERT_AGENT") != NULL &&
+                       getenv("KRAIT_SMOKE_ASSERT_AGENT")[0] != '\0';
+
+    (void)project_path;
     if(getenv("KRAIT_SMOKE_OPEN_FILE") != NULL)
         ide_editor_editor_open(&istate, getenv("KRAIT_SMOKE_OPEN_FILE"));
-    if(getenv("KRAIT_SMOKE_VIEW") != NULL && getenv("KRAIT_SMOKE_VIEW")[0] != '\0')
-        istate.view = IDE_VIEW_TEXT;
+    if(getenv("KRAIT_SMOKE_VIEW") != NULL &&
+       getenv("KRAIT_SMOKE_VIEW")[0] != '\0') {
+        int view = krait_view_from_name(getenv("KRAIT_SMOKE_VIEW"));
+
+        if(view >= 0)
+            istate.view = view;
+    }
+    if(getenv("KRAIT_SMOKE_LEVEL") != NULL &&
+       getenv("KRAIT_SMOKE_LEVEL")[0] != '\0')
+        krait_level_set_active(1, NULL);   /* root resolved at first frame */
     (void)build_preview;
+    if(assert_agent) {
+        istate.view = IDE_VIEW_AGENT;
+        agent_accounts_open = 1;
+    }
     for(int i = 0; i < 4; i++) {
         UpdateKeyPlatformState();
+        BeginFrame();
+        BeginUIFrame(GetScreenWidth(), GetScreenHeight(), GetUIScale());
+        BeginUI(Key("ide_app_App"));
         ide_app_App();
+        EndUI();
+        EndUIFrame();
+        EndFrame();
     }
-    if(!save_screen_image(screenshot_path))
+    if(assert_agent && !krait_smoke_assert_agent_ui())
         return 1;
+    if(screenshot_path != NULL && screenshot_path[0] != '\0') {
+        Image shot = LoadImageFromScreen();
+
+        if(shot.data != NULL) {
+            ExportImage(shot, screenshot_path);
+            UnloadImage(shot);
+            fprintf(stderr, "krait: screenshot saved to %s\n", screenshot_path);
+        } else {
+            fprintf(stderr,
+                    "krait: screenshot capture unavailable on this backend\n");
+            return 1;
+        }
+    }
     return 0;
 }
 
@@ -259,6 +436,9 @@ main(int argc, char **argv)
     int smoke_live = 0;
     int smoke_live_reload = 0;
     int smoke_artifact = 0;
+    int smoke_engine = 0;
+    const char *play_scene = NULL;
+    const char *smoke_play_scene = NULL;
     const char *artifact_kind = NULL;
     const char *artifact_project = NULL;
     const char *artifact_rel = NULL;
@@ -337,6 +517,30 @@ main(int argc, char **argv)
                 artifact_rel = argv[argi + 3];
             break;
         }
+        if(strcmp(argv[argi], "--smoke-engine") == 0) {
+            smoke_engine = 1;
+            break;
+        }
+        if(strcmp(argv[argi], "--play-game") == 0) {
+            if(argc <= argi + 1) {
+                fprintf(stderr, "krait: --play-game requires a game.scene "
+                        "path or a project directory\n");
+                return 2;
+            }
+            play_scene = argv[argi + 1];
+            argi += 2;
+            continue;
+        }
+        if(strcmp(argv[argi], "--smoke-play") == 0) {
+            if(argc <= argi + 1) {
+                fprintf(stderr, "krait: --smoke-play requires a game.scene "
+                        "path or a project directory\n");
+                return 2;
+            }
+            smoke_play_scene = argv[argi + 1];
+            argi += 2;
+            continue;
+        }
         if(strcmp(argv[argi], "--phone") == 0) {
             g_phone_mode = 1;
             argi++;
@@ -363,7 +567,7 @@ main(int argc, char **argv)
         if(strcmp(argv[argi], "--view") == 0) {
             if(argc <= argi + 1) {
                 fprintf(stderr, "krait: --view requires a view name "
-                        "(start|studio|text|kanban|agent|settings)\n");
+                        "(start|studio|text|kanban|agent|game|settings)\n");
                 return 2;
             }
             view_arg = argv[argi + 1];
@@ -381,9 +585,36 @@ main(int argc, char **argv)
 
     if(smoke_artifact)
         return run_artifact_smoke(artifact_kind, artifact_project, artifact_rel);
+    if(smoke_engine)
+        return krait_engine_smoke_test();
+    if(play_scene != NULL)
+        return run_player(play_scene, NULL);
+    if(smoke_play_scene != NULL)
+        return run_player(smoke_play_scene, getenv("KRAIT_PLAY_SHOT"));
 
+    /* Screenshot capture reads the pre-swap back buffer, which kryon only
+     * keeps when armed; smoke runs that capture a frame arm it up front
+     * (the arm state caches at the first EndDrawing). */
+    if(smoke_screenshot_path != NULL && smoke_screenshot_path[0] != '\0')
+        setenv("KRYON_SHOT_ARM", "1", 1);
+    /* This machine's radeonsi (hardware GL) path stalls Kryon apps in a
+     * Mesa syncobj wait: the window freezes after a few frames and input
+     * stops. Render with llvmpipe unless the caller picked a driver
+     * (Neon's run scripts do the same). */
+    setenv("GALLIUM_DRIVER", "llvmpipe", 0);
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(screen_w, screen_h, "Krait " KRAIT_VERSION_STRING);
+    if(InstanceRejected()) {
+        /* another krait holds the instance lock (same window title) and
+         * could not be replaced; exit cleanly instead of rendering with
+         * no GPU context. A desktop notification makes the failure
+         * visible for launches without a terminal. */
+        fprintf(stderr, "krait: another krait instance is already running\n");
+        if(IsNotificationSupported())
+            SendNotification("Krait",
+                             "Another krait instance is already running.");
+        return 1;
+    }
     window_icon_asset = GetUIIconAsset(UI_ICON_TYPE_PROJ_KRYON);
     if(window_icon_asset != NULL) {
         window_icon = LoadImageFromMemory(".png", window_icon_asset->data,
@@ -427,7 +658,7 @@ main(int argc, char **argv)
         int view = krait_view_from_name(view_arg);
         if(view < 0) {
             fprintf(stderr, "krait: unknown view '%s' (expected "
-                    "start|studio|text|kanban|agent|settings)\n", view_arg);
+                    "start|studio|text|kanban|agent|game|settings)\n", view_arg);
             return 2;
         }
         if(view == IDE_VIEW_PROJECT && istate.project.loaded == 0) {
@@ -438,6 +669,11 @@ main(int argc, char **argv)
             istate.view = view;
         }
     }
+
+    /* optional auto-open of the generic Level editor (KRAIT_LEVEL=1);
+     * the project root is resolved on the first Game-view frame */
+    if(getenv("KRAIT_LEVEL") != NULL && getenv("KRAIT_LEVEL")[0] != '\0')
+        krait_level_set_active(1, NULL);
 
     if(smoke_live_reload) {
         result = run_live_reload_smoke(project_arg, live_rel_path);
@@ -452,6 +688,9 @@ main(int argc, char **argv)
         }
     }
 
+    /* drop the instance lock before the slow shutdown path so a fresh
+     * launch takes over instantly instead of racing our cleanup */
+    KryonReleaseInstanceLock();
     ide_app_shutdown();
     krait_shutdown_logical_keys();
     ClearUIFonts();
