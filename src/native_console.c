@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#ifndef __EMSCRIPTEN__
 
 #define KRAIT_CONSOLE_SCROLLBACK 2000
 #define KRAIT_CONSOLE_FONT "kapsule-terminal"
@@ -1315,3 +1316,31 @@ krait_console_draw(Rectangle bounds, int focused, int font_size)
     handle_console_input(con);
     return con->focused;
 }
+
+/* Web: no PTY subsystem. The console pane reports itself unavailable
+ * instead of dragging kapsule's fork/pty core into the browser build. */
+#else
+#include <string.h>
+
+void krait_console_init(void) { }
+void krait_console_shutdown(void) { }
+int krait_console_running(void) { return 0; }
+const char *krait_console_title(void) { return "terminal (desktop only)"; }
+int krait_console_restart(const char *cwd) { (void)cwd; return 0; }
+int krait_console_ensure(const char *cwd, int cols, int rows) { (void)cwd; (void)cols; (void)rows; return 0; }
+int krait_console_ensure_cwd(const char *cwd, int cols, int rows) { (void)cwd; (void)cols; (void)rows; return 0; }
+void krait_console_stop(void) { }
+void krait_console_send(const char *text) { (void)text; }
+void krait_console_feed(const char *text) { (void)text; }
+void krait_console_poll(void) { }
+const char *krait_console_copy(void) { return ""; }
+void krait_console_paste(void) { }
+int krait_console_draw(Rectangle bounds, int focused, int font_size)
+{
+    (void)focused; (void)font_size;
+    DrawRectangleRec(bounds, GetThemeSurface());
+    Text("The terminal needs a local shell - desktop builds only.",
+         (int)bounds.x + 12, (int)bounds.y + 12, 13, GetThemeIcon());
+    return 0;
+}
+#endif

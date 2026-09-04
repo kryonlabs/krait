@@ -20,6 +20,7 @@ mods :: #import "ide/modules"
 	krb :: #import "ide/cartridge"
 	kb :: #import "ide/kanban"
 	dc :: #import "ide/daochi"
+	gitm :: #import "ide/git"
 		ag :: #import "ide/agent"
 		mdv :: #import "ide/mdview"
 		txt :: #import "ide/text_view"
@@ -48,7 +49,7 @@ top_menus :: [5] Menu #global
 file_menu_items :: [4] MenuItem #global
 edit_menu_items :: [2] MenuItem #global
 view_menu_items :: [5] MenuItem #global
-tools_menu_items :: [3] MenuItem #global
+tools_menu_items :: [4] MenuItem #global
 project_menu_items :: [2] MenuItem #global
 pane_tabs :: [state.IDE_MAX_PANE_TABS] Tab #global
 pane_tab_scroll :: [state.IDE_MAX_PANE_GROUPS] int #global
@@ -68,6 +69,7 @@ pane_tab_scroll :: [state.IDE_MAX_PANE_GROUPS] int #global
     MENU_TOOLS_SEARCH,
     MENU_TOOLS_CONSOLE,
     MENU_TOOLS_OUTPUT,
+    MENU_TOOLS_GIT,
     MENU_PROJECT_METADATA,
     MENU_PROJECT_FILE,
 }
@@ -337,6 +339,9 @@ prepare_top_menus :: () {
                   MENU_TOOLS_CONSOLE, has_project == 0 ? 1 : 0, 0)
     set_menu_item(&tools_menu_items[2], MenuCommand, "Output", "",
                   MENU_TOOLS_OUTPUT, has_project == 0 ? 1 : 0, 0)
+    set_menu_item(&tools_menu_items[3], MenuCommand, "Git", "",
+                  MENU_TOOLS_GIT,
+                  has_project == 0 || mods.enabled(&istate, "git") == 0 ? 1 : 0, 0)
 
     set_menu_item(&project_menu_items[0], MenuCommand, "Metadata", "",
                   MENU_PROJECT_METADATA, has_project == 0 ? 1 : 0, 0)
@@ -354,7 +359,7 @@ prepare_top_menus :: () {
     top_menus[2].item_count = 5
     top_menus[3].label = "Tools"
     top_menus[3].items = tools_menu_items
-    top_menus[3].item_count = 3
+    top_menus[3].item_count = 4
     top_menus[4].label = "Project"
     top_menus[4].items = project_menu_items
     top_menus[4].item_count = 2
@@ -394,6 +399,8 @@ handle_top_menu :: (cmd: int) {
         show_tool_bottom(&istate, state.IDE_PANE_VIEW_CONSOLE)
     } else if cmd == MENU_TOOLS_OUTPUT {
         show_tool_bottom(&istate, state.IDE_PANE_VIEW_OUTPUT)
+    } else if cmd == MENU_TOOLS_GIT {
+        show_tool_bottom(&istate, state.IDE_PANE_VIEW_GIT)
     } else if cmd == MENU_PROJECT_METADATA {
         show_tool_right(&istate, state.IDE_PANE_VIEW_PROJECT_META)
     } else if cmd == MENU_PROJECT_FILE {
@@ -1453,6 +1460,8 @@ draw_pane_view :: (bounds: Rectangle, st: state.IdeState*, view: int) {
         con.draw_console(bounds, st)
     } else if view == state.IDE_PANE_VIEW_OUTPUT {
         outp.draw_output(bounds, st)
+    } else if view == state.IDE_PANE_VIEW_GIT {
+        gitm.draw_git_pane(bounds, st)
     } else if view == state.IDE_PANE_VIEW_SEARCH {
         srch.draw_search(bounds, st)
     } else if view == state.IDE_PANE_VIEW_CARTRIDGE {

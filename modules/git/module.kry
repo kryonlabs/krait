@@ -1,0 +1,45 @@
+#module "modules.git.module"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+
+id :: () -> const char* {
+    return "git"
+}
+
+name :: () -> const char* {
+    return "Git / GitHub"
+}
+
+description :: () -> const char* {
+    return "Repository status, staging, commits, branches, remotes, and GitHub pull requests."
+}
+
+enabled_by_default :: () -> int {
+    return 0
+}
+
+has_preview :: () -> int {
+    return 0
+}
+
+has_project_templates :: () -> int {
+    return 0
+}
+
+register :: (st: state.IdeState*) -> int {
+    if st == NULL || st->module_count >= state.IDE_MAX_MODULES {
+        return -1
+    }
+    index := st->module_count
+    mod := &st->modules[index]
+    snprintf(mod->id, sizeof(mod->id), "%s", id())
+    snprintf(mod->name, sizeof(mod->name), "%s", name())
+    snprintf(mod->description, sizeof(mod->description), "%s", description())
+    mod->default_enabled = enabled_by_default()
+    mod->enabled = mod->default_enabled
+    mod->has_preview = has_preview()
+    mod->has_project_templates = has_project_templates()
+    st->module_count = st->module_count + 1
+    return index
+}

@@ -49,6 +49,30 @@ KAPSULE_OBJS := $(addprefix $(BUILD_DIR)/kapsule/,$(KAPSULE_EMULATOR_SRCS:.c=.o)
 KSYNC_SRCS := $(wildcard $(KRYON_DIR)/src/ksync/*.c)
 KSYNC_OBJS := $(patsubst $(KRYON_DIR)/src/ksync/%.c,$(BUILD_DIR)/ksync/%.o,$(KSYNC_SRCS))
 
+# Web build (kryon Canvas2D backend, emscripten). Compiles the krait natives,
+# the k2c-generated C, and kryon's canvas sources with web liboqs for daochi
+# accounts. Desktop-only surfaces (terminal, 3D, physics nodes) are either
+# stubbed (web_stubs.c, native_console gates) or degrade to no-ops.
+WEB_EMSDK_BIN ?= $(HOME)/emsdk/upstream/emscripten
+WEB_CC ?= $(if $(wildcard $(WEB_EMSDK_BIN)/emcc),$(WEB_EMSDK_BIN)/emcc,emcc)
+WEB_DIST_DIR := $(BUILD_DIR)/web
+WEB_LIBOQS_A := $(KRYON_DIR)/build/web-liboqs/lib/liboqs.a
+WEB_EMBEDDED_ASSETS_C := $(KRYON_BUILD_DIR)/embedded_asset_data.c
+WEB_KRYON_SRCS := $(filter-out \
+	$(KRYON_DIR)/src/backend/dom_%.c \
+	$(KRYON_DIR)/src/backend/libdraw_%.c \
+	$(KRYON_DIR)/src/backend/termi_%.c \
+	$(KRYON_DIR)/src/platform/plan9/%.c \
+	$(KRYON_DIR)/src/scene/node_body2d.c \
+	$(KRYON_DIR)/src/scene/node_collision_shape2d.c \
+	$(KRYON_DIR)/src/scene/physics_world.c \
+	,$(shell find $(KRYON_DIR)/src -name '*.c' | LC_ALL=C sort))
+WEB_STUB_C := src/web_stubs.c
+WEB_DEBUG ?= 0
+WEB_DEBUG_FLAGS := $(if $(filter 1,$(WEB_DEBUG)),-O0 -g3 -sASSERTIONS=1 -g3,)
+
+
+
 K2C = $(KRYON_BUILD_DIR)/bin/k2c
 # Detect a k2c built for the wrong platform (e.g. a FreeBSD binary on Linux):
 # the kernel refuses to exec it, so the shell returns 126/127. When that
@@ -101,7 +125,7 @@ else
 KRYON_PLATFORM_LDLIBS ?=
 endif
 
-.PHONY: all krait level run dev test smoke kanban-test daochi-test engine-test clean install uninstall kryon-deps boundary-check docs-site appimage android-debug android-install android-clean
+.PHONY: all krait level web web-serve run dev test smoke kanban-test daochi-test git-test engine-test clean install uninstall kryon-deps boundary-check docs-site appimage android-debug android-install android-clean
 
 all: krait
 
@@ -169,6 +193,39 @@ $(RAYLIB_A):
 $(BUILD_DIR)/bin:
 	mkdir -p $@
 
+$(WEB_DIST_DIR):
+	mkdir -p $@
+
+web: $(WEB_DIST_DIR)/index.html
+
+$(WEB_LIBOQS_A): $(KRYON_DIR)/vendor/liboqs/CMakeLists.txt
+	PATH="$(WEB_EMSDK_BIN):$$PATH" emcmake cmake -S $(KRYON_DIR)/vendor/liboqs -B $(KRYON_DIR)/build/web-liboqs \
+		-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DOQS_BUILD_ONLY_LIB=ON \
+		-DOQS_USE_OPENSSL=OFF -DOQS_DIST_BUILD=OFF -DOQS_OPT_TARGET=generic \
+		-DOQS_MINIMAL_BUILD=SIG_ml_dsa_44
+	cmake --build $(KRYON_DIR)/build/web-liboqs --target oqs
+
+$(WEB_DIST_DIR)/krait.js: GNUmakefile $(KRAIT_NATIVE_SRCS) $(WEB_STUB_C) $(wildcard ide/*.kry) $(KRAIT_GEN)/.transpiled $(WEB_KRYON_SRCS) $(WEB_LIBOQS_A) $(WEB_EMBEDDED_ASSETS_C) | $(WEB_DIST_DIR)
+	$(WEB_CC) $(filter -O%,$(CFLAGS)) $(WEB_DEBUG_FLAGS) -std=gnu99 \
+		-I$(KRYON_DIR)/include -I$(KRYON_DIR)/src/ui -I$(KRYON_DIR)/vendor/clay \
+		-I$(KRYON_BUILD_DIR)/generated -I$(KRAIT_GEN) -Isrc -I$(KAPSULE_DIR)/src \
+		-I$(KRYON_DIR)/build/web-liboqs/include \
+		-DKRYON_BACKEND_CANVAS=1 -DPLATFORM_WEB=1 -DKRYON_WITH_PHYSICS=0 -DHAS_LIBOQS=1 \
+		-sASYNCIFY -sASYNCIFY_STACK_SIZE=1048576 -fexceptions \
+		-sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456 -sSTACK_SIZE=33554432 \
+		-sEXPORTED_RUNTIME_METHODS=Asyncify -sEXPORTED_FUNCTIONS=_main,_malloc,_free \
+		-lidbfs.js -sFORCE_FILESYSTEM=1 -sFETCH=1 \
+		-o $@ \
+		$(KRAIT_GEN)/ide/app.c $(filter-out $(KRAIT_GEN)/ide/app.c,$(shell find $(KRAIT_GEN) -name '*.c' | LC_ALL=C sort)) \
+		$(KRAIT_NATIVE_SRCS) $(WEB_STUB_C) \
+		$(WEB_KRYON_SRCS) $(WEB_EMBEDDED_ASSETS_C) $(WEB_LIBOQS_A)
+
+$(WEB_DIST_DIR)/index.html: web/index.html web/index_boot.js $(WEB_DIST_DIR)/krait.js | $(WEB_DIST_DIR)
+	cp web/index.html web/index_boot.js $(WEB_DIST_DIR)/
+
+web-serve: web
+	cd $(WEB_DIST_DIR) && python3 -m http.server 8901 --bind 127.0.0.1
+
 run: krait
 	@kryon_dir=$$(cd "$(KRYON_DIR)" && pwd); \
 	KRYON_DIR="$$kryon_dir" $(KRAIT) $(ARGS)
@@ -195,13 +252,21 @@ android-clean:
 
 KANBAN_TEST = $(BUILD_DIR)/tests/kanban_test
 DAOCHI_TEST = $(BUILD_DIR)/tests/daochi_test
+GIT_TEST = $(BUILD_DIR)/tests/git_test
 AGENT_TEST = $(BUILD_DIR)/tests/agent_test
 ENGINE_TEST = $(BUILD_DIR)/tests/engine_test
 
-test: krait boundary-check kanban-test daochi-test agent-test engine-test
+test: krait boundary-check kanban-test daochi-test git-test agent-test engine-test
 
 daochi-test: $(DAOCHI_TEST)
 	$(DAOCHI_TEST)
+
+git-test: $(GIT_TEST)
+	$(GIT_TEST)
+
+$(GIT_TEST): tests/git_test.c $(BUILD_DIR)/src/native_git.o $(BUILD_DIR)/src/native_util.o $(KRYON_LIB) $(RAYLIB_A) $(KRYON_CURL_A) | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc -I$(KRAIT_GEN) -I$(KRYON_DIR)/include -o $@ tests/git_test.c 		$(BUILD_DIR)/src/native_git.o $(BUILD_DIR)/src/native_util.o 		-Wl,--whole-archive $(KRYON_LIB) -Wl,--no-whole-archive 		$(RAYLIB_A) $(KRYON_BOX2D_A) $(KRYON_LIBOQS_A) 		$(KRYON_CURL_LDLIBS) $(KRYON_MARKDOWN_LDLIBS) $(RAY_LDLIBS) 		$(SYSTEM_THEME_LDLIBS) $(CURL_CODEC_LDLIBS) 		-lbrotlidec -lbrotlicommon -lzstd -lz -lpthread -lm
 
 $(DAOCHI_TEST): tests/daochi_test.c $(BUILD_DIR)/src/native_daochi.o $(BUILD_DIR)/src/native_util.o $(KSYNC_OBJS) $(KRYON_LIB) $(RAYLIB_A) $(KRYON_LIBOQS_A) $(KRYON_CURL_A) | $(BUILD_DIR)
 	@mkdir -p $(dir $@)

@@ -1,0 +1,482 @@
+#module "ide.git"
+#import "kryon.h"
+#import <string.h>
+state :: #import "ide/state"
+ed :: #import "ide/editor"
+
+krait_git_available :: () -> int #extern
+krait_git_set_project :: (path: const char*) #extern
+krait_git_repo :: () -> int #extern
+krait_git_status_text :: () -> const char* #extern
+krait_git_output :: () -> const char* #extern
+krait_git_refresh :: () -> int #extern
+krait_git_branch :: () -> const char* #extern
+krait_git_ahead :: () -> int #extern
+krait_git_behind :: () -> int #extern
+krait_git_entry_count :: () -> int #extern
+krait_git_entry_path :: (index: int) -> const char* #extern
+krait_git_entry_staged :: (index: int) -> int #extern
+krait_git_entry_changed :: (index: int) -> int #extern
+krait_git_entry_untracked :: (index: int) -> int #extern
+krait_git_stage :: (index: int) -> int #extern
+krait_git_unstage :: (index: int) -> int #extern
+krait_git_stage_all :: () -> int #extern
+krait_git_commit :: (message: const char*) -> int #extern
+krait_git_push :: () -> int #extern
+krait_git_pull :: () -> int #extern
+krait_git_fetch :: () -> int #extern
+krait_git_diff :: (index: int) -> const char* #extern
+krait_git_log_refresh :: () -> int #extern
+krait_git_log_count :: () -> int #extern
+krait_git_log_hash :: (index: int) -> const char* #extern
+krait_git_log_subject :: (index: int) -> const char* #extern
+krait_git_log_author :: (index: int) -> const char* #extern
+krait_git_log_when :: (index: int) -> const char* #extern
+krait_git_branch_refresh :: () -> int #extern
+krait_git_branch_count :: () -> int #extern
+krait_git_branch_name :: (index: int) -> const char* #extern
+krait_git_branch_current :: (index: int) -> int #extern
+krait_git_branch_checkout :: (index: int) -> int #extern
+krait_git_branch_create :: (name: const char*) -> int #extern
+krait_git_clone :: (url: const char*, dest: const char*) -> int #extern
+
+krait_github_token_set :: (token: const char*) -> int #extern
+krait_github_token_masked :: () -> const char* #extern
+krait_github_has_token :: () -> int #extern
+krait_github_repo_is_github :: () -> int #extern
+krait_github_slug :: () -> const char* #extern
+krait_github_repo_desc :: () -> const char* #extern
+krait_github_login :: () -> const char* #extern
+krait_github_refresh :: () -> int #extern
+krait_github_pr_count :: () -> int #extern
+krait_github_pr_title :: (index: int) -> const char* #extern
+krait_github_pr_user :: (index: int) -> const char* #extern
+krait_github_pr_number :: (index: int) -> int #extern
+krait_github_browse_url :: () -> const char* #extern
+krait_github_pr_create :: (title: const char*, body: const char*) -> int #extern
+
+git_selected :: int #global
+git_commit_msg :: [512] char #global
+git_commit_cursor :: int #global
+git_commit_focused :: int #global
+git_branch_filter :: [128] char #global
+git_branch_cursor :: int #global
+git_branch_focused :: int #global
+git_token_buf :: [160] char #global
+git_token_cursor :: int #global
+git_token_focused :: int #global
+git_pr_title :: [256] char #global
+git_pr_cursor :: int #global
+git_pr_focused :: int #global
+git_tab :: int #global        # 0 changes, 1 log, 2 branches, 3 github
+
+reset :: () {
+    git_selected = -1
+    git_commit_msg[0] = 0
+    git_branch_filter[0] = 0
+    git_token_buf[0] = 0
+    git_pr_title[0] = 0
+    git_tab = 0
+}
+
+/* Entry point from the pane dispatcher: keeps the native side pointed at
+ * the open project and draws the whole git surface. */
+draw_git_pane :: (bounds: Rectangle, st: state.IdeState*) {
+    DrawRectangleRec(bounds, GetThemeSurface())
+    if krait_git_available() == 0 {
+        Text("git is not installed (or not on PATH)", (int)bounds.x + ScaleUIPx(12),
+             (int)bounds.y + ScaleUIPx(12), ScaleUIPx(13), GetThemeIcon())
+        return
+    }
+    if st->project.loaded != 0 {
+        krait_git_set_project(st->project.path)
+    }
+    if krait_git_repo() == 0 {
+        Text("The open project is not a git repository.",
+             (int)bounds.x + ScaleUIPx(12), (int)bounds.y + ScaleUIPx(12),
+             ScaleUIPx(13), GetThemeIcon())
+        return
+    }
+
+    pad := ScaleUIPx(8)
+    row_h := ScaleUIPx(26)
+    y := (int)bounds.y + pad
+
+    # --- header: branch + remotes ---
+    header: [224] char
+    snprintf(header, sizeof(header), "%s  %d/%d", krait_git_branch(),
+             krait_git_ahead(), krait_git_behind())
+    Text(header, (int)bounds.x + pad, y + ScaleUIPx(6), ScaleUIPx(13),
+         GetThemeText())
+    x := (int)(bounds.x + bounds.width) - pad
+    if StyledButton(x - ScaleUIPx(60), y, ScaleUIPx(60), row_h, "Fetch",
+                           ButtonStyleSecondary, 0, NULL) {
+        krait_git_fetch()
+    }
+    x = x - ScaleUIPx(66)
+    if StyledButton(x - ScaleUIPx(60), y, ScaleUIPx(60), row_h, "Pull",
+                           ButtonStyleSecondary, 0, NULL) {
+        krait_git_pull()
+    }
+    x = x - ScaleUIPx(66)
+    if StyledButton(x - ScaleUIPx(60), y, ScaleUIPx(60), row_h, "Push",
+                           ButtonStylePrimary, 0, NULL) {
+        krait_git_push()
+    }
+    x = x - ScaleUIPx(66)
+    if StyledButton(x - ScaleUIPx(70), y, ScaleUIPx(70), row_h, "Refresh",
+                           ButtonStyleSecondary, 0, NULL) {
+        krait_git_refresh()
+        krait_git_log_refresh()
+    }
+    status := krait_git_status_text()
+    if strlen(status) > 0 {
+        Text(status, (int)bounds.x + pad + ScaleUIPx(240), y + ScaleUIPx(6),
+             ScaleUIPx(11), GetThemeLink())
+    }
+    y = y + row_h + ScaleUIPx(6)
+
+    # --- tabs ---
+    tabs: [4] const char* = {"Changes", "Log", "Branches", "GitHub"}
+    tx := (int)bounds.x + pad
+    for int i = 0; i < 4; i++ {
+        if StyledButton(tx, y, ScaleUIPx(84), ScaleUIPx(22), tabs[i],
+                               git_tab == i ? ButtonStyleTabSelected
+                                            : ButtonStyleTab, 0, NULL) {
+            git_tab = i
+            if i == 1 { krait_git_log_refresh() }
+            if i == 2 { krait_git_branch_refresh() }
+            if i == 3 { krait_github_refresh() }
+        }
+        tx = tx + ScaleUIPx(88)
+    }
+    y = y + ScaleUIPx(30)
+
+    body := (Rectangle){bounds.x, (float)y, bounds.width,
+                        bounds.height - (float)(y - (int)bounds.y)}
+    if git_tab == 0 {
+        draw_changes(body, st, pad, row_h)
+    } else if git_tab == 1 {
+        draw_log(body, pad)
+    } else if git_tab == 2 {
+        draw_branches(body, pad)
+    } else {
+        draw_github(body, st, pad, row_h)
+    }
+}
+
+/* ------------------------------------------------------------------ */
+
+draw_changes :: (bounds: Rectangle, st: state.IdeState*, pad: int, row_h: int) {
+    list_w := (int)bounds.width * 45 / 100
+    y := (int)bounds.y
+
+    if StyledButton((int)bounds.x + pad, y, ScaleUIPx(80), ScaleUIPx(22),
+                           "Stage all", ButtonStyleSecondary, 0, NULL) {
+        krait_git_stage_all()
+    }
+    Text("Changes", (int)bounds.x + pad + ScaleUIPx(96), y + ScaleUIPx(5),
+         ScaleUIPx(11), GetThemeText())
+    y = y + ScaleUIPx(28)
+
+    BeginScissorMode((int)bounds.x, y, list_w,
+                     (int)(bounds.y + bounds.height) - y - ScaleUIPx(96))
+    count := krait_git_entry_count()
+    if count == 0 {
+        Text("(clean)", (int)bounds.x + pad, y, ScaleUIPx(11), GetThemeIcon())
+    }
+    for int i = 0; i < count; i++ {
+        row := (Rectangle){bounds.x + (float)pad, (float)(y + i * ScaleUIPx(20)),
+                           (float)(list_w - pad * 2), (float)ScaleUIPx(18)}
+        if i == git_selected {
+            DrawRectangleRec(row, GetThemeButton())
+        }
+        mark: [16] char
+        if krait_git_entry_untracked(i) != 0 {
+            snprintf(mark, sizeof(mark), "??")
+        } else if krait_git_entry_staged(i) != 0 {
+            snprintf(mark, sizeof(mark), "S%s",
+                     krait_git_entry_changed(i) != 0 ? "M" : " ")
+        } else {
+            snprintf(mark, sizeof(mark), " M")
+        }
+        Text(mark, (int)row.x, (int)row.y + ScaleUIPx(3), ScaleUIPx(11),
+             krait_git_entry_staged(i) != 0 ? GetThemeLink() : GetThemeIcon())
+        Text(krait_git_entry_path(i), (int)row.x + ScaleUIPx(28),
+             (int)row.y + ScaleUIPx(3), ScaleUIPx(11), GetThemeText())
+        if CheckCollisionPointRec(GetMousePosition(), row) &&
+           IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
+            git_selected = i
+        }
+        y_of := row
+        (void)y_of
+    }
+    EndScissorMode()
+
+    # commit box + stage controls below the list
+    cy := (int)(bounds.y + bounds.height) - ScaleUIPx(92)
+    input_style := (TextInputStyle){
+        GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
+        GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
+    }
+    if git_selected >= 0 && git_selected < count {
+        if krait_git_entry_staged(git_selected) != 0 {
+            if StyledButton((int)bounds.x + pad, cy, ScaleUIPx(80), row_h,
+                                   "Unstage", ButtonStyleSecondary, 0, NULL) {
+                krait_git_unstage(git_selected)
+            }
+        } else {
+            if StyledButton((int)bounds.x + pad, cy, ScaleUIPx(80), row_h,
+                                   "Stage", ButtonStylePrimary, 0, NULL) {
+                krait_git_stage(git_selected)
+            }
+        }
+        if StyledButton((int)bounds.x + pad + ScaleUIPx(88), cy, ScaleUIPx(70),
+                               row_h, "Open file", ButtonStyleSecondary, 0, NULL) {
+            ed.editor_open(st, krait_git_entry_path(git_selected))
+        }
+    }
+    TextField((TextFieldProps){
+        (Rectangle){bounds.x + (float)pad, (float)(cy + row_h + ScaleUIPx(6)),
+                    (float)(list_w - pad * 2 - ScaleUIPx(90)), (float)row_h},
+        git_commit_msg, sizeof(git_commit_msg),
+        &git_commit_cursor, &git_commit_focused,
+        sizeof(git_commit_msg) - 1, ScaleUIPx(13), 7301,
+        input_style, (TextInputFilter){0}, NULL, NULL
+    })
+    if StyledButton((int)bounds.x + list_w - pad - ScaleUIPx(80),
+                    cy + row_h + ScaleUIPx(6), ScaleUIPx(80), row_h,
+                    "Commit", ButtonStylePrimary, 0, NULL) {
+        if krait_git_commit(git_commit_msg) != 0 {
+            git_commit_msg[0] = 0
+        }
+    }
+
+    # diff view on the right
+    dx := (int)bounds.x + list_w + pad
+    dw := (int)bounds.width - list_w - pad * 2
+    Text("Diff", dx, (int)bounds.y + ScaleUIPx(5), ScaleUIPx(11), GetThemeText())
+    diff_box := (Rectangle){(float)dx, (float)((int)bounds.y + ScaleUIPx(20)),
+                            (float)dw, bounds.height - ScaleUIPx(20)}
+    DrawRectangleRec(diff_box, GetThemeBackground())
+    if git_selected >= 0 {
+        diff := krait_git_diff(git_selected)
+        draw_mono_lines(diff, diff_box)
+    }
+}
+
+draw_mono_lines :: (text: const char*, box: Rectangle) {
+    if text == NULL || text[0] == 0 {
+        return
+    }
+    BeginScissorMode((int)box.x, (int)box.y, (int)box.width, (int)box.height)
+    line_height := ScaleUIPx(14)
+    max_lines := (int)box.height / line_height
+    y := (int)box.y + ScaleUIPx(2)
+    len := strlen(text)
+    start := 0
+    line := 0
+    for int i = 0; i <= len && line < max_lines; i++ {
+        if i == len || text[i] == '\n' {
+            line_len := i - start
+            if line_len > 400 { line_len = 400 }
+            buf: [402] char
+            memcpy(buf, text + start, line_len)
+            buf[line_len] = 0
+            color := GetThemeText()
+            if line_len > 0 && buf[0] == '+' {
+                color = (Color){ 120, 220, 130, 255 }
+            } else if line_len > 0 && buf[0] == '-' {
+                color = (Color){ 235, 120, 110, 255 }
+            } else if line_len > 1 && buf[0] == '@' {
+                color = GetThemeLink()
+            }
+            Text(buf, (int)box.x + ScaleUIPx(4), y, ScaleUIPx(11), color)
+            y = y + line_height
+            line = line + 1
+            start = i + 1
+        }
+    }
+    EndScissorMode()
+}
+
+draw_log :: (bounds: Rectangle, pad: int) {
+    BeginScissorMode((int)bounds.x, (int)bounds.y, (int)bounds.width,
+                     (int)bounds.height)
+    count := krait_git_log_count()
+    if count == 0 {
+        krait_git_log_refresh()
+        count = krait_git_log_count()
+    }
+    y := (int)bounds.y + ScaleUIPx(4)
+    for int i = 0; i < count; i++ {
+        line: [512] char
+        snprintf(line, sizeof(line), "%s  %-60.60s  %s  %s",
+                 krait_git_log_hash(i), krait_git_log_subject(i),
+                 krait_git_log_author(i), krait_git_log_when(i))
+        Text(line, (int)bounds.x + pad, y, ScaleUIPx(11), i == 0
+             ? GetThemeText() : GetThemeIcon())
+        y = y + ScaleUIPx(18)
+    }
+    EndScissorMode()
+}
+
+draw_branches :: (bounds: Rectangle, pad: int) {
+    count := krait_git_branch_count()
+    if count == 0 {
+        krait_git_branch_refresh()
+        count = krait_git_branch_count()
+    }
+    y := (int)bounds.y + ScaleUIPx(4)
+    input_style := (TextInputStyle){
+        GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
+        GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
+    }
+    Text("new branch", (int)bounds.x + pad, y + ScaleUIPx(6), ScaleUIPx(11),
+         GetThemeText())
+    TextField((TextFieldProps){
+        (Rectangle){bounds.x + (float)(pad + ScaleUIPx(80)), (float)y,
+                    (float)ScaleUIPx(220), (float)ScaleUIPx(22)},
+        git_branch_filter, sizeof(git_branch_filter),
+        &git_branch_cursor, &git_branch_focused,
+        sizeof(git_branch_filter) - 1, ScaleUIPx(12), 7302,
+        input_style, (TextInputFilter){0}, NULL, NULL
+    })
+    if StyledButton((int)bounds.x + pad + ScaleUIPx(308), y, ScaleUIPx(100),
+                           ScaleUIPx(22), "Create", ButtonStylePrimary, 0, NULL) {
+        if krait_git_branch_create(git_branch_filter) != 0 {
+            git_branch_filter[0] = 0
+        }
+    }
+    y = y + ScaleUIPx(34)
+    BeginScissorMode((int)bounds.x, y, (int)bounds.width,
+                     (int)(bounds.y + bounds.height) - y)
+    for int i = 0; i < count; i++ {
+        row := (Rectangle){bounds.x + (float)pad, (float)(y + i * ScaleUIPx(22)),
+                           (float)ScaleUIPx(360), (float)ScaleUIPx(20)}
+        if krait_git_branch_current(i) != 0 {
+            DrawRectangleRec(row, GetThemeButton())
+        }
+        name: [200] char
+        snprintf(name, sizeof(name), "%s%s",
+                 krait_git_branch_current(i) != 0 ? "* " : "  ",
+                 krait_git_branch_name(i))
+        Text(name, (int)row.x, (int)row.y + ScaleUIPx(3), ScaleUIPx(11),
+             krait_git_branch_current(i) != 0 ? GetThemeText() : GetThemeIcon())
+        if krait_git_branch_current(i) == 0 &&
+           CheckCollisionPointRec(GetMousePosition(), row) &&
+           IsMouseButtonReleased(MOUSE_BUTTON_LEFT) {
+            krait_git_branch_checkout(i)
+        }
+    }
+    EndScissorMode()
+}
+
+draw_github :: (bounds: Rectangle, st: state.IdeState*, pad: int, row_h: int) {
+    y := (int)bounds.y
+    input_style := (TextInputStyle){
+        GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
+        GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
+    }
+
+    if krait_github_repo_is_github() == 0 {
+        Text("This repository has no github.com origin remote.",
+             (int)bounds.x + pad, y + ScaleUIPx(6), ScaleUIPx(12), GetThemeIcon())
+        return
+    }
+
+    # token row
+    masked := krait_github_token_masked()
+    if masked[0] == 0 {
+        Text("token", (int)bounds.x + pad, y + ScaleUIPx(6), ScaleUIPx(11),
+             GetThemeText())
+    } else {
+        token_line: [128] char
+        snprintf(token_line, sizeof(token_line), "token %s", masked)
+        Text(token_line, (int)bounds.x + pad, y + ScaleUIPx(6), ScaleUIPx(11),
+             GetThemeLink())
+    }
+    TextField((TextFieldProps){
+        (Rectangle){bounds.x + (float)(pad + ScaleUIPx(70)), (float)y,
+                    (float)ScaleUIPx(300), (float)row_h},
+        git_token_buf, sizeof(git_token_buf), &git_token_cursor,
+        &git_token_focused, sizeof(git_token_buf) - 1, ScaleUIPx(12), 7303,
+        input_style, (TextInputFilter){0}, NULL, NULL
+    })
+    if StyledButton((int)bounds.x + pad + ScaleUIPx(378), y, ScaleUIPx(70),
+                           row_h, "Save", ButtonStyleSecondary, 0, NULL) {
+        if krait_github_token_set(git_token_buf) != 0 {
+            git_token_buf[0] = 0
+        }
+    }
+    if StyledButton((int)bounds.x + pad + ScaleUIPx(454), y, ScaleUIPx(80),
+                           row_h, "Refresh", ButtonStyleSecondary, 0, NULL) {
+        krait_github_refresh()
+    }
+    url := krait_github_browse_url()
+    if strlen(url) > 0 {
+        Text(url, (int)bounds.x + pad + ScaleUIPx(544), y + ScaleUIPx(6),
+             ScaleUIPx(11), GetThemeIcon())
+    }
+    y = y + row_h + ScaleUIPx(8)
+
+    if krait_github_has_token() == 0 {
+        Text("Paste a GitHub personal access token to see pull requests and create them.",
+             (int)bounds.x + pad, y, ScaleUIPx(11), GetThemeIcon())
+        return
+    }
+
+    repo_line: [320] char
+    snprintf(repo_line, sizeof(repo_line), "%s  %s", krait_github_slug(),
+             krait_github_repo_desc())
+    BeginScissorMode((int)bounds.x, y - ScaleUIPx(4), (int)bounds.width - ScaleUIPx(300),
+                     ScaleUIPx(20))
+    Text(repo_line, (int)bounds.x + pad, y, ScaleUIPx(12), GetThemeText())
+    EndScissorMode()
+    login_line: [96] char
+    snprintf(login_line, sizeof(login_line), "@%s", krait_github_login())
+    Text(login_line, (int)(bounds.x + bounds.width) - pad - ScaleUIPx(280), y,
+         ScaleUIPx(12), GetThemeLink())
+    y = y + ScaleUIPx(24)
+
+    # pull requests
+    prs := krait_github_pr_count()
+    Text("Open pull requests", (int)bounds.x + pad, y, ScaleUIPx(11),
+         GetThemeText())
+    y = y + ScaleUIPx(16)
+    BeginScissorMode((int)bounds.x, y, (int)bounds.width,
+                     (int)(bounds.y + bounds.height) - y - ScaleUIPx(40))
+    for int i = 0; i < prs; i++ {
+        line: [420] char
+        snprintf(line, sizeof(line), "#%d  %-70.70s  @%s",
+                 krait_github_pr_number(i), krait_github_pr_title(i),
+                 krait_github_pr_user(i))
+        Text(line, (int)bounds.x + pad, y, ScaleUIPx(11), GetThemeText())
+        y = y + ScaleUIPx(18)
+    }
+    if prs == 0 {
+        Text("(none open)", (int)bounds.x + pad, y, ScaleUIPx(11),
+             GetThemeIcon())
+        y = y + ScaleUIPx(18)
+    }
+    EndScissorMode()
+
+    # create PR from the current branch
+    cy := (int)(bounds.y + bounds.height) - ScaleUIPx(36)
+    Text("pr title", (int)bounds.x + pad, cy + ScaleUIPx(6), ScaleUIPx(11),
+         GetThemeText())
+    TextField((TextFieldProps){
+        (Rectangle){bounds.x + (float)(pad + ScaleUIPx(60)), (float)cy,
+                    (float)ScaleUIPx(380), (float)row_h},
+        git_pr_title, sizeof(git_pr_title), &git_pr_cursor,
+        &git_pr_focused, sizeof(git_pr_title) - 1, ScaleUIPx(12), 7304,
+        input_style, (TextInputFilter){0}, NULL, NULL
+    })
+    if StyledButton((int)bounds.x + pad + ScaleUIPx(448), cy, ScaleUIPx(120),
+                           row_h, "Create PR", ButtonStylePrimary, 0, NULL) {
+        if krait_github_pr_create(git_pr_title, git_pr_title) != 0 {
+            git_pr_title[0] = 0
+        }
+    }
+    (void)st
+}

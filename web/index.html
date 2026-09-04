@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Krait</title>
+    <style>
+      :root {
+        --app-background: #14161c;
+      }
+
+      html, body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--app-background);
+        color: #e8ecf1;
+        font-family: ui-monospace, "SFMono-Regular", "Roboto Mono", "Cascadia Mono", "Liberation Mono", monospace;
+      }
+
+      .canvas-frame {
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        position: relative;
+      }
+
+      canvas.emscripten {
+        position: absolute;
+        inset: 0;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+        border: 0;
+        background: var(--app-background);
+        outline: none;
+      }
+
+      .loading-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--app-background);
+        transition: opacity 360ms ease, visibility 360ms ease;
+      }
+
+      .loading-screen.is-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      .loading-panel {
+        display: grid;
+        justify-items: center;
+        gap: 12px;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="loading-screen" id="loading-screen" role="status" aria-live="polite">
+      <div class="loading-panel">
+        <h1>Krait</h1>
+        <div id="status">Downloading...</div>
+        <progress value="0" max="100" id="progress"></progress>
+      </div>
+    </div>
+    <div class="canvas-frame" id="canvas-frame">
+      <canvas class="emscripten" id="canvas" width="1280" height="800" tabindex="-1"></canvas>
+    </div>
+    <script src="index_boot.js"></script>
+    <script src="krait.js"></script>
+  </body>
+</html>

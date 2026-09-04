@@ -3,6 +3,7 @@
 #import <string.h>
 state :: #import "ide/state"
 kryon :: #import "modules/kryon/module"
+gitm :: #import "modules/git/module"
 
 register_builtins :: (st: state.IdeState*) {
     if st == NULL {
@@ -10,6 +11,7 @@ register_builtins :: (st: state.IdeState*) {
     }
     st->module_count = 0
     kryon.register(st)
+    gitm.register(st)
 }
 
 find :: (st: state.IdeState*, id: const char*) -> int {
