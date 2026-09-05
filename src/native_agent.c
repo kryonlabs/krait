@@ -696,6 +696,39 @@ agent_remember(int kind, const char *text)
     agent_persist_msg(&agent_msgs[agent_msg_count - 1]);
 }
 
+/* UI publishes paths, never mutable editor buffers, to the tool worker. */
+static atomic_flag editor_paths_lock = ATOMIC_FLAG_INIT;
+static char editor_dirty_paths[32][1024];
+static int editor_dirty_count;
+
+void
+krait_agent_sync_editors(const IdeState *st)
+{
+    while(atomic_flag_test_and_set(&editor_paths_lock)) {}
+    editor_dirty_count = 0;
+    if(st) for(int i = 0; i < st->open_count; i++) {
+        int dirty = st->open_files[i].dirty || st->open_files[i].artifact_dirty;
+        for(int j = 0; j < 4; j++) dirty |= st->open_files[i].artifact_cache_dirty[j];
+        if(!dirty) continue;
+        if(editor_dirty_count >= 32) { editor_dirty_count = -1; break; }
+        snprintf(editor_dirty_paths[editor_dirty_count++], 1024, "%s", st->open_files[i].path);
+    }
+    atomic_flag_clear(&editor_paths_lock);
+}
+
+static int
+agent_editor_dirty(const char *root, const char *path)
+{
+    char full[KRAIT_PATH_MAX * 2];
+    if(!root || !path || snprintf(full, sizeof(full), "%s/%s", root, path) >= (int)sizeof(full)) return 1;
+    while(atomic_flag_test_and_set(&editor_paths_lock)) {}
+    int dirty = editor_dirty_count < 0;
+    for(int i = 0; i < editor_dirty_count; i++)
+        if(!strcmp(full, editor_dirty_paths[i])) dirty = 1;
+    atomic_flag_clear(&editor_paths_lock);
+    return dirty;
+}
+
 static int
 project_path_safe(const char *rel)
 {
@@ -793,6 +826,7 @@ agent_file_read(const char *path, char **text)
 int
 krait_project_file_replace(const char *root, const char *path, const char *expected, int existed, const char *content)
 {
+    if(agent_editor_dirty(root, path)) return 0;
     char leaf[512], temp[128], *current = NULL;
     mode_t mode = 0644;
     int parent = agent_file_parent(root, path, content != NULL, leaf);
@@ -828,6 +862,7 @@ krait_project_file_replace(const char *root, const char *path, const char *expec
     found = agent_read_at(parent, leaf, &current, NULL);
     if(found < 0 || found != existed || (found && strcmp(current, expected) != 0)) ok = 0;
     free(current);
+    if(agent_editor_dirty(root, path)) ok = 0;
     if(ok) ok = renameat(parent, temp, parent, leaf) == 0;
     if(!ok) unlinkat(parent, temp, 0);
     close(parent);
@@ -998,7 +1033,7 @@ agent_tool_write(const char *path, const char *content)
     AgentChange *change;
 
     if(!agent_path_safe(path) || strlen(path) >= sizeof(agent_changes[0].path) ||
-       content == NULL)
+       content == NULL || agent_editor_dirty(agent_project, path))
         return 0;
     char leaf[512];
     int parent = agent_file_parent(agent_project, path, 1, leaf);
@@ -1614,8 +1649,9 @@ krait_agent_run_tools(const char *json)
                 size_t used = strlen(out);
 
                 snprintf(out + used, AGENT_TOOL_OUT_CAP - used,
-                         "[write] refused: %s\n",
-                         path != NULL ? path : "");
+                         "[write] refused: %s%s\n",
+                         path != NULL ? path : "",
+                         agent_editor_dirty(agent_project, path) ? " (unsaved editor changes; save or close the file first)" : "");
             }
         } else if(strcmp(tool, "card") == 0)
             agent_tool_card(kry_json_string(kry_json_get(action, "title")),

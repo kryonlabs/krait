@@ -193,9 +193,12 @@ frame_throttle :: () {
     }
 }
 
+krait_agent_sync_editors :: (st: state.IdeState*) #extern
+
 App :: () #ui {
     Screen root: {
     frame_throttle()
+    krait_agent_sync_editors(&istate)
     w := GetScreenWidth()
     h := GetScreenHeight()
     apply_krait_theme()
@@ -282,6 +285,7 @@ App :: () #ui {
         krait_layout_save(&istate)
         istate.layout_dirty = 0
     }
+    krait_agent_sync_editors(&istate)
     Overlays()
     }
 }

@@ -28,7 +28,9 @@ acceptance checks before marking it done.
 - [x] Archive previous write batches and browse their before/after history.
 - [ ] Historical rollback, retention controls, and large-file review without preview limits.
 - [x] Detect stale writes against full file-tool read versions in the active session.
-- [ ] Persist read versions across restart and protect unsaved editor contents before writes.
+- [x] Refuse file writes and reverts against the UI snapshot of unsaved files.
+- [ ] Coordinate editor mutations atomically with writes, normalize path aliases,
+  and persist read versions across restart.
 - [ ] Make multi-file changes transactional; handle external writers and
   filesystem errors without losing the previous recovery checkpoint.
 - [x] Descriptor-relative read/write/revert with symlink refusal and nested-repository write protection.

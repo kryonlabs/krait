@@ -586,6 +586,49 @@ test_selective_review(void)
 }
 
 static void
+test_unsaved_write_guard(void)
+{
+    char root[] = "/tmp/krait-unsaved-XXXXXX", path[1024];
+    CHECK(mkdtemp(root) != NULL);
+    CHECK(krait_agent_bind_task(root, "unsaved"));
+    snprintf(path, sizeof(path), "%s/source.txt", root);
+    CHECK(krait_write_text_file_atomic(path, "disk"));
+    IdeState *st = calloc(1, sizeof(*st));
+    CHECK(st != NULL);
+    if(!st) return;
+    st->open_count = 1;
+    snprintf(st->open_files[0].path, sizeof(st->open_files[0].path), "%s", path);
+    strcpy(st->open_files[0].source, "local draft");
+    st->open_files[0].dirty = 1;
+    krait_agent_sync_editors(st);
+    char *result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"source.txt\",\"content\":\"agent\"}]");
+    CHECK(result && strstr(result, "unsaved editor changes")); free(result);
+    CHECK(krait_agent_change_count() == 0);
+    CHECK(!krait_project_file_replace(root, "source.txt", "disk", 1, "overwrite"));
+    CHECK(!krait_project_file_replace(root, "source.txt", "disk", 1, NULL));
+    st->open_files[0].dirty = 0;
+    st->open_files[0].artifact_cache_dirty[2] = 1;
+    krait_agent_sync_editors(st);
+    CHECK(!krait_project_file_replace(root, "source.txt", "disk", 1, "overwrite"));
+    char *text = NULL; long len;
+    CHECK(krait_read_file_alloc(path, &text, &len) && !strcmp(text, "disk")); free(text);
+    CHECK(!strcmp(st->open_files[0].source, "local draft"));
+    st->open_files[0].artifact_cache_dirty[2] = 0;
+    krait_agent_sync_editors(st);
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"source.txt\",\"content\":\"agent\"}]");
+    CHECK(result && strstr(result, "] ok")); free(result);
+    CHECK(krait_agent_change_count() == 1);
+    st->open_files[0].dirty = 1;
+    krait_agent_sync_editors(st);
+    CHECK(krait_agent_review_change(0, 0) == 0);
+    CHECK(krait_read_file_alloc(path, &text, &len) && !strcmp(text, "agent")); free(text);
+    krait_agent_sync_editors(NULL);
+    CHECK(krait_agent_review_change(0, 0) == 1);
+    CHECK(krait_read_file_alloc(path, &text, &len) && !strcmp(text, "disk")); free(text);
+    free(st);
+}
+
+static void
 test_file_guards(void)
 {
     char project[] = "/tmp/krait-file-guards-XXXXXX";
@@ -1211,6 +1254,7 @@ main(int argc, char **argv)
     test_tools();
     test_change_recovery();
     test_selective_review();
+    test_unsaved_write_guard();
     test_file_guards();
     test_checkpoint_history();
     test_hex_editor();

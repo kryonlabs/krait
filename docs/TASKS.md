@@ -118,4 +118,14 @@ external editors. Read fingerprints do not yet persist across restart.
 Shell commands use their existing permission controls and are not confined
 by these file-tool rules. Search, screenshots and proposal application still
 need the same boundary audit. Unsaved editor buffers remain preserved during
-reload, but blocking agent writes against unsaved buffers is separate work.
+reload. The UI publishes a synchronized snapshot of unsaved file paths at the
+start and end of each frame, including cached artifact edits. File-tool
+writes and reverts refuse those paths; writes explain that the file must be
+saved or closed first. Workspace replacement uses this guard too. A write refused by the
+initial unsaved-file check does not create a new change checkpoint.
+
+This guard uses the last published editor state, not a lock on all editor
+operations. Edits made during the current frame may be published after an
+in-flight write has committed; the dirty buffer remains preserved by reload
+checks. Atomic coordination of buffer edits and disk writes, alternate path
+spellings, and shell-command writes remain outside this protection.

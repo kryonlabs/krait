@@ -198,6 +198,7 @@ const char *krait_hex_path(void);
 int krait_hex_save(void);
 
 /* ---- native_agent.c: agent-view conversation engine (ZCode-style loop) ---- */
+void krait_agent_sync_editors(const IdeState *st);
 void krait_agent_bind(const char *project_dir);
 int krait_agent_count(void);
 int krait_agent_kind(int index);
