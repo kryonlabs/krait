@@ -35,7 +35,8 @@ acceptance checks before marking it done.
   filesystem errors without losing the previous recovery checkpoint.
 - [x] Descriptor-relative read/write/revert with symlink refusal and nested-repository write protection.
 - [ ] Apply workspace boundaries consistently to search, screenshots and proposal application.
-- [ ] Context summarization and configurable execution budgets.
+- [x] Per-project tool-round, batch-action and provider-request timeout limits.
+- [ ] Context summarization, token/cost budgets and total run deadlines.
 
 Direct recovery covers the latest file-tool write batch; earlier batches remain browsable in checkpoint history. It does not
 undo shell commands or provide filesystem isolation. Resume starts a new

@@ -43,7 +43,9 @@
 #define AGENT_MSG_ACTIONS 4
 
 #define AGENT_MAX_MSGS 512
-#define AGENT_MAX_ROUNDS 12
+static int agent_max_rounds = 12;
+static int agent_max_actions = 64;
+static int agent_request_timeout = 180;
 #define AGENT_CONTEXT_CHARS 24000
 #define AGENT_CONTEXT_KEEP_TOOLS 6
 #define AGENT_READ_CAP 16384
@@ -418,6 +420,47 @@ static const char *const agent_system_prompt =
     "writing /widgets/<i>/tap clicks that widget. Messages beginning "
     "with TOOL RESULTS contain tool output. Finish with a short "
     "plain-text summary of what you changed.";
+
+int
+krait_agent_limits_load(const char *project)
+{
+    if(agent_busy || agent_tool_thread_running) return 0;
+    agent_max_rounds = 12; agent_max_actions = 64; agent_request_timeout = 180;
+    char path[KRAIT_PATH_MAX * 2], *text = NULL;
+    long len;
+    snprintf(path, sizeof(path), "%s/.krait/agent.json", project ? project : ".");
+    struct stat st;
+    if(lstat(path, &st) != 0) return errno == ENOENT;
+    if(!S_ISREG(st.st_mode) || st.st_size > 65536 || !krait_read_file_alloc(path, &text, &len)) return 0;
+    KryJson *root = kry_json_parse(text); free(text);
+    if(kry_json_type(root) != KRY_JSON_OBJECT) { kry_json_free(root); return 0; }
+    const char *names[] = {"max_tool_rounds", "max_actions_per_batch", "request_timeout_seconds"};
+    int values[] = {12, 64, 180};
+    int maxima[] = {100, 64, 3600};
+    int valid = 1;
+    for(int i = 0; i < kry_json_count(root); i++) {
+        const char *key = kry_json_key(root, i);
+        if(!key || (strcmp(key, names[0]) && strcmp(key, names[1]) && strcmp(key, names[2]))) valid = 0;
+    }
+    for(int i = 0; i < 3; i++) {
+        KryJson *value = kry_json_get(root, names[i]);
+        if(!value) continue;
+        double number = kry_json_number(value);
+        if(kry_json_type(value) != KRY_JSON_NUMBER || !(number >= 1 && number <= maxima[i]) || number != (int)number) {
+            valid = 0; break;
+        }
+        values[i] = (int)number;
+    }
+    kry_json_free(root);
+    if(!valid) return 0;
+    agent_max_rounds = values[0]; agent_max_actions = values[1]; agent_request_timeout = values[2];
+    return 1;
+}
+
+int krait_agent_limit(int field)
+{
+    return field == 0 ? agent_max_rounds : field == 1 ? agent_max_actions : field == 2 ? agent_request_timeout : 0;
+}
 
 /* Project instructions are independent of the rolling transcript budget. */
 char *
@@ -1815,6 +1858,10 @@ krait_agent_run_tools(const char *json)
     }
     agent_new_batch = 1;
     count = kry_json_count(root);
+    if(kry_json_type(root) != KRY_JSON_ARRAY || count > agent_max_actions) {
+        snprintf(out, AGENT_TOOL_OUT_CAP, "TOOL RESULTS: refused batch; expected an array of at most %d actions; no tools executed\n", agent_max_actions);
+        kry_json_free(root); return out;
+    }
     for(i = 0; i < count; i++) {
         KryJson *action = kry_json_at(root, i);
         const char *tool = kry_json_string(kry_json_get(action, "tool"));
@@ -2377,7 +2424,7 @@ agent_start_request(void)
                                     &temp_count);
     int i;
 
-    agent_req = krait_ai_chat(msgs, count, 180);
+    agent_req = krait_ai_chat(msgs, count, agent_request_timeout);
     for(i = 0; i < temp_count; i++)
         free(temps[i]);
     free(agent_pending_image);
@@ -2390,7 +2437,7 @@ agent_start_request(void)
         return;
     }
     snprintf(agent_status, sizeof(agent_status), "thinking (round %d/%d)...",
-             agent_round + 1, AGENT_MAX_ROUNDS);
+             agent_round + 1, agent_max_rounds);
 }
 
 static void
@@ -2634,6 +2681,11 @@ krait_agent_send(const char *text)
         return 0;
     if(agent_busy)
         return 0;
+    if(!krait_agent_limits_load(agent_project)) {
+        agent_set_status("Invalid .krait/agent.json; run not started");
+        agent_remember(AGENT_MSG_ERROR, "Invalid .krait/agent.json; use integer limits within the documented ranges");
+        return 0;
+    }
     if(!krait_ai_configured()) {
         agent_remember(AGENT_MSG_ERROR, krait_ai_config_hint());
         return 0;
@@ -2712,7 +2764,7 @@ agent_execute_actions(char *reply)
     agent_run_save("tools");
     agent_remember(AGENT_MSG_ACTIONS, reply);
     agent_set_status("running tools (round %d/%d)...", agent_round,
-                     AGENT_MAX_ROUNDS);
+                     agent_max_rounds);
     if(agent_start_tools(reply, &results)) {
         free(reply);
         if(results == NULL) {
@@ -2722,11 +2774,11 @@ agent_execute_actions(char *reply)
             return;
         }
         agent_remember_tool_results(results);
-        if(agent_round >= AGENT_MAX_ROUNDS) {
+        if(agent_round >= agent_max_rounds) {
             agent_busy = 0;
             agent_run_save("failed");
-            agent_set_status("stopped: too many tool rounds");
-            agent_remember(AGENT_MSG_ERROR, "stopped: too many tool rounds");
+            agent_set_status("stopped: project tool-round limit reached");
+            agent_remember(AGENT_MSG_ERROR, "stopped: project tool-round limit reached");
             return;
         }
         agent_start_request();
@@ -2793,11 +2845,11 @@ krait_agent_poll(void)
             agent_set_status(agent_validation_passed ? "Project validation passed" : "Project validation failed; inspect tool results");
             return 0;
         }
-        if(agent_round >= AGENT_MAX_ROUNDS) {
+        if(agent_round >= agent_max_rounds) {
             agent_busy = 0;
             agent_run_save("failed");
-            agent_set_status("stopped: too many tool rounds");
-            agent_remember(AGENT_MSG_ERROR, "stopped: too many tool rounds");
+            agent_set_status("stopped: project tool-round limit reached");
+            agent_remember(AGENT_MSG_ERROR, "stopped: project tool-round limit reached");
             return 0;
         }
         agent_start_request();
@@ -2853,7 +2905,7 @@ krait_agent_poll(void)
             agent_perm_json = reply;
             agent_run_save("approval");
             agent_set_status("approve tools? (round %d/%d)", agent_round + 1,
-                             AGENT_MAX_ROUNDS);
+                             agent_max_rounds);
             return 1;
         }
         agent_execute_actions(reply);

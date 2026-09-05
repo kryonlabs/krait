@@ -173,3 +173,32 @@ though the viewer can only display their incomplete-report message.
 
 History currently grows without automatic pruning; retention controls and
 comparison of individual test cases remain planned.
+
+
+## Agent execution limits
+
+Optional `.krait/agent.json` sets limits for each new agent run:
+
+```json
+{
+  "max_tool_rounds": 12,
+  "max_actions_per_batch": 64,
+  "request_timeout_seconds": 180
+}
+```
+
+All fields are optional integers. Tool rounds accept 1–100, actions per batch
+1–64, and request timeouts 1–3600 seconds. Missing fields use the values shown
+above. Unknown fields, malformed JSON, and out-of-range values prevent a run
+from starting. Krait reads the configuration before Send or Resume; editing
+it does not change an active run.
+
+A tool round is one model response containing actions. Once its round limit
+is reached, Krait retains the conversation and changes, stops further model
+requests, and reports the limit. A batch exceeding its action limit is
+refused as a whole before executing any action. The request timeout applies
+to each provider request, including retries; it is not a total run deadline.
+Manual validation still uses the per-command timeouts in `.krait/tasks.json`.
+
+These controls do not impose token, monetary, or total elapsed-time budgets.
+Context summarization and those additional budgets remain planned.

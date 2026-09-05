@@ -619,6 +619,38 @@ test_selective_review(void)
 }
 
 static void
+test_agent_limits(void)
+{
+    char root[] = "/tmp/krait-limits-XXXXXX", path[1024], target[1024];
+    CHECK(mkdtemp(root) != NULL);
+    CHECK(krait_agent_bind_task(root, "limits"));
+    CHECK(krait_agent_limits_load(root));
+    CHECK(krait_agent_limit(0) == 12 && krait_agent_limit(1) == 64 && krait_agent_limit(2) == 180);
+    snprintf(path, sizeof(path), "%s/.krait", root); krait_mkdir_p(path);
+    snprintf(path, sizeof(path), "%s/.krait/agent.json", root);
+    CHECK(krait_write_text_file_atomic(path, "{\"max_tool_rounds\":2,\"max_actions_per_batch\":1,\"request_timeout_seconds\":30}"));
+    CHECK(krait_agent_limits_load(root));
+    CHECK(krait_agent_limit(0) == 2 && krait_agent_limit(1) == 1 && krait_agent_limit(2) == 30);
+    char *result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"one.txt\",\"content\":\"one\"},{\"tool\":\"write\",\"path\":\"two.txt\",\"content\":\"two\"}]");
+    CHECK(result && strstr(result, "no tools executed")); free(result);
+    snprintf(target, sizeof(target), "%s/one.txt", root); CHECK(access(target, F_OK) != 0);
+    snprintf(target, sizeof(target), "%s/two.txt", root); CHECK(access(target, F_OK) != 0);
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"one.txt\",\"content\":\"one\"}]");
+    CHECK(result && strstr(result, "] ok")); free(result);
+    const char *bad[] = {"{broken", "[]", "{\"max_tool_rounds\":0}", "{\"max_tool_rounds\":101}",
+        "{\"max_actions_per_batch\":65}", "{\"max_tool_rounds\":1.5}", "{\"request_timeout_seconds\":\"30\"}", "{\"typo\":1}"};
+    for(size_t i = 0; i < sizeof(bad)/sizeof(bad[0]); i++) {
+        CHECK(krait_write_text_file_atomic(path, bad[i]));
+        CHECK(!krait_agent_limits_load(root));
+    }
+    CHECK(!krait_agent_send("This must not reach a provider"));
+    CHECK(!krait_agent_busy());
+    CHECK(unlink(path) == 0);
+    CHECK(krait_agent_limits_load(root));
+    CHECK(krait_agent_limit(0) == 12 && krait_agent_limit(1) == 64);
+}
+
+static void
 test_validation_archive_failure(void)
 {
     char root[] = "/tmp/krait-validation-archive-XXXXXX";
@@ -1375,6 +1407,7 @@ main(int argc, char **argv)
     test_tools();
     test_change_recovery();
     test_selective_review();
+    test_agent_limits();
     test_validation_archive_failure();
     test_read_snapshot_restart(argv[0]);
     test_unsaved_write_guard();
