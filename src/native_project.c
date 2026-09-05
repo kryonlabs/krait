@@ -13,6 +13,8 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <regex.h>
+#include <fnmatch.h>
 
 static int
 krait_file_affects_project_mtime(const char *path)
@@ -279,37 +281,73 @@ krait_add_search_result(SearchResult *results, int count, int cap,
     return count;
 }
 
+typedef struct {
+    const char *query;
+    const char *exclude;
+    int regex, match_case, files_only;
+    regex_t compiled;
+} SearchOptions;
+
+static int
+search_match_offset(const char *text, const SearchOptions *options)
+{
+    if(options->regex) {
+        regmatch_t match;
+        return regexec(&options->compiled, text, 1, &match, 0) == 0 ? (int)match.rm_so : -1;
+    }
+    if(options->match_case) {
+        const char *found = strstr(text, options->query);
+        return found ? (int)(found - text) : -1;
+    }
+    size_t n = strlen(options->query);
+    for(const char *p = text; *p; p++) {
+        size_t i = 0;
+        while(i < n && p[i] && tolower((unsigned char)p[i]) == tolower((unsigned char)options->query[i])) i++;
+        if(i == n) return (int)(p - text);
+    }
+    return -1;
+}
+
 static int
 krait_search_file(const char *abs_path, const char *rel_path,
-                  const char *query, SearchResult *results, int count, int cap)
+                  const SearchOptions *options, SearchResult *results, int count, int cap)
 {
     FILE *file;
-    char line[512];
+    char *line = NULL;
+    size_t capacity = 0;
     int line_no = 1;
 
     if(count >= cap || abs_path == NULL || rel_path == NULL ||
-       query == NULL || query[0] == '\0')
+       options == NULL || options->query[0] == '\0')
         return count;
-    if(strstr(rel_path, query) != NULL)
+    if(options->files_only && search_match_offset(rel_path, options) >= 0)
         count = krait_add_search_result(results, count, cap, rel_path, 1,
                                         "file match");
-    if(count >= cap || !krait_file_is_text(rel_path))
+    if(options->files_only || count >= cap)
         return count;
     file = fopen(abs_path, "r");
     if(file == NULL)
         return count;
-    while(count < cap && fgets(line, sizeof(line), file) != NULL) {
-        if(strstr(line, query) != NULL)
+    unsigned char probe[8192];
+    size_t sampled = fread(probe, 1, sizeof(probe), file);
+    if(memchr(probe, 0, sampled) != NULL) { fclose(file); return count; }
+    rewind(file);
+    ssize_t bytes;
+    while(count < cap && (bytes = getline(&line, &capacity, file)) >= 0) {
+        if(memchr(line, 0, (size_t)bytes) != NULL) break;
+        int offset = search_match_offset(line, options);
+        if(offset >= 0)
             count = krait_add_search_result(results, count, cap, rel_path,
-                                            line_no, line);
+                                            line_no, line + (offset > 40 ? offset - 40 : 0));
         line_no++;
     }
+    free(line);
     fclose(file);
     return count;
 }
 
 static int
-krait_search_dir(const char *root, const char *dir, const char *query,
+krait_search_dir(const char *root, const char *dir, const SearchOptions *options,
                  SearchResult *results, int count, int cap, int depth)
 {
     DIR *handle;
@@ -329,7 +367,7 @@ krait_search_dir(const char *root, const char *dir, const char *query,
         if(strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
             continue;
         krait_join(abs_path, sizeof(abs_path), dir, entry->d_name);
-        if(stat(abs_path, &st) != 0)
+        if(lstat(abs_path, &st) != 0)
             continue;
         if(root_len > 0 && strncmp(abs_path, root, root_len) == 0) {
             const char *rel = abs_path + root_len;
@@ -339,12 +377,14 @@ krait_search_dir(const char *root, const char *dir, const char *query,
         } else {
             snprintf(rel_path, sizeof(rel_path), "%s", entry->d_name);
         }
+        if(options->exclude && *options->exclude && fnmatch(options->exclude, rel_path, 0) == 0)
+            continue;
         if(S_ISDIR(st.st_mode)) {
             if(!krait_ignored_dir(entry->d_name))
-                count = krait_search_dir(root, abs_path, query, results,
+                count = krait_search_dir(root, abs_path, options, results,
                                          count, cap, depth + 1);
         } else if(S_ISREG(st.st_mode)) {
-            count = krait_search_file(abs_path, rel_path, query, results,
+            count = krait_search_file(abs_path, rel_path, options, results,
                                       count, cap);
         }
     }
@@ -353,13 +393,23 @@ krait_search_dir(const char *root, const char *dir, const char *query,
 }
 
 int
-krait_search_project(const char *root, const char *query,
-                     SearchResult *results, int cap)
+krait_search_project_options(const char *root, const char *query, int regex,
+    int match_case, int files_only, const char *exclude, SearchResult *results, int cap)
 {
-    if(results == NULL || cap <= 0)
+    if(results == NULL || cap <= 0 || root == NULL || !*root || query == NULL || !*query)
         return 0;
-    if(root == NULL || root[0] == '\0' || query == NULL || query[0] == '\0')
-        return 0;
-    return krait_search_dir(root, root, query, results, 0, cap, 0);
+    SearchOptions options = {0};
+    options.query = query; options.exclude = exclude;
+    options.regex = regex; options.match_case = match_case; options.files_only = files_only;
+    if(regex && regcomp(&options.compiled, query, REG_EXTENDED | REG_NEWLINE | (match_case ? 0 : REG_ICASE)) != 0)
+        return -1;
+    int count = krait_search_dir(root, root, &options, results, 0, cap, 0);
+    if(regex) regfree(&options.compiled);
+    return count;
 }
 
+int
+krait_search_project(const char *root, const char *query, SearchResult *results, int cap)
+{
+    return krait_search_project_options(root, query, 0, 1, 0, NULL, results, cap);
+}

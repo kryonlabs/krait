@@ -361,6 +361,24 @@ editor_open :: (st: state.IdeState*, name: const char*) {
     editor_open_mode(st, name, 0)
 }
 
+editor_open_line :: (st: state.IdeState*, name: const char*, line: int) {
+    editor_open(st, name)
+    idx := find_open_file(st, name)
+    if idx < 0 { return }
+    f := &st->open_files[idx]
+    offset := 0
+    row := 1
+    while f->source[offset] != 0 && row < line {
+        if f->source[offset] == 10 { row = row + 1 }
+        offset = offset + 1
+    }
+    f->cursor = offset
+    f->scroll = (row > 4 ? row - 4 : 0) * (TextLineHeight(ScaleUIPx(14)) + ScaleUIPx(6))
+    f->focused = 1
+    st->console_focused = 0
+    SetUIFocus(3001)
+}
+
 editor_preview :: (st: state.IdeState*, name: const char*) {
     editor_open_mode(st, name, 1)
 }

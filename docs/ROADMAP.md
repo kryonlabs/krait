@@ -46,7 +46,9 @@ the bound project's AGENTS.md; nested directory rules remain to be implemented.
 
 - [ ] LSP transport and lifecycle; diagnostics, completion, navigation,
   references, rename, formatting and code actions in the editor.
-- [ ] Workspace search/replace with preview, exclusions and regex.
+- [x] Workspace search with regex, case matching, exclusion glob, scrollable
+  results and navigation to matching lines; filename-only Quick Open.
+- [ ] Workspace replacement with preview, exclusions and conflict checks.
 - [ ] Multi-cursor editing, command palette and configurable shortcuts.
 - [ ] DAP launch/attach, breakpoints, stepping, variables and call stacks.
 - [x] Configurable project validation commands, manual Validate, and persisted

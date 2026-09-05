@@ -300,6 +300,44 @@ test_card_acceptance_gate(void)
     CHECK(!krait_agent_validation_current());
 }
 
+static void
+test_workspace_search(void)
+{
+    char root[] = "/tmp/krait-search-XXXXXX";
+    char path[1024], linkpath[1024];
+    SearchResult matches[64];
+    CHECK(mkdtemp(root) != NULL);
+    snprintf(path, sizeof(path), "%s/source.py", root);
+    char *content = malloc(3000);
+    CHECK(content != NULL);
+    if(content == NULL) return;
+    memset(content, 'x', 2000);
+    strcpy(content + 2000, " Needle42\nsecond line\nNEEDLE77\n");
+    CHECK(krait_write_text_file_atomic(path, content));
+    free(content);
+    CHECK(krait_search_project_options(root, "needle[0-9]+", 1, 0, 0, "", matches, 64) == 2);
+    CHECK(matches[0].line == 1);
+    CHECK(strstr(matches[0].excerpt, "Needle42") != NULL);
+    CHECK(matches[1].line == 3);
+    CHECK(krait_search_project_options(root, "^NEEDLE77$", 1, 1, 0, "", matches, 64) == 1);
+    CHECK(matches[0].line == 3);
+    CHECK(krait_search_project_options(root, "Needle42", 0, 1, 0, "", matches, 64) == 1);
+    CHECK(krait_search_project_options(root, "needle42", 0, 1, 0, "", matches, 64) == 0);
+    CHECK(krait_search_project_options(root, "needle", 0, 0, 0, "*.py", matches, 64) == 0);
+    CHECK(krait_search_project_options(root, "[broken", 1, 0, 0, "", matches, 64) == -1);
+    CHECK(krait_search_project_options(root, "source", 0, 0, 1, "", matches, 64) == 1);
+    CHECK(strcmp(matches[0].path, "source.py") == 0);
+    CHECK(krait_search_project_options(root, "source", 0, 0, 0, "", matches, 64) == 0);
+    snprintf(linkpath, sizeof(linkpath), "%s/linked.py", root);
+    CHECK(symlink(path, linkpath) == 0);
+    CHECK(krait_search_project_options(root, "Needle42", 0, 1, 0, "", matches, 64) == 1);
+    snprintf(path, sizeof(path), "%s/asset.bin", root);
+    FILE *f = fopen(path, "wb");
+    CHECK(f != NULL);
+    if(f) { fwrite("\0Needle42", 1, 9, f); fclose(f); }
+    CHECK(krait_search_project_options(root, "Needle42", 0, 1, 0, "", matches, 64) == 1);
+}
+
 /* Tools execute through the same public entry the live loop uses. */
 static void
 test_tools(void)
@@ -1086,6 +1124,7 @@ main(int argc, char **argv)
     test_compile_gate();
     test_run_capture();
     test_command_cancellation();
+    test_workspace_search();
     test_project_validation();
     test_card_acceptance_gate();
     test_tools();

@@ -4,24 +4,33 @@
 state :: #import "ide/state"
 ed :: #import "ide/editor"
 
-krait_search_project :: (root: const char*, query: const char*,
+krait_search_project_options :: (root: const char*, query: const char*, regex: int, match_case: int, files_only: int, exclude: const char*,
                          results: state.SearchResult*, cap: int) -> int #extern
 
 #global
+search_regex :: int #global
+search_case :: int #global
+search_exclude :: [256] char #global
+search_exclude_cursor :: int #global
+search_exclude_focus :: int #global
 
 search_run :: (st: state.IdeState*) {
     if st->project.loaded == 0 {
         return
     }
-    st->search_count = krait_search_project(st->project.path, st->find_text,
+    st->search_count = krait_search_project_options(st->project.path, st->find_text,
+                                            search_regex, search_case, st->quick_open_mode, search_exclude,
                                             &st->search_results[0], 64)
     st->selected_search = -1
     st->search_scroll = 0
-    if st->find_text[0] == 0 {
+    if st->search_count < 0 {
+        st->search_count = 0
+        state.project_set_status(st, "Invalid regular expression")
+    } else if st->find_text[0] == 0 {
         state.project_set_status(st, "Type to search")
     } else {
         label: [96] char
-        snprintf(label, sizeof(label), "Found %d result%s", st->search_count,
+        snprintf(label, sizeof(label), "Found %d result%s (limit 64)", st->search_count,
                  st->search_count == 1 ? "" : "s")
         state.project_set_status(st, label)
     }
@@ -45,19 +54,42 @@ draw_search :: (bounds: Rectangle, st: state.IdeState*) {
     button := (Rectangle){field.x + field.width + (float)pad, field.y,
                           (float)btn_w, (float)input_h}
     results := (Rectangle){bounds.x + (float)pad,
-                           bounds.y + (float)(pad * 2 + input_h),
+                           bounds.y + (float)(pad * 4 + input_h * 3),
                            bounds.width - (float)(pad * 2),
-                           bounds.height - (float)(pad * 3 + input_h)}
-    old_len := strlen(st->find_text)
+                           bounds.height - (float)(pad * 5 + input_h * 3)}
+    old_query: [256] char
+    snprintf(old_query, sizeof(old_query), "%s", st->find_text)
     TextField((TextFieldProps){
         field, st->find_text, sizeof(st->find_text),
         &st->find_cursor, &st->find_focused,
         sizeof(st->find_text) - 1, ScaleUIPx(13), 5100,
         (TextInputStyle){0}, (TextInputFilter){0}, NULL, NULL
     })
-    if strlen(st->find_text) != old_len {
+    if strcmp(st->find_text, old_query) != 0 {
         search_run(st)
     }
+    options_y := (int)field.y + input_h + pad
+    if StyledButton((int)field.x, options_y, ScaleUIPx(86), input_h, "Regex",
+                           search_regex != 0 ? ButtonStyleTabSelected : ButtonStyleTab, 0, NULL) {
+        search_regex = search_regex == 0 ? 1 : 0
+        search_run(st)
+    }
+    if StyledButton((int)field.x + ScaleUIPx(92), options_y, ScaleUIPx(96), input_h, "Match case",
+                           search_case != 0 ? ButtonStyleTabSelected : ButtonStyleTab, 0, NULL) {
+        search_case = search_case == 0 ? 1 : 0
+        search_run(st)
+    }
+    old_exclude: [256] char
+    snprintf(old_exclude, sizeof(old_exclude), "%s", search_exclude)
+    Text("Exclude glob", (int)field.x, options_y + input_h + pad + ScaleUIPx(6), ScaleUIPx(11), GetThemeIcon())
+    TextField((TextFieldProps){
+        (Rectangle){field.x + (float)ScaleUIPx(100), (float)(options_y + input_h + pad),
+                    bounds.width - (float)(pad * 2 + ScaleUIPx(100)), (float)input_h},
+        search_exclude, sizeof(search_exclude), &search_exclude_cursor, &search_exclude_focus,
+        sizeof(search_exclude) - 1, ScaleUIPx(12), 5101,
+        (TextInputStyle){0}, (TextInputFilter){0}, NULL, NULL
+    })
+    if strcmp(old_exclude, search_exclude) != 0 { search_run(st) }
     if StyledButton((int)button.x, (int)button.y,
                            (int)button.width, (int)button.height,
                            st->quick_open_mode != 0 ? "Open" : "Find",
@@ -73,7 +105,14 @@ draw_search :: (bounds: Rectangle, st: state.IdeState*) {
     }
     y := (int)results.y
     row_h := ScaleUIPx(24)
-    for int i = 0; i < st->search_count; i++ {
+    if CheckCollisionPointRec(GetMousePosition(), results) {
+        st->search_scroll = st->search_scroll - (int)(GetMouseWheelMove() * 3.0)
+    }
+    visible := (int)results.height / (row_h + ScaleUIPx(2))
+    maximum := st->search_count > visible ? st->search_count - visible : 0
+    if st->search_scroll > maximum { st->search_scroll = maximum }
+    if st->search_scroll < 0 { st->search_scroll = 0 }
+    for int i = st->search_scroll; i < st->search_count; i++ {
         r := &st->search_results[i]
         if y + row_h > (int)(results.y + results.height) {
             break
@@ -89,7 +128,7 @@ draw_search :: (bounds: Rectangle, st: state.IdeState*) {
                                row_h, label, ButtonStyleSecondary,
                                0, NULL) {
             st->selected_search = i
-            ed.editor_open(st, r->path)
+            ed.editor_open_line(st, r->path, r->line)
             state.project_set_status(st, r->path)
         }
         y = y + row_h + ScaleUIPx(2)
