@@ -276,6 +276,11 @@ test_card_acceptance_gate(void)
     CHECK(krait_agent_bind_task(project, card_id));
     result = krait_agent_run_tools("[{\"tool\":\"validate\"}]"); free(result);
     CHECK(krait_agent_validation_current());
+    CHECK(krait_kanban_set_field(2, index, 3, "New acceptance criterion"));
+    CHECK(!krait_agent_validation_current());
+    CHECK(!krait_kanban_move(2, index, 3));
+    result = krait_agent_run_tools("[{\"tool\":\"validate\"}]"); free(result);
+    CHECK(krait_agent_validation_current());
     snprintf(source, sizeof(source), "%s/source.txt", project);
     CHECK(krait_write_text_file_atomic(source, "new source"));
     CHECK(!krait_kanban_move(2, index, 3));

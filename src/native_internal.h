@@ -104,6 +104,9 @@ void krait_ai_free(KraitAiRequest *request);
 /* ---- native_kanban.c: agentic board (files under ~/.kryon/krait/kanban) ---- */
 int krait_kanban_rescan(void);
 int krait_kanban_count(int col);
+const char *krait_kanban_field(int col, int index, int field);
+int krait_kanban_set_field(int col, int index, int field, const char *value);
+int krait_kanban_spec_snapshot(const char *id, char digest[65]);
 const char *krait_kanban_column_name(int col);
 const char *krait_kanban_card_id(int col, int index);
 const char *krait_kanban_card_title(int col, int index);

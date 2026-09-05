@@ -46,3 +46,28 @@ services/dependencies are not covered; rerun validation when they change.
 `.krait/tasks.json` itself is included, so changing the checks invalidates
 older results. Source-based acceptance does not prove arbitrary product
 requirements: review the task's acceptance criteria before clicking Accept.
+
+## Cards and acceptance criteria
+
+Open a card to edit its Task, Criteria, Labels, or Depends on fields. Choose
+Low, Normal, High, or Urgent priority. Dependencies are card IDs separated
+by whitespace or commas; IDs are displayed in the editor. Unknown IDs,
+self-dependencies and dependencies outside Done prevent acceptance. A
+cycle therefore cannot be accepted until its dependency list is corrected.
+
+Metadata is stored as a JSON `meta:` header in each card's text file. Existing
+cards without metadata continue to load. Labels are free text; dependencies
+are interpreted as IDs. Criteria are multiline review requirements, supplied
+to the agent when handing off a card. Accept is the user's confirmation that
+those requirements have been reviewed, not an automated proof of them.
+
+Validation fingerprints the complete card file, including requirements and
+metadata. Editing it after validation invalidates the result even if source
+files stay unchanged. New validation reports are required after upgrading
+from reports that did not record task specifications.
+
+Each successful move into Done records an acceptance event beneath
+`~/.kryon/krait/kanban/.acceptance/<card-id>/`. Events preserve the title,
+criteria, task/source fingerprints and acceptance timestamp. They remain
+available after card deletion; a history browser is still planned. Board
+imports and direct file edits do not yet enforce this workflow.

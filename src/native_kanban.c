@@ -14,6 +14,7 @@
 
 #include "kry_json.h"
 #include "kry_process.h"
+#include "kry_sha256.h"
 
 #include <dirent.h>
 #include <stdio.h>
@@ -39,6 +40,7 @@ typedef struct {
     char path[KRAIT_PATH_MAX];
     char title[256];
     char project[KRAIT_PATH_MAX];
+    char fields[4][8192]; /* priority, labels, dependencies, criteria */
     char *body;          /* malloc'd; may be NULL */
     char status[256];    /* "", "running...", "proposal ready", error text */
     int proposal_count;
@@ -95,6 +97,8 @@ kb_free_all(void)
     }
 }
 
+static const char *kb_field_names[] = {"priority", "labels", "dependencies", "criteria"};
+
 static void
 kb_parse_card(KbCard *c, const char *text)
 {
@@ -131,6 +135,17 @@ kb_parse_card(KbCard *c, const char *text)
             memcpy(c->project, v, vn);
             c->project[vn] = '\0';
             krait_trim(c->project);
+        }
+        if(n > 6 && strncmp(p, "meta: ", 6) == 0) {
+            char *line = strndup(p + 6, n - 6);
+            KryJson *meta = kry_json_parse(line);
+            for(int i = 0; i < 4; i++) {
+                const char *value = kry_json_string(kry_json_get(meta, kb_field_names[i]));
+                if(value != NULL)
+                    snprintf(c->fields[i], sizeof(c->fields[i]), "%s", value);
+            }
+            kry_json_free(meta);
+            free(line);
         }
         if(nl == NULL)
             break;
@@ -268,18 +283,106 @@ kb_card_at(int col, int index)
 static int
 kb_save_card(KbCard *c)
 {
-    size_t size = strlen(c->title) + strlen(c->project) +
-                  (c->body != NULL ? strlen(c->body) : 0) + 32;
+    KryJsonBuf meta = {0};
+    kry_json_buf_raw(&meta, "{");
+    for(int i = 0; i < 4; i++) {
+        if(i) kry_json_buf_raw(&meta, ",");
+        kry_json_buf_str(&meta, kb_field_names[i]);
+        kry_json_buf_raw(&meta, ":");
+        kry_json_buf_str(&meta, c->fields[i]);
+    }
+    kry_json_buf_raw(&meta, "}");
+    const char *json = kry_json_buf_finish(&meta);
+    if(json == NULL) { kry_json_buf_free(&meta); return 0; }
+    size_t size = strlen(c->title) + strlen(c->project) + strlen(json) +
+                  (c->body != NULL ? strlen(c->body) : 0) + 48;
     char *text = malloc(size);
-    int ok;
-
-    if(text == NULL)
-        return 0;
-    snprintf(text, size, "%s\nproject: %s\n\n%s", c->title,
-             c->project, c->body != NULL ? c->body : "");
-    ok = krait_write_text_file_atomic(c->path, text);
+    if(text == NULL) { kry_json_buf_free(&meta); return 0; }
+    snprintf(text, size, "%s\nproject: %s\nmeta: %s\n\n%s", c->title,
+             c->project, json, c->body != NULL ? c->body : "");
+    int ok = krait_write_text_file_atomic(c->path, text);
     free(text);
+    kry_json_buf_free(&meta);
     return ok;
+}
+
+const char *
+krait_kanban_field(int col, int index, int field)
+{
+    KbCard *c = kb_card_at(col, index);
+    return c != NULL && field >= 0 && field < 4 ? c->fields[field] : "";
+}
+
+int
+krait_kanban_set_field(int col, int index, int field, const char *value)
+{
+    KbCard *c = kb_card_at(col, index);
+    if(c == NULL || field < 0 || field >= 4 || value == NULL ||
+       strlen(value) >= sizeof(c->fields[0])) return 0;
+    if(field == 0 && strcmp(value, "Low") && strcmp(value, "Normal") &&
+       strcmp(value, "High") && strcmp(value, "Urgent") && value[0]) return 0;
+    char previous[8192];
+    snprintf(previous, sizeof(previous), "%s", c->fields[field]);
+    snprintf(c->fields[field], sizeof(c->fields[field]), "%s", value);
+    if(!kb_save_card(c)) {
+        snprintf(c->fields[field], sizeof(c->fields[field]), "%s", previous);
+        return 0;
+    }
+    return 1;
+}
+
+/* Read disk rather than the UI's mutable board cache during worker checks. */
+int
+krait_kanban_spec_snapshot(const char *id, char digest[65])
+{
+    char dir[KRAIT_PATH_MAX], path[KRAIT_PATH_MAX * 2];
+    KrySha256 hash;
+    unsigned char raw[32];
+    int found = 0;
+    digest[0] = 0;
+    if(id == NULL || !id[0]) return 1;
+    if(strchr(id, '/') || strstr(id, "..")) return 0;
+    kb_board_dir(dir, sizeof(dir));
+    kry_sha256_init(&hash);
+    for(int col = 0; col < 4; col++) {
+        char *text = NULL;
+        long len;
+        snprintf(path, sizeof(path), "%s/%s/%s.txt", dir, kb_columns[col], id);
+        if(krait_read_file_alloc(path, &text, &len)) {
+            kry_sha256_update(&hash, text, (size_t)len);
+            found++;
+        }
+        free(text);
+    }
+    if(found > 1) return 0;
+    if(found == 1) {
+        kry_sha256_final(&hash, raw);
+        kry_sha256_hex(raw, digest);
+    }
+    return 1;
+}
+
+static int
+kb_dependencies_done(KbCard *c)
+{
+    char *copy = strdup(c->fields[2]), *save = NULL;
+    if(copy == NULL) return 0;
+    for(char *id = strtok_r(copy, ", \t\r\n", &save); id; id = strtok_r(NULL, ", \t\r\n", &save)) {
+        int done = 0;
+        for(int col = 0; col < 4; col++) {
+            for(int i = 0; i < kb_board[col].count; i++) {
+                if(strcmp(kb_board[col].cards[i].id, id) == 0) {
+                    if(col != 3 || !strcmp(id, c->id)) {
+                        free(copy); return 0;
+                    }
+                    done = 1;
+                }
+            }
+        }
+        if(!done) { free(copy); return 0; }
+    }
+    free(copy);
+    return 1;
 }
 
 int
@@ -446,6 +549,35 @@ krait_kanban_set_project(int col, int index, const char *project)
     return kb_save_card(c);
 }
 
+static int
+kb_record_acceptance(KbCard *c)
+{
+    char dir[KRAIT_PATH_MAX * 2], path[KRAIT_PATH_MAX * 3];
+    char spec[65], source[65] = "";
+    if(!krait_kanban_spec_snapshot(c->id, spec) ||
+       (c->project[0] && !krait_project_snapshot(c->project, source))) return 0;
+    snprintf(dir, sizeof(dir), "%s/.acceptance/%s", kb_dir, c->id);
+    krait_mkdir_p(dir);
+    snprintf(path, sizeof(path), "%s/event-XXXXXX", dir);
+    int fd = mkstemp(path);
+    if(fd < 0) return 0;
+    close(fd);
+    KryJsonBuf event = {0};
+    kry_json_buf_raw(&event, "{\"card\":"); kry_json_buf_str(&event, c->id);
+    kry_json_buf_raw(&event, ",\"title\":"); kry_json_buf_str(&event, c->title);
+    kry_json_buf_raw(&event, ",\"project\":"); kry_json_buf_str(&event, c->project);
+    kry_json_buf_raw(&event, ",\"criteria\":"); kry_json_buf_str(&event, c->fields[3]);
+    kry_json_buf_raw(&event, ",\"task_spec\":"); kry_json_buf_str(&event, spec);
+    kry_json_buf_raw(&event, ",\"source_snapshot\":"); kry_json_buf_str(&event, source);
+    kry_json_buf_raw(&event, ",\"accepted_at\":"); kry_json_buf_num(&event, (double)time(NULL));
+    kry_json_buf_raw(&event, "}");
+    const char *json = kry_json_buf_finish(&event);
+    int ok = json != NULL && krait_write_text_file_atomic(path, json);
+    kry_json_buf_free(&event);
+    if(!ok) unlink(path);
+    return ok;
+}
+
 int
 krait_kanban_move(int col, int index, int to_col)
 {
@@ -455,6 +587,10 @@ krait_kanban_move(int col, int index, int to_col)
 
     if(c == NULL || to_col < 0 || to_col > 3 || to_col == col)
         return 0;
+    if(to_col == 3 && !kb_dependencies_done(c)) {
+        snprintf(c->status, sizeof(c->status), "Cannot accept: dependencies must be Done (use card IDs)");
+        return 0;
+    }
     if(to_col == 3 && c->project[0] != 0 &&
        !krait_agent_validation_for(c->project, c->id)) {
         snprintf(c->status, sizeof(c->status),
@@ -471,6 +607,12 @@ krait_kanban_move(int col, int index, int to_col)
         return 0;
     if(unlink(c->path) != 0) {
         unlink(dst);
+        return 0;
+    }
+    if(to_col == 3 && !kb_record_acceptance(c)) {
+        /* Restore the source entry if recording the acceptance failed. */
+        if(link(dst, c->path) == 0) unlink(dst);
+        snprintf(c->status, sizeof(c->status), "Could not record acceptance; check board storage");
         return 0;
     }
     krait_kanban_rescan();

@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <dirent.h>
 
 static int failures;
 
@@ -103,6 +104,56 @@ test_card_identity_and_long_body(void)
     krait_kanban_rescan();
     for(col = 0; col < 4; col++)
         CHECK(krait_kanban_delete(col, 0));
+}
+
+static void
+test_metadata_and_dependencies(void)
+{
+    int i = krait_kanban_create(0, "Dependency");
+    char id[128], before[65], after[65];
+    snprintf(id, sizeof(id), "%s", krait_kanban_card_id(0, i));
+    CHECK(krait_kanban_spec_snapshot(id, before));
+    CHECK(krait_kanban_set_field(0, i, 0, "High"));
+    CHECK(!krait_kanban_set_field(0, i, 0, "bogus"));
+    CHECK(krait_kanban_set_field(0, i, 1, "editor, reliability"));
+    CHECK(krait_kanban_set_field(0, i, 3, "First criterion\nSecond: \"quoted\""));
+    CHECK(krait_kanban_spec_snapshot(id, after));
+    CHECK(strcmp(before, after) != 0);
+    krait_kanban_rescan();
+    CHECK(strcmp(krait_kanban_field(0, 0, 0), "High") == 0);
+    CHECK(strcmp(krait_kanban_field(0, 0, 3), "First criterion\nSecond: \"quoted\"") == 0);
+    int dependent = krait_kanban_create(2, "Dependent");
+    CHECK(krait_kanban_set_field(2, dependent, 2, id));
+    CHECK(!krait_kanban_move(2, dependent, 3));
+    CHECK(krait_kanban_move(0, 0, 3));
+    char history[2048];
+    snprintf(history, sizeof(history), "%s/.kryon/krait/kanban/.acceptance/%s", getenv("HOME"), id);
+    DIR *d = opendir(history);
+    CHECK(d != NULL);
+    int events = 0;
+    if(d != NULL) {
+        struct dirent *entry;
+        while((entry = readdir(d)) != NULL) {
+            if(strncmp(entry->d_name, "event-", 6) == 0) {
+                char path[4096], *record = NULL;
+                long len;
+                snprintf(path, sizeof(path), "%s/%s", history, entry->d_name);
+                CHECK(krait_read_file_alloc(path, &record, &len));
+                CHECK(record != NULL && strstr(record, "\"accepted_at\":") != NULL);
+                CHECK(record != NULL && strstr(record, "First criterion") != NULL);
+                free(record);
+                events++;
+            }
+        }
+        closedir(d);
+    }
+    CHECK(events == 1);
+    CHECK(krait_kanban_move(2, dependent, 3));
+    while(krait_kanban_count(3)) CHECK(krait_kanban_delete(3, 0));
+    i = krait_kanban_create(2, "Missing dependency");
+    CHECK(krait_kanban_set_field(2, i, 2, "card-missing"));
+    CHECK(!krait_kanban_move(2, i, 3));
+    CHECK(krait_kanban_delete(2, i));
 }
 
 static void
@@ -213,6 +264,7 @@ main(void)
 
     test_board_crud();
     test_card_identity_and_long_body();
+    test_metadata_and_dependencies();
     test_project_scaffold_binding();
     test_ai_state_without_key();
     test_live_ai_gated();

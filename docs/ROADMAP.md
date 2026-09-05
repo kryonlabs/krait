@@ -21,7 +21,9 @@ acceptance checks before marking it done.
   or timeout, with forced cleanup for commands that ignore termination.
 - [x] Source-bound validation and explicit Review-to-Done acceptance for
   project-bound cards through Krait's move API.
-- [ ] Structured acceptance criteria, task-spec validation, and acceptance history.
+- [x] Editable acceptance criteria and task-spec validation.
+- [x] Persist acceptance events with task/source fingerprints and criteria.
+- [ ] Acceptance-history browser and dependency-aware scheduling.
 - [ ] Review UI for changes, selective acceptance, and checkpoint history.
 - [ ] Detect stale writes against read versions and unsaved editor contents.
 - [ ] Make multi-file changes transactional; handle external writers and
@@ -54,7 +56,8 @@ without leaving Krait, alongside the existing Kryon workflow.
 
 ## 3. Agentic Kanban
 
-- [ ] Structured task priorities, labels, dependencies and acceptance criteria.
+- [x] Editable priorities, labels, dependencies and acceptance criteria;
+  unfinished or unknown dependencies block acceptance.
 - [ ] Configurable columns, scheduling and concurrency controls.
 - [ ] Per-task workspace isolation and conflict-aware integration.
 - [ ] Validation evidence and automatic transitions into Review.

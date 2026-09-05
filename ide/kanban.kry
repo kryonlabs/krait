@@ -13,6 +13,8 @@ krait_github_card_issue :: (col: int, index: int) -> int #extern
 krait_git_status_text :: () -> const char* #extern
 
 krait_kanban_rescan :: () -> int #extern
+krait_kanban_field :: (col: int, index: int, field: int) -> const char* #extern
+krait_kanban_set_field :: (col: int, index: int, field: int, value: const char*) -> int #extern
 krait_kanban_count :: (col: int) -> int #extern
 krait_kanban_column_name :: (col: int) -> const char* #extern
 krait_kanban_card_id :: (col: int, index: int) -> const char* #extern
@@ -51,6 +53,7 @@ kanban_body_cursor :: int #global
 kanban_body_focused :: int #global
 kanban_body_scroll :: int #global
 kanban_ai_running :: int #global
+kanban_detail_tab :: int #global
 
 kanban_reset_selection :: () {
     kanban_sel_col = -1
@@ -211,6 +214,7 @@ draw_column :: (bounds: Rectangle, col: int, interactive: int) {
             kanban_sel_col = col
             kanban_sel_card = i
             kanban_detail_open = 1
+            kanban_detail_tab = 0
             snprintf(kanban_detail_title, sizeof(kanban_detail_title), "%s",
                      title)
             snprintf(kanban_detail_body, sizeof(kanban_detail_body), "%s",
@@ -305,7 +309,8 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
         GetThemeSurface(), GetThemeButton(), GetThemeLink(), GetThemeText(),
         GetThemeText(), 0, ScaleUIPx(10), ScaleUIPx(8)
     }
-    old_len := strlen(kanban_detail_title)
+    old_title: [256] char
+    snprintf(old_title, sizeof(old_title), "%s", kanban_detail_title)
     TextField((TextFieldProps){
         (Rectangle){bounds.x + (float)pad, (float)body_top,
                     bounds.width - (float)(pad * 2), (float)row_h},
@@ -314,7 +319,7 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
         sizeof(kanban_detail_title) - 1, ScaleUIPx(13), 7501,
         input_style, (TextInputFilter){0}, NULL, NULL
     })
-    if strlen(kanban_detail_title) != old_len {
+    if strcmp(kanban_detail_title, old_title) != 0 {
         krait_kanban_set_title(col, index, kanban_detail_title)
     }
 
@@ -343,6 +348,37 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
 
     btn_y := (int)bounds.y + (int)bounds.height - row_h - ScaleUIPx(10)
     mid_top := body_top + row_h + ScaleUIPx(26)
+    tabs: [4] const char* = {"Task", "Criteria", "Labels", "Depends on"}
+    fields: [4] int = {-1, 3, 1, 2}
+    for int t = 0; t < 4; t++ {
+        if StyledButton((int)bounds.x + pad + t * ScaleUIPx(88), mid_top,
+                               ScaleUIPx(84), ScaleUIPx(26), tabs[t],
+                               kanban_detail_tab == t ? ButtonStyleTabSelected : ButtonStyleTab,
+                               0, NULL) {
+            kanban_detail_tab = t
+            snprintf(kanban_detail_body, sizeof(kanban_detail_body), "%s",
+                     t == 0 ? krait_kanban_card_body(col, index) : krait_kanban_field(col, index, fields[t]))
+            kanban_body_cursor = 0
+            kanban_body_scroll = 0
+        }
+    }
+    priorities: [4] const char* = {"Low", "Normal", "High", "Urgent"}
+    priority := 1
+    for int p = 0; p < 4; p++ {
+        if strcmp(krait_kanban_field(col, index, 0), priorities[p]) == 0 {
+            priority = p
+        }
+    }
+    old_priority := priority
+    mid_top = mid_top + ScaleUIPx(30)
+    Dropdown(7510, (int)bounds.x + pad, mid_top, ScaleUIPx(108), ScaleUIPx(26),
+             priorities, 4, &priority)
+    if priority != old_priority {
+        krait_kanban_set_field(col, index, 0, priorities[priority])
+    }
+    Text(krait_kanban_card_id(col, index), (int)bounds.x + pad + ScaleUIPx(118),
+               mid_top + ScaleUIPx(6), ScaleUIPx(11), GetThemeIcon())
+    mid_top = mid_top + ScaleUIPx(30)
     mid_bottom := btn_y - ScaleUIPx(10)
     proposals := krait_kanban_proposal_count(col, index)
     area_h := mid_bottom - mid_top
@@ -356,11 +392,15 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
         kanban_detail_body, sizeof(kanban_detail_body),
         &kanban_body_cursor, &kanban_body_focused, &kanban_body_scroll,
         sizeof(kanban_detail_body) - 1, ScaleUIPx(13), ScaleUIPx(6), 7502,
-        "Card prompt / notes", SyntaxNone,
+        kanban_detail_tab == 3 ? "Dependency card IDs, separated by spaces or commas" : tabs[kanban_detail_tab], SyntaxNone,
         input_style, (TextInputFilter){0}, NULL, 0
     })
     if body_changed != 0 || strlen(kanban_detail_body) != old_body_len {
-        krait_kanban_set_body(col, index, kanban_detail_body)
+        if kanban_detail_tab == 0 {
+            krait_kanban_set_body(col, index, kanban_detail_body)
+        } else {
+            krait_kanban_set_field(col, index, fields[kanban_detail_tab], kanban_detail_body)
+        }
     }
 
     if proposals > 0 {
@@ -404,7 +444,7 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
             st->view = state.IDE_VIEW_AGENT
         }
     }
-    if krait_kanban_ai_configured() != 0 {
+    if krait_kanban_ai_configured() != 0 && krait_kanban_agent_ready() == 0 {
         if StyledButton((int)bounds.x + pad + ScaleUIPx(78), btn_y,
                                ScaleUIPx(80), row_h, "Run AI",
                                ButtonStylePrimary, 0, NULL) {

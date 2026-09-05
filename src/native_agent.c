@@ -916,7 +916,7 @@ agent_tool_validate(char *out, size_t out_size)
 {
     char config_path[KRAIT_PATH_MAX * 2], report_path[KRAIT_PATH_MAX * 3];
     char *config = NULL;
-    char before[65], after[65];
+    char before[65], after[65], spec_before[65], spec_after[65];
     long len;
     KryJson *root = NULL, *tasks = NULL;
     KryJsonBuf report = {0};
@@ -954,7 +954,8 @@ agent_tool_validate(char *out, size_t out_size)
             return;
         }
     }
-    if(!krait_project_snapshot(agent_project, before)) {
+    if(!krait_project_snapshot(agent_project, before) ||
+       !krait_kanban_spec_snapshot(agent_task, spec_before)) {
         snprintf(out + used, out_size - used, "[validate] FAILED: cannot snapshot project sources\n");
         kry_json_free(root); free(config);
         return;
@@ -992,12 +993,14 @@ agent_tool_validate(char *out, size_t out_size)
                  name, rc == 0 ? "passed" : "FAILED", rc, elapsed, output);
         if(atomic_load(&agent_stop_requested)) { passed = 0; break; }
     }
-    if(!krait_project_snapshot(agent_project, after) || strcmp(before, after) != 0) {
+    if(!krait_project_snapshot(agent_project, after) || strcmp(before, after) != 0 ||
+       !krait_kanban_spec_snapshot(agent_task, spec_after) || strcmp(spec_before, spec_after) != 0) {
         passed = 0;
         used = strlen(out);
         snprintf(out + used, out_size - used, "[validate] FAILED: project sources changed during validation\n");
     }
     kry_json_buf_raw(&report, "],\"source_snapshot\":"); kry_json_buf_str(&report, before);
+    kry_json_buf_raw(&report, ",\"task_spec\":"); kry_json_buf_str(&report, spec_before);
     kry_json_buf_raw(&report, ",\"passed\":"); kry_json_buf_num(&report, passed);
     kry_json_buf_raw(&report, "}");
     const char *json = kry_json_buf_finish(&report);
@@ -1017,6 +1020,7 @@ krait_agent_validation_for(const char *bound_project, const char *bound_task)
     char *text = NULL;
     long len;
     int valid = 0;
+    char task_spec[65];
     char dir[KRAIT_PATH_MAX * 2];
     if(agent_busy || bound_project == NULL || bound_task == NULL || bound_project[0] == 0 ||
        strchr(bound_task, '/') != NULL || strstr(bound_task, "..") != NULL)
@@ -1027,10 +1031,12 @@ krait_agent_validation_for(const char *bound_project, const char *bound_task)
         return 0;
     KryJson *root = kry_json_parse(text);
     free(text);
+    const char *saved_spec = kry_json_string(kry_json_get(root, "task_spec"));
     const char *saved = kry_json_string(kry_json_get(root, "source_snapshot"));
     const char *project = kry_json_string(kry_json_get(root, "project"));
     const char *task = kry_json_string(kry_json_get(root, "task"));
-    if(saved != NULL && project != NULL && task != NULL &&
+    if(saved != NULL && saved_spec != NULL && project != NULL && task != NULL &&
+       krait_kanban_spec_snapshot(bound_task, task_spec) && strcmp(saved_spec, task_spec) == 0 &&
        strcmp(project, bound_project) == 0 && strcmp(task, bound_task) == 0 &&
        kry_json_number(kry_json_get(root, "passed")) == 1 &&
        krait_project_snapshot(bound_project, snapshot) && strcmp(snapshot, saved) == 0)
@@ -1984,11 +1990,12 @@ krait_agent_bridge_card(int col, int index)
         return 0;
     if(!agent_bind_session(project, id))
         return 0;
-    size = strlen(title) + strlen(body) + 32;
+    const char *criteria = krait_kanban_field(col, index, 3);
+    size = strlen(title) + strlen(body) + strlen(criteria) + 80;
     prompt = malloc(size);
     if(prompt == NULL)
         return 0;
-    snprintf(prompt, size, "Kanban card: %s\n\n%s", title, body);
+    snprintf(prompt, size, "Kanban card: %s\n\n%s\n\nAcceptance criteria:\n%s", title, body, criteria);
     result = krait_agent_send(prompt);
     free(prompt);
     return result;
