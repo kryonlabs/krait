@@ -859,6 +859,13 @@ krait_agent_clear_console(void)
     agent_console_pending[0] = '\0';
 }
 
+static int
+agent_command_cancelled(void *unused)
+{
+    (void)unused;
+    return atomic_load(&agent_stop_requested);
+}
+
 static void
 agent_tool_run(const char *cmd, char *out, size_t out_size)
 {
@@ -874,7 +881,8 @@ agent_tool_run(const char *cmd, char *out, size_t out_size)
         snprintf(out + used, out_size - used, "[run] refused: %s\n", cmd);
         return;
     }
-    exit_status = krait_run_capture(agent_project, cmd, 60, buf, sizeof(buf));
+    exit_status = krait_run_capture_cancel(agent_project, cmd, 60, buf, sizeof(buf),
+                                            agent_command_cancelled, NULL);
     if(exit_status < 0) {
         snprintf(out + used, out_size - used, "[run] spawn failed: %s\n", cmd);
         return;
@@ -1883,7 +1891,7 @@ krait_agent_stop(void)
         agent_busy = 0;
         agent_set_status("stopped");
     } else {
-        agent_set_status("Stopping after the current tool returns");
+        agent_set_status("Stopping active command; waiting for tool cleanup");
     }
 }
 

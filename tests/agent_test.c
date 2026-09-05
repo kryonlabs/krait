@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <time.h>
 
 static int failures;
 
@@ -166,6 +167,38 @@ test_run_capture(void)
     CHECK(strstr(out, "hello-agent") != NULL);
     CHECK(krait_run_capture("/tmp", "exit 3", 5, out, sizeof(out)) == 3);
     CHECK(krait_run_capture("/tmp", "", 5, out, sizeof(out)) == -1);
+}
+
+static int
+cancel_after_polls(void *userdata)
+{
+    int *polls = userdata;
+    return ++*polls > 5;
+}
+
+static void
+test_command_cancellation(void)
+{
+    char output[256];
+    char marker[256], command[1024];
+    int polls = 0;
+    snprintf(marker, sizeof(marker), "/tmp/krait-command-marker-%d", (int)getpid());
+    unlink(marker);
+    snprintf(command, sizeof(command),
+        "trap '' TERM; (trap '' TERM; sleep 1; echo leaked > '%s') & wait", marker);
+    CHECK(krait_run_capture_cancel("/tmp", command, 10, output, sizeof(output),
+                                  cancel_after_polls, &polls) == 130);
+    struct timespec delay = {1, 100000000};
+    nanosleep(&delay, NULL);
+    CHECK(access(marker, F_OK) != 0);
+    CHECK(krait_run_capture("/tmp", "trap '' TERM; sleep 5", 1,
+                            output, sizeof(output)) == 124);
+    CHECK(krait_run_capture("/tmp", "printf tail-output", 2,
+                            output, sizeof(output)) == 0);
+    CHECK(strcmp(output, "tail-output") == 0);
+    CHECK(krait_run_capture("/tmp", "printf large-output", 2, output, 1) == 0);
+    CHECK(output[0] == 0);
+    CHECK(krait_run_capture("/tmp", "true", 2, NULL, 0) == 0);
 }
 
 /* Tools execute through the same public entry the live loop uses. */
@@ -802,6 +835,7 @@ main(int argc, char **argv)
     test_interrupted_run_recovery();
     test_compile_gate();
     test_run_capture();
+    test_command_cancellation();
     test_tools();
     test_change_recovery();
     test_hex_editor();

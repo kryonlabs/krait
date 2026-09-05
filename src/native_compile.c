@@ -22,6 +22,10 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/wait.h>
 
 typedef void (*GateLineFn)(char *line, void *userdata);
 
@@ -443,64 +447,112 @@ krait_compile_gate_all(const char *project_dir,
     return rc == 0 ? 0 : 1;
 }
 
-/* Run one command in a directory and capture combined output. Bounded by
- * timeout_s; output is truncated to out_size. Used by the agent's run
- * tool. Returns the process exit status, or -1 when the spawn fails. */
+/* Commands get their own process group, so cancellation also stops children.
+ * Return 124 for timeout, 130 for cancellation, -1 for launch failure. */
+static double
+command_time(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1000000000.0;
+}
+
+int
+krait_run_capture_cancel(const char *dir, const char *cmdline, int timeout_s,
+                         char *out, size_t out_size,
+                         int (*cancelled)(void *), void *userdata)
+{
+    int pipes[2], status = 0, reason = 0, reaped = 0;
+    pid_t pid;
+    size_t used = 0;
+    double deadline, stop_time = 0;
+    if(out != NULL && out_size > 0)
+        out[0] = 0;
+    if(dir == NULL || cmdline == NULL || cmdline[0] == 0 || timeout_s <= 0)
+        return -1;
+    if(cancelled != NULL && cancelled(userdata))
+        return 130;
+    if(pipe(pipes) != 0)
+        return -1;
+    fcntl(pipes[0], F_SETFD, FD_CLOEXEC);
+    fcntl(pipes[1], F_SETFD, FD_CLOEXEC);
+    pid = fork();
+    if(pid < 0) {
+        close(pipes[0]); close(pipes[1]);
+        return -1;
+    }
+    if(pid == 0) {
+        setpgid(0, 0);
+        close(pipes[0]);
+        if(chdir(dir) != 0 || dup2(pipes[1], STDOUT_FILENO) < 0 ||
+           dup2(pipes[1], STDERR_FILENO) < 0)
+            _exit(126);
+        close(pipes[1]);
+        int input = open("/dev/null", O_RDONLY);
+        if(input >= 0) { dup2(input, STDIN_FILENO); close(input); }
+        execl("/bin/sh", "sh", "-c", cmdline, (char *)NULL);
+        _exit(127);
+    }
+    close(pipes[1]);
+    setpgid(pid, pid);
+    fcntl(pipes[0], F_SETFL, fcntl(pipes[0], F_GETFL) | O_NONBLOCK);
+    deadline = command_time() + timeout_s;
+    for(;;) {
+        char chunk[4096];
+        ssize_t n;
+        /* Bounded draining prevents endless output from starving Stop. */
+        for(int i = 0; i < 64 && (n = read(pipes[0], chunk, sizeof(chunk))) > 0; i++) {
+            if(out != NULL && out_size > 0 && used < out_size - 1) {
+                size_t take = (size_t)n;
+                if(take > out_size - 1 - used) take = out_size - 1 - used;
+                memcpy(out + used, chunk, take);
+                used += take;
+                out[used] = 0;
+            }
+        }
+        double now = command_time();
+        if(!reason && cancelled != NULL && cancelled(userdata)) reason = 130;
+        if(!reason && now >= deadline) reason = 124;
+        if(reason && stop_time == 0) {
+            kill(-pid, SIGTERM);
+            stop_time = now;
+        }
+        if(!reaped) {
+            pid_t result = waitpid(pid, &status, WNOHANG);
+            if(result == pid || (result < 0 && errno == ECHILD)) reaped = 1;
+        }
+        if(reason && now - stop_time >= 0.25) {
+            kill(-pid, SIGKILL);
+            if(!reaped) {
+                while(waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+                reaped = 1;
+            }
+            break;
+        }
+        if(reaped && !reason) {
+            /* Drain tail after exit; no producer can block this read. */
+            for(int i = 0; i < 64 && (n = read(pipes[0], chunk, sizeof(chunk))) > 0; i++) {
+                if(out != NULL && out_size > 0 && used < out_size - 1) {
+                    size_t take = (size_t)n;
+                    if(take > out_size - 1 - used) take = out_size - 1 - used;
+                    memcpy(out + used, chunk, take); used += take; out[used] = 0;
+                }
+                if(command_time() >= deadline) break;
+            }
+            break;
+        }
+        struct timespec delay = {0, 10000000};
+        nanosleep(&delay, NULL);
+    }
+    close(pipes[0]);
+    if(reason) return reason;
+    return WIFEXITED(status) ? WEXITSTATUS(status) :
+           WIFSIGNALED(status) ? 128 + WTERMSIG(status) : -1;
+}
+
 int
 krait_run_capture(const char *dir, const char *cmdline, int timeout_s,
                   char *out, size_t out_size)
 {
-    char carry[2048];
-    char cmd[KRAIT_PATH_MAX * 8];
-    KryProcess proc;
-    size_t used = 0;
-    int spins = 0;
-
-    if(out != NULL && out_size > 0)
-        out[0] = '\0';
-    if(dir == NULL || cmdline == NULL || cmdline[0] == '\0')
-        return -1;
-    snprintf(cmd, sizeof(cmd), "(%s) 2>&1", cmdline);
-    if(!kry_process_spawn(&proc, cmd, dir))
-        return -1;
-    carry[0] = '\0';
-    while(proc.running && spins++ < timeout_s * 20) {
-        char chunk[512];
-        int n;
-
-        while((n = kry_process_read_poll(&proc, chunk, sizeof(chunk))) > 0) {
-            if(out != NULL && used < out_size - 1) {
-                size_t take = (size_t)n;
-
-                if(take > out_size - 1 - used)
-                    take = out_size - 1 - used;
-                memcpy(out + used, chunk, take);
-                used += take;
-                out[used] = '\0';
-            }
-        }
-        {
-            struct timespec ts = {0, 50 * 1000 * 1000};
-
-            nanosleep(&ts, NULL);
-        }
-        kry_process_wait_poll(&proc);
-    }
-    {
-        char chunk[512];
-        int n;
-
-        while((n = kry_process_read_poll(&proc, chunk, sizeof(chunk))) > 0) {
-            if(out != NULL && used < out_size - 1) {
-                size_t take = (size_t)n;
-
-                if(take > out_size - 1 - used)
-                    take = out_size - 1 - used;
-                memcpy(out + used, chunk, take);
-                used += take;
-                out[used] = '\0';
-            }
-        }
-    }
-    return proc.exit_status;
+    return krait_run_capture_cancel(dir, cmdline, timeout_s, out, out_size, NULL, NULL);
 }

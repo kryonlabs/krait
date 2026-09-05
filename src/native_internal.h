@@ -165,6 +165,8 @@ int krait_compile_gate_all(const char *project_dir,
                            const char *const *overlay_bodies, int overlay_count,
                            char *first_error, size_t error_size,
                            char *all_errors, size_t all_size);
+int krait_run_capture_cancel(const char *dir, const char *cmdline, int timeout_s,
+    char *out, size_t out_size, int (*cancelled)(void *), void *userdata);
 int krait_run_capture(const char *dir, const char *cmdline, int timeout_s,
                       char *out, size_t out_size);
 int krait_gate_cc_runs(void);

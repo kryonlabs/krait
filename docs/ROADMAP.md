@@ -17,7 +17,9 @@ acceptance checks before marking it done.
 - [x] Include user and project AGENTS.md instructions in model context.
 - [x] Persist run state and offer Resume after interrupted sessions.
 - [x] Cancel pending approval/network waits and stop between tool calls.
-- [ ] Terminate an active command on cancellation; goal acceptance and validation.
+- [x] Terminate active run-tool commands and their process groups on cancellation
+  or timeout, with forced cleanup for commands that ignore termination.
+- [ ] Goal acceptance and validation.
 - [ ] Review UI for changes, selective acceptance, and checkpoint history.
 - [ ] Detect stale writes against read versions and unsaved editor contents.
 - [ ] Make multi-file changes transactional; handle external writers and
@@ -28,7 +30,8 @@ acceptance checks before marking it done.
 Recovery currently covers the latest file-tool write batch only. It does not
 undo shell commands or provide filesystem isolation. Resume starts a new
 model turn that inspects current state instead of replaying an interrupted
-command. Cancellation waits for an active tool to return before stopping. Instruction lookup currently reads ~/.kryon/krait/AGENTS.md and
+command. Cancellation terminates run-tool commands; graphics and compile-gate
+operations still finish their current operation before stopping. Instruction lookup currently reads ~/.kryon/krait/AGENTS.md and
 the bound project's AGENTS.md; nested directory rules remain to be implemented.
 
 ## 2. Daily coding
