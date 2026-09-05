@@ -18,5 +18,32 @@ Regex and case options also apply to Quick Open.
 
 The current result cap is 64 and the recursive depth limit is eight. The panel
 reports its result cap. Search reads saved files; unsaved editor buffers are
-not included yet. Workspace replacement and a replacement preview remain
-planned.
+not included yet. Paths too long for the 512-byte result path are skipped.
+
+Use **Replace with** and **Preview** to review replacements across the search
+scope. An empty replacement deletes matches. Use the arrow buttons to visit
+each changed file and the Before/After switch to inspect both versions; scroll
+to see more text. Changing the query, replacement, or search options discards
+the preview. Regex replacements support `$0` through `$9` for captured groups
+and `$$` for a literal dollar sign. Literal replacements insert the text as-is.
+
+**Apply all** checks every proposed file against its saved before-image and
+refuses to start if a target has unsaved editor changes, a file has changed,
+the project has switched, or an agent is running. Each write checks again and
+uses the same descriptor-relative replacement primitive as agent file writes.
+Symlink paths and nested repositories are refused. Clean open buffers reload
+after applying; unsaved buffers remain intact.
+
+Before writing, Krait saves a JSON recovery record containing the project root
+and complete before/after text in `~/.local/state/krait/replacements/`. The
+status bar reports the record path. Restore from these records manually;
+there is no replacement undo browser yet. If an error or conflict occurs
+during writing, Krait stops and reports how many files were applied. The batch
+is not an all-or-nothing transaction and does not lock out external writers.
+
+Replacement uses the saved-file search scope and its depth limit. A search
+that reaches the 64-result cap must be narrowed before previewing; results
+count matching lines, so multiple hits in one file also consume this limit.
+Files and replacement outputs are limited to 16 MiB each. The visual preview
+shows at most 4096 wrapped lines. Unreadable or ignored search paths are not
+included; this is not a whole-filesystem refactoring tool.

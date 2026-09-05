@@ -7,6 +7,23 @@ ed :: #import "ide/editor"
 krait_search_project_options :: (root: const char*, query: const char*, regex: int, match_case: int, files_only: int, exclude: const char*,
                          results: state.SearchResult*, cap: int) -> int #extern
 
+krait_replace_clear :: () #extern
+krait_replace_status :: () -> const char* #extern
+krait_replace_count :: () -> int #extern
+krait_replace_path :: (index: int) -> const char* #extern
+krait_replace_content :: (index: int, after: int) -> const char* #extern
+krait_replace_preview :: (root: const char*, query: const char*, replacement: const char*, regex: int, match_case: int, exclude: const char*) -> int #extern
+krait_replace_apply :: (st: state.IdeState*) -> int #extern
+krait_wrap_lines :: (text: const char*, width: int, font: int, max_lines: int) -> int #extern
+krait_wrap_line :: (text: const char*, width: int, font: int, max_lines: int, row: int, dst: char*, dst_size: int) -> int #extern
+
+replacement_text :: [256] char #global
+replacement_cursor :: int #global
+replacement_focus :: int #global
+replacement_index :: int #global
+replacement_scroll :: int #global
+replacement_after :: int #global
+
 #global
 search_regex :: int #global
 search_case :: int #global
@@ -15,6 +32,7 @@ search_exclude_cursor :: int #global
 search_exclude_focus :: int #global
 
 search_run :: (st: state.IdeState*) {
+    krait_replace_clear()
     if st->project.loaded == 0 {
         return
     }
@@ -42,6 +60,54 @@ search_focus :: (st: state.IdeState*, quick: int) {
     st->find_focused = 1
     SetUIFocus(5100)
     search_run(st)
+}
+
+draw_replacement :: (bounds: Rectangle) {
+    x := (int)bounds.x
+    y := (int)bounds.y
+    count := krait_replace_count()
+    if replacement_index >= count { replacement_index = 0 }
+    if StyledButton(x, y, ScaleUIPx(30), ScaleUIPx(26), "<", ButtonStyleSecondary, replacement_index == 0, NULL) {
+        replacement_index = replacement_index - 1
+        replacement_scroll = 0
+    }
+    if StyledButton(x + ScaleUIPx(34), y, ScaleUIPx(30), ScaleUIPx(26), ">", ButtonStyleSecondary, replacement_index >= count - 1, NULL) {
+        replacement_index = replacement_index + 1
+        replacement_scroll = 0
+    }
+    if StyledButton(x + ScaleUIPx(72), y, ScaleUIPx(120), ScaleUIPx(26), replacement_after != 0 ? "After (switch)" : "Before (switch)", ButtonStyleSecondary, 0, NULL) {
+        replacement_after = replacement_after == 0 ? 1 : 0
+        replacement_scroll = 0
+    }
+    label: [600] char
+    snprintf(label, sizeof(label), "%d/%d  %s", replacement_index + 1, count, krait_replace_path(replacement_index))
+    y = y + ScaleUIPx(32)
+    BeginScissorMode(x, y, (int)bounds.width, ScaleUIPx(22))
+    Text(label, x, y, ScaleUIPx(12), GetThemeLink())
+    EndScissorMode()
+    y = y + ScaleUIPx(24)
+    text := krait_replace_content(replacement_index, replacement_after)
+    width := (int)bounds.width - ScaleUIPx(8)
+    line_h := ScaleUIPx(18)
+    rows := ((int)(bounds.y + bounds.height) - y - line_h) / line_h
+    if rows < 1 { return }
+    total := krait_wrap_lines(text, width, ScaleUIPx(12), 10000)
+    if total >= 4096 {
+        Text("Preview limited to 4096 wrapped lines", x, (int)(bounds.y + bounds.height) - line_h, ScaleUIPx(10), GetThemeIcon())
+    }
+    if CheckCollisionPointRec(GetMousePosition(), bounds) {
+        replacement_scroll = replacement_scroll - (int)(GetMouseWheelMove() * 3.0)
+    }
+    maximum := total > rows ? total - rows : 0
+    if replacement_scroll > maximum { replacement_scroll = maximum }
+    if replacement_scroll < 0 { replacement_scroll = 0 }
+    BeginScissorMode(x, y, (int)bounds.width, rows * line_h)
+    for int row = 0; row < rows; row++ {
+        line: [2048] char
+        krait_wrap_line(text, width, ScaleUIPx(12), 10000, replacement_scroll + row, line, sizeof(line))
+        Text(line, x, y + row * line_h, ScaleUIPx(12), GetThemeText())
+    }
+    EndScissorMode()
 }
 
 draw_search :: (bounds: Rectangle, st: state.IdeState*) {
@@ -101,6 +167,44 @@ draw_search :: (bounds: Rectangle, st: state.IdeState*) {
         search_run(st)
         if st->quick_open_mode != 0 && st->search_count > 0 {
             ed.editor_open(st, st->search_results[0].path)
+        }
+    }
+    if st->quick_open_mode == 0 {
+        replace_y := (int)results.y
+        Text("Replace with", (int)field.x, replace_y + ScaleUIPx(6), ScaleUIPx(11), GetThemeIcon())
+        old_replacement: [256] char
+        snprintf(old_replacement, sizeof(old_replacement), "%s", replacement_text)
+        TextField((TextFieldProps){
+            (Rectangle){field.x + (float)ScaleUIPx(100), (float)replace_y,
+                        bounds.width - (float)(pad * 2 + ScaleUIPx(100)), (float)input_h},
+            replacement_text, sizeof(replacement_text), &replacement_cursor, &replacement_focus,
+            sizeof(replacement_text) - 1, ScaleUIPx(12), 5102,
+            (TextInputStyle){0}, (TextInputFilter){0}, NULL, NULL
+        })
+        if strcmp(old_replacement, replacement_text) != 0 { krait_replace_clear() }
+        replace_y = replace_y + input_h + pad
+        if StyledButton((int)field.x, replace_y, ScaleUIPx(90), input_h, "Preview", ButtonStyleSecondary, st->find_text[0] == 0, NULL) {
+            krait_replace_preview(st->project.path, st->find_text, replacement_text, search_regex, search_case, search_exclude)
+            replacement_index = 0
+            replacement_scroll = 0
+            replacement_after = 1
+            state.project_set_status(st, krait_replace_status())
+        }
+        if StyledButton((int)field.x + ScaleUIPx(98), replace_y, ScaleUIPx(90), input_h, "Apply all", ButtonStylePrimary, krait_replace_count() == 0, NULL) {
+            applied := krait_replace_apply(st)
+            if applied > 0 {
+                for int i = 0; i < krait_replace_count(); i++ {
+                    ed.editor_reload_if_open(st, krait_replace_path(i))
+                }
+                search_run(st)
+            }
+            state.project_set_status(st, krait_replace_status())
+        }
+        results.y = results.y + (float)((input_h + pad) * 2)
+        results.height = results.height - (float)((input_h + pad) * 2)
+        if krait_replace_count() > 0 {
+            draw_replacement(results)
+            return
         }
     }
     y := (int)results.y

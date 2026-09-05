@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <regex.h>
 #include <fnmatch.h>
+#include "kry_json.h"
 
 static int
 krait_file_affects_project_mtime(const char *path)
@@ -270,7 +271,7 @@ krait_add_search_result(SearchResult *results, int count, int cap,
 {
     SearchResult *result;
 
-    if(results == NULL || count >= cap || path == NULL)
+    if(results == NULL || count >= cap || path == NULL || strlen(path) >= sizeof(results[0].path))
         return count;
     result = &results[count++];
     snprintf(result->path, sizeof(result->path), "%s", path);
@@ -412,4 +413,226 @@ int
 krait_search_project(const char *root, const char *query, SearchResult *results, int cap)
 {
     return krait_search_project_options(root, query, 0, 1, 0, NULL, results, cap);
+}
+
+/* Replacement previews retain complete before-images until explicitly applied. */
+typedef struct { char path[512]; char *before, *after; int matches; } Replacement;
+static Replacement replacements[64];
+static int replacement_count;
+static char replacement_root[KRAIT_PATH_MAX];
+static char replacement_status[512];
+
+void
+krait_replace_clear(void)
+{
+    for(int i = 0; i < replacement_count; i++) {
+        free(replacements[i].before); free(replacements[i].after);
+    }
+    memset(replacements, 0, sizeof(replacements));
+    replacement_count = 0;
+    replacement_root[0] = 0;
+}
+
+const char *krait_replace_status(void) { return replacement_status; }
+int krait_replace_count(void) { return replacement_count; }
+const char *krait_replace_path(int i) { return i >= 0 && i < replacement_count ? replacements[i].path : ""; }
+const char *krait_replace_content(int i, int after) {
+    return i >= 0 && i < replacement_count ? (after ? replacements[i].after : replacements[i].before) : "";
+}
+
+static int
+replacement_append(char **out, size_t *used, const char *text, size_t len)
+{
+    if(len > 16 * 1024 * 1024 || *used > 16 * 1024 * 1024 - len) return 0;
+    char *next = realloc(*out, *used + len + 1);
+    if(next == NULL) return 0;
+    *out = next;
+    memcpy(next + *used, text, len); *used += len; next[*used] = 0;
+    return 1;
+}
+
+char *
+krait_replace_text(const char *text, const char *query, const char *replacement,
+                    int regex, int match_case, int *matches)
+{
+    SearchOptions options = {0};
+    char *out = NULL;
+    size_t used = 0, offset = 0, length;
+    int ok = 1;
+    int ignored_matches;
+    if(!matches) matches = &ignored_matches;
+    *matches = 0;
+    if(text == NULL || query == NULL || !*query || replacement == NULL) return NULL;
+    options.query = query; options.regex = regex; options.match_case = match_case;
+    if(regex && regcomp(&options.compiled, query, REG_EXTENDED | REG_NEWLINE | (match_case ? 0 : REG_ICASE))) return NULL;
+    length = strlen(text);
+    while(offset <= length && ok) {
+        regmatch_t groups[10];
+        int start, end;
+        if(regex) {
+            int flags = offset && text[offset - 1] != '\n' ? REG_NOTBOL : 0;
+            if(regexec(&options.compiled, text + offset, 10, groups, flags)) break;
+            start = (int)groups[0].rm_so; end = (int)groups[0].rm_eo;
+        } else {
+            start = search_match_offset(text + offset, &options);
+            if(start < 0) break;
+            end = start + (int)strlen(query);
+        }
+        ok = replacement_append(&out, &used, text + offset, (size_t)start);
+        for(size_t i = 0; replacement[i] && ok; i++) {
+            if(regex && replacement[i] == '$' && replacement[i + 1] == '$') {
+                ok = replacement_append(&out, &used, "$", 1); i++;
+            } else if(regex && replacement[i] == '$' && replacement[i + 1] >= '0' && replacement[i + 1] <= '9') {
+                int group = replacement[++i] - '0';
+                if(groups[group].rm_so >= 0)
+                    ok = replacement_append(&out, &used, text + offset + groups[group].rm_so,
+                        (size_t)(groups[group].rm_eo - groups[group].rm_so));
+            } else ok = replacement_append(&out, &used, replacement + i, 1);
+        }
+        (*matches)++;
+        offset += (size_t)end;
+        if(start == end) {
+            if(offset == length) break;
+            size_t bytes = 1;
+            while(offset + bytes < length && ((unsigned char)text[offset + bytes] & 0xc0) == 0x80) bytes++;
+            ok = ok && replacement_append(&out, &used, text + offset, bytes);
+            offset += bytes;
+        }
+    }
+    ok = ok && replacement_append(&out, &used, text + offset, length - offset);
+    if(regex) regfree(&options.compiled);
+    if(!ok) { free(out); return NULL; }
+    return out;
+}
+
+static int
+replacement_path(const char *root, const char *relative, char full[KRAIT_PATH_MAX * 2])
+{
+    if(!relative || !*relative || *relative == '/') return 0;
+    if(snprintf(full, KRAIT_PATH_MAX * 2, "%s/%s", root, relative) >= KRAIT_PATH_MAX * 2) return 0;
+    char walk[KRAIT_PATH_MAX * 2];
+    snprintf(walk, sizeof(walk), "%s", full);
+    char *part = walk + strlen(root) + 1;
+    for(char *p = part;; p++) {
+        if(*p == '/' || !*p) {
+            size_t n = (size_t)(p - part);
+            if(!n || (n == 1 && *part == '.') || (n == 2 && !memcmp(part, "..", 2)) ||
+               (n == 4 && !memcmp(part, ".git", 4))) return 0;
+            part = p + 1;
+            char saved = *p; *p = 0;
+            struct stat st;
+            int ok = lstat(walk, &st) == 0 && !S_ISLNK(st.st_mode);
+            if(ok && S_ISDIR(st.st_mode)) {
+                char git[KRAIT_PATH_MAX * 3];
+                snprintf(git, sizeof(git), "%s/.git", walk);
+                if(lstat(git, &st) == 0) ok = 0;
+            }
+            *p = saved;
+            if(!ok) return 0;
+            if(!saved) break;
+        }
+    }
+    return 1;
+}
+
+int
+krait_replace_preview(const char *root, const char *query, const char *replacement,
+                       int regex, int match_case, const char *exclude)
+{
+    SearchResult found[64];
+    krait_replace_clear();
+    if(!root || !*root || !query || !*query || !replacement) {
+        snprintf(replacement_status, sizeof(replacement_status), "Enter a nonempty query"); return -1;
+    }
+    int count = krait_search_project_options(root, query, regex, match_case, 0, exclude, found, 64);
+    if(count < 0 || count >= 64) {
+        snprintf(replacement_status, sizeof(replacement_status), "%s", count < 0 ? "Invalid regex" : "Result limit reached; narrow the query before replacing");
+        return -1;
+    }
+    snprintf(replacement_root, sizeof(replacement_root), "%s", root);
+    for(int i = 0; i < count; i++) {
+        int duplicate = 0;
+        for(int j = 0; j < replacement_count; j++) if(!strcmp(replacements[j].path, found[i].path)) duplicate = 1;
+        if(duplicate) continue;
+        char full[KRAIT_PATH_MAX * 2], *before = NULL;
+        long len;
+        if(!replacement_path(root, found[i].path, full) || !krait_read_file_alloc(full, &before, &len) ||
+           !before || len < 0 || len > 16 * 1024 * 1024 || memchr(before, 0, (size_t)len)) {
+            free(before); krait_replace_clear();
+            snprintf(replacement_status, sizeof(replacement_status), "Cannot preview file: %s", found[i].path);
+            return -1;
+        }
+        int matches;
+        char *after = krait_replace_text(before, query, replacement, regex, match_case, &matches);
+        if(after == NULL) { free(before); krait_replace_clear();
+            snprintf(replacement_status, sizeof(replacement_status), "Replacement exceeds size limit or cannot be allocated"); return -1; }
+        if(!strcmp(before, after)) { free(before); free(after); continue; }
+        Replacement *r = &replacements[replacement_count++];
+        snprintf(r->path, sizeof(r->path), "%s", found[i].path);
+        r->before = before; r->after = after; r->matches = matches;
+    }
+    snprintf(replacement_status, sizeof(replacement_status), "Preview ready: %d changed files", replacement_count);
+    return replacement_count;
+}
+
+int
+krait_replace_apply(IdeState *st)
+{
+    if(!st || !replacement_count || strcmp(st->project.path, replacement_root) || krait_agent_busy()) {
+        snprintf(replacement_status, sizeof(replacement_status), "Preview this project first and wait for the agent to finish"); return 0;
+    }
+    for(int i = 0; i < replacement_count; i++) {
+        char full[KRAIT_PATH_MAX * 2], *text = NULL;
+        long len;
+        if(!replacement_path(replacement_root, replacements[i].path, full)) {
+            snprintf(replacement_status, sizeof(replacement_status), "File path changed or is unsafe"); return 0;
+        }
+        for(int j = 0; j < st->open_count; j++) if(st->open_files[j].dirty && !strcmp(st->open_files[j].path, full)) {
+            snprintf(replacement_status, sizeof(replacement_status), "Save or close unsaved file: %s", replacements[i].path); return 0;
+        }
+        int same = krait_read_file_alloc(full, &text, &len) && text && len == (long)strlen(replacements[i].before) && !memcmp(text, replacements[i].before, (size_t)len);
+        free(text);
+        if(!same) { snprintf(replacement_status, sizeof(replacement_status), "File changed since preview: %s", replacements[i].path); return 0; }
+    }
+    /* Retain all before/after contents before the first mutation. */
+    char dir[KRAIT_PATH_MAX * 2], backup[KRAIT_PATH_MAX * 3];
+    const char *home = getenv("HOME");
+    if(!home || snprintf(dir, sizeof(dir), "%s/.local/state/krait/replacements", home) >= (int)sizeof(dir)) {
+        snprintf(replacement_status, sizeof(replacement_status), "Cannot locate recovery directory"); return 0;
+    }
+    krait_mkdir_p(dir);
+    snprintf(backup, sizeof(backup), "%s/batch-XXXXXX", dir);
+    int fd = mkstemp(backup);
+    if(fd < 0) { snprintf(replacement_status, sizeof(replacement_status), "Cannot create recovery record"); return 0; }
+    close(fd);
+    KryJsonBuf json = {0};
+    kry_json_buf_raw(&json, "{\"root\":"); kry_json_buf_str(&json, replacement_root);
+    kry_json_buf_raw(&json, ",\"files\":[");
+    for(int i = 0; i < replacement_count; i++) {
+        if(i) kry_json_buf_raw(&json, ",");
+        kry_json_buf_raw(&json, "{\"path\":"); kry_json_buf_str(&json, replacements[i].path);
+        kry_json_buf_raw(&json, ",\"before\":"); kry_json_buf_str(&json, replacements[i].before);
+        kry_json_buf_raw(&json, ",\"after\":"); kry_json_buf_str(&json, replacements[i].after);
+        kry_json_buf_raw(&json, "}");
+    }
+    kry_json_buf_raw(&json, "]}");
+    const char *data = kry_json_buf_finish(&json);
+    int saved = data && krait_write_text_file_atomic(backup, data);
+    kry_json_buf_free(&json);
+    if(!saved) { snprintf(replacement_status, sizeof(replacement_status), "Cannot save recovery record"); return 0; }
+    int applied = 0;
+    for(int i = 0; i < replacement_count; i++) {
+        char full[KRAIT_PATH_MAX * 2], *text = NULL;
+        long len;
+        int same = replacement_path(replacement_root, replacements[i].path, full) &&
+            krait_read_file_alloc(full, &text, &len) && text && len == (long)strlen(replacements[i].before) && !memcmp(text, replacements[i].before, (size_t)len);
+        free(text);
+        if(!same || !krait_project_file_replace(replacement_root, replacements[i].path, replacements[i].before, 1, replacements[i].after)) {
+            snprintf(replacement_status, sizeof(replacement_status), "Stopped after %d files; recovery record: %.350s", applied, backup);
+            return applied;
+        }
+        applied++;
+    }
+    snprintf(replacement_status, sizeof(replacement_status), "Replaced %d files; recovery record: %.350s", applied, backup);
+    return applied;
 }

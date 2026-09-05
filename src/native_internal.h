@@ -159,6 +159,15 @@ void krait_kryon_tool_path(char *out, size_t out_size, const char *tool);
 void krait_kryon_dir(char *out, size_t out_size);
 
 /* ---- native_project.c: in-project content search ---- */
+int krait_project_file_replace(const char *root, const char *path, const char *expected, int existed, const char *content);
+void krait_replace_clear(void);
+const char *krait_replace_status(void);
+int krait_replace_count(void);
+const char *krait_replace_path(int index);
+const char *krait_replace_content(int index, int after);
+char *krait_replace_text(const char *text, const char *query, const char *replacement, int regex, int match_case, int *matches);
+int krait_replace_preview(const char *root, const char *query, const char *replacement, int regex, int match_case, const char *exclude);
+int krait_replace_apply(IdeState *st);
 int krait_search_project_options(const char *root, const char *query, int regex,
     int match_case, int files_only, const char *exclude, SearchResult *results, int cap);
 int krait_search_project(const char *root, const char *query,

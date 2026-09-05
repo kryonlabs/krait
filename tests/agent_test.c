@@ -338,6 +338,86 @@ test_workspace_search(void)
     CHECK(krait_search_project_options(root, "Needle42", 0, 1, 0, "", matches, 64) == 1);
 }
 
+static void
+test_workspace_replacement(void)
+{
+    int matches;
+    char *out = krait_replace_text("Cat cat CAT", "cat", "$1", 0, 0, &matches);
+    CHECK(out && !strcmp(out, "$1 $1 $1") && matches == 3); free(out);
+    out = krait_replace_text("cat42 cat7", "(cat)([0-9]+)", "$2:$1:$$", 1, 1, &matches);
+    CHECK(out && !strcmp(out, "42:cat:$ 7:cat:$") && matches == 2); free(out);
+    out = krait_replace_text("é\nx", "^", ">", 1, 1, &matches);
+    CHECK(out && !strcmp(out, ">é\n>x") && matches == 2); free(out);
+    out = krait_replace_text("é", "x*", "-", 1, 1, &matches);
+    CHECK(out && !strcmp(out, "-é-") && matches == 2); free(out);
+    CHECK(krait_replace_text("x", "[", "y", 1, 1, &matches) == NULL);
+    out = krait_replace_text("xx", "x", "", 0, 1, NULL);
+    CHECK(out && !*out); free(out);
+
+    char root[] = "/tmp/krait-replace-XXXXXX", first[1024], second[1024], path[1024];
+    CHECK(mkdtemp(root) != NULL);
+    snprintf(first, sizeof(first), "%s/a.txt", root);
+    snprintf(second, sizeof(second), "%s/b.txt", root);
+    CHECK(krait_write_text_file_atomic(first, "cat\ncat\n"));
+    CHECK(krait_write_text_file_atomic(second, "cat"));
+    CHECK(krait_replace_preview(root, "cat", "dog", 0, 1, "b.*") == 1);
+    CHECK(!strcmp(krait_replace_content(0, 0), "cat\ncat\n"));
+    CHECK(!strcmp(krait_replace_content(0, 1), "dog\ndog\n"));
+    char *text = NULL; long len;
+    CHECK(krait_read_file_alloc(first, &text, &len) && !strcmp(text, "cat\ncat\n")); free(text);
+    CHECK(krait_replace_preview(root, "cat", "dog", 0, 1, "") == 2);
+    IdeState *st = calloc(1, sizeof(*st));
+    CHECK(st != NULL);
+    if(!st) return;
+    snprintf(st->project.path, sizeof(st->project.path), "%s", root);
+    st->open_count = 1;
+    snprintf(st->open_files[0].path, sizeof(st->open_files[0].path), "%s", first);
+    st->open_files[0].dirty = 1;
+    CHECK(krait_replace_apply(st) == 0);
+    CHECK(strstr(krait_replace_status(), "unsaved") != NULL);
+    st->open_files[0].dirty = 0;
+    CHECK(krait_write_text_file_atomic(second, "external edit"));
+    CHECK(krait_replace_apply(st) == 0);
+    CHECK(strstr(krait_replace_status(), "changed since preview") != NULL);
+    CHECK(krait_read_file_alloc(first, &text, &len) && !strcmp(text, "cat\ncat\n")); free(text);
+    CHECK(krait_write_text_file_atomic(second, "cat"));
+    CHECK(krait_replace_apply(st) == 2);
+    CHECK(krait_read_file_alloc(first, &text, &len) && !strcmp(text, "dog\ndog\n")); free(text);
+    CHECK(krait_read_file_alloc(second, &text, &len) && !strcmp(text, "dog")); free(text);
+    const char *backup = strstr(krait_replace_status(), "recovery record: ");
+    CHECK(backup != NULL);
+    if(backup) {
+        CHECK(krait_read_file_alloc(backup + strlen("recovery record: "), &text, &len));
+        CHECK(text && strstr(text, "cat") && strstr(text, "dog") && strstr(text, root)); free(text);
+    }
+    CHECK(krait_replace_apply(st) == 0); /* old before-images cannot be replayed */
+    snprintf(path, sizeof(path), "%s/link.txt", root);
+    CHECK(symlink(first, path) == 0);
+    CHECK(krait_replace_preview(root, "dog", "fox", 0, 1, "") == 2);
+    CHECK(unlink(first) == 0);
+    CHECK(symlink(second, first) == 0);
+    CHECK(krait_replace_apply(st) == 0);
+    CHECK(unlink(first) == 0);
+    CHECK(krait_write_text_file_atomic(first, "dog"));
+    snprintf(path, sizeof(path), "%s/nested/.git", root); krait_mkdir_p(path);
+    snprintf(path, sizeof(path), "%s/nested/source.txt", root);
+    CHECK(krait_write_text_file_atomic(path, "dog"));
+    CHECK(krait_replace_preview(root, "dog", "fox", 0, 1, "") == -1);
+    CHECK(krait_replace_count() == 0);
+    CHECK(krait_replace_preview(root, "dog", "fox", 0, 1, "nested/*") == 2);
+    CHECK(krait_replace_preview(root, "[", "x", 1, 1, "") == -1);
+    CHECK(krait_replace_count() == 0);
+    char many[257];
+    for(int i = 0; i < 64; i++) memcpy(many + i * 4, "dog\n", 4);
+    many[256] = 0;
+    CHECK(krait_write_text_file_atomic(first, many));
+    CHECK(krait_replace_preview(root, "dog", "fox", 0, 1, "nested/*") == -1);
+    CHECK(strstr(krait_replace_status(), "limit reached") != NULL);
+    CHECK(krait_replace_count() == 0);
+    CHECK(krait_read_file_alloc(first, &text, &len) && !strcmp(text, many)); free(text);
+    krait_replace_clear(); free(st);
+}
+
 /* Tools execute through the same public entry the live loop uses. */
 static void
 test_tools(void)
@@ -1125,6 +1205,7 @@ main(int argc, char **argv)
     test_run_capture();
     test_command_cancellation();
     test_workspace_search();
+    test_workspace_replacement();
     test_project_validation();
     test_card_acceptance_gate();
     test_tools();

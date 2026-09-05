@@ -697,9 +697,9 @@ agent_remember(int kind, const char *text)
 }
 
 static int
-agent_path_safe(const char *rel)
+project_path_safe(const char *rel)
 {
-    if(rel == NULL || !*rel || *rel == '/' || strlen(rel) >= 256) return 0;
+    if(rel == NULL || !*rel || *rel == '/' || strlen(rel) >= 512) return 0;
     const char *part = rel;
     for(const char *p = rel;; p++) {
         if(*p == '/' || !*p) {
@@ -713,19 +713,25 @@ agent_path_safe(const char *rel)
     return 1;
 }
 
+static int
+agent_path_safe(const char *rel)
+{
+    return rel && strlen(rel) < 256 && project_path_safe(rel);
+}
+
 /* Descriptor-relative file access: no symlink component is followed. */
 static int
-agent_file_parent(const char *path, int create, char leaf[256])
+agent_file_parent(const char *root, const char *path, int create, char leaf[512])
 {
-    char copy[256], *save = NULL;
-    if(!agent_path_safe(path)) return -1;
-    int dir = open(agent_project, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    char copy[512], *save = NULL;
+    if(!project_path_safe(path)) return -1;
+    int dir = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if(dir < 0) return -1;
     snprintf(copy, sizeof(copy), "%s", path);
     char *part = strtok_r(copy, "/", &save);
     for(;;) {
         char *next = strtok_r(NULL, "/", &save);
-        if(next == NULL) { snprintf(leaf, 256, "%s", part); return dir; }
+        if(next == NULL) { snprintf(leaf, 512, "%s", part); return dir; }
         if(create && mkdirat(dir, part, 0755) != 0 && errno != EEXIST) {
             close(dir); return -1;
         }
@@ -775,8 +781,8 @@ agent_read_at(int parent, const char *leaf, char **text, mode_t *mode)
 static int
 agent_file_read(const char *path, char **text)
 {
-    char leaf[256];
-    int parent = agent_file_parent(path, 0, leaf);
+    char leaf[512];
+    int parent = agent_file_parent(agent_project, path, 0, leaf);
     *text = NULL;
     if(parent < 0) return -1;
     int result = agent_read_at(parent, leaf, text, NULL);
@@ -784,12 +790,12 @@ agent_file_read(const char *path, char **text)
     return result;
 }
 
-static int
-agent_file_replace(const char *path, const char *expected, int existed, const char *content)
+int
+krait_project_file_replace(const char *root, const char *path, const char *expected, int existed, const char *content)
 {
-    char leaf[256], temp[128], *current = NULL;
+    char leaf[512], temp[128], *current = NULL;
     mode_t mode = 0644;
-    int parent = agent_file_parent(path, content != NULL, leaf);
+    int parent = agent_file_parent(root, path, content != NULL, leaf);
     if(parent < 0) return 0;
     int found = agent_read_at(parent, leaf, &current, &mode);
     if(found < 0 || found != existed || (found && strcmp(current, expected) != 0)) {
@@ -826,6 +832,12 @@ agent_file_replace(const char *path, const char *expected, int existed, const ch
     if(!ok) unlinkat(parent, temp, 0);
     close(parent);
     return ok;
+}
+
+static int
+agent_file_replace(const char *path, const char *expected, int existed, const char *content)
+{
+    return krait_project_file_replace(agent_project, path, expected, existed, content);
 }
 
 typedef struct { char path[256]; char digest[65]; } AgentReadVersion;
@@ -988,8 +1000,8 @@ agent_tool_write(const char *path, const char *content)
     if(!agent_path_safe(path) || strlen(path) >= sizeof(agent_changes[0].path) ||
        content == NULL)
         return 0;
-    char leaf[256];
-    int parent = agent_file_parent(path, 1, leaf);
+    char leaf[512];
+    int parent = agent_file_parent(agent_project, path, 1, leaf);
     if(parent < 0) return 0;
     had_orig = agent_read_at(parent, leaf, &orig, NULL);
     close(parent);
