@@ -146,6 +146,7 @@ int krait_wrap_line(const char *text, int width, int font, int max_lines,
                     int row, char *dst, int dst_size);
 int krait_read_file_alloc(const char *path, char **out, long *out_len);
 int krait_write_text_file(const char *path, const char *text);
+int krait_write_text_file_atomic(const char *path, const char *text);
 int krait_file_is_text(const char *path);
 int krait_tree_id(const char *path);
 int krait_ident_start(int ch);
@@ -197,6 +198,9 @@ char *krait_agent_run_tools(const char *json);
 const char *krait_agent_consume_console(void);
 void krait_agent_clear_console(void);
 int krait_agent_bridge_card(int col, int index);
+int krait_agent_bind_task(const char *project_dir, const char *task);
+const char *krait_agent_task(void);
+char *krait_agent_instructions(const char *project);
 int krait_agent_written_count(void);
 const char *krait_agent_written_path(int index);
 int krait_agent_can_revert(void);

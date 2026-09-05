@@ -265,18 +265,21 @@ kb_card_at(int col, int index)
     return &kb_board[col].cards[index];
 }
 
-static void
+static int
 kb_save_card(KbCard *c)
 {
-    char text[8192];
+    size_t size = strlen(c->title) + strlen(c->project) +
+                  (c->body != NULL ? strlen(c->body) : 0) + 32;
+    char *text = malloc(size);
+    int ok;
 
-    if(c->project[0] != '\0')
-        snprintf(text, sizeof(text), "%s\nproject: %s\n\n%s",
-                 c->title, c->project, c->body != NULL ? c->body : "");
-    else
-        snprintf(text, sizeof(text), "%s\n\n%s", c->title,
-                 c->body != NULL ? c->body : "");
-    krait_write_text_file(c->path, text);
+    if(text == NULL)
+        return 0;
+    snprintf(text, size, "%s\nproject: %s\n\n%s", c->title,
+             c->project, c->body != NULL ? c->body : "");
+    ok = krait_write_text_file_atomic(c->path, text);
+    free(text);
+    return ok;
 }
 
 int
@@ -348,27 +351,45 @@ krait_kanban_card_status(int col, int index)
 int
 krait_kanban_create(int col, const char *title)
 {
-    char dir[KRAIT_PATH_MAX];
+    char temp[KRAIT_PATH_MAX * 2];
     char path[KRAIT_PATH_MAX * 2];
     char id[128];
-    static int seq;
-    KbCard *c;
+    int fd, col_check;
+    KbCard card = {0};
 
     if(!kb_dir_ready)
         krait_kanban_rescan();
-    if(col < 0 || col > 3 || title == NULL || title[0] == '\0')
+    if(col < 0 || col > 3 || title == NULL || title[0] == '\0' ||
+       kb_board[col].count >= KB_MAX_CARDS || strchr(title, '\n') != NULL)
         return -1;
-    snprintf(dir, sizeof(dir), "%s/%s", kb_dir, kb_columns[col]);
-    do {
-        snprintf(id, sizeof(id), "card-%d", ++seq);
-        snprintf(path, sizeof(path), "%s/%s.txt", dir, id);
-    } while(krait_path_exists(path));
-    {
-        char text[512];
-
-        snprintf(text, sizeof(text), "%s\n\n", title);
-        krait_write_text_file(path, text);
+    /* Reserve a random ID in the board root, independent of column and
+     * process lifetime. Never reuse an existing card or proposal ID. */
+    for(;;) {
+        snprintf(temp, sizeof(temp), "%s/.card-XXXXXX", kb_dir);
+        fd = mkstemp(temp);
+        if(fd < 0)
+            return -1;
+        close(fd);
+        snprintf(id, sizeof(id), "%s", krait_basename(temp) + 1);
+        for(col_check = 0; col_check < 4; col_check++) {
+            snprintf(path, sizeof(path), "%s/%s/%s.txt", kb_dir,
+                     kb_columns[col_check], id);
+            if(krait_path_exists(path))
+                break;
+        }
+        snprintf(path, sizeof(path), "%s/.proposals/%s", kb_dir, id);
+        if(col_check == 4 && !krait_path_exists(path))
+            break;
+        unlink(temp);
     }
+    snprintf(card.path, sizeof(card.path), "%s", temp);
+    snprintf(card.title, sizeof(card.title), "%s", title);
+    snprintf(path, sizeof(path), "%s/%s/%s.txt", kb_dir, kb_columns[col], id);
+    if(!kb_save_card(&card) || link(temp, path) != 0) {
+        unlink(temp);
+        return -1;
+    }
+    unlink(temp);
     krait_kanban_rescan();
     {
         int i;
@@ -385,11 +406,11 @@ krait_kanban_set_title(int col, int index, const char *title)
 {
     KbCard *c = kb_card_at(col, index);
 
-    if(c == NULL || title == NULL)
+    if(c == NULL || title == NULL || strchr(title, '\n') != NULL ||
+       strchr(title, '\r') != NULL || strlen(title) >= sizeof(c->title))
         return 0;
     snprintf(c->title, sizeof(c->title), "%s", title);
-    kb_save_card(c);
-    return 1;
+    return kb_save_card(c);
 }
 
 int
@@ -399,9 +420,17 @@ krait_kanban_set_body(int col, int index, const char *body)
 
     if(c == NULL || body == NULL)
         return 0;
-    free(c->body);
-    c->body = strdup(body);
-    kb_save_card(c);
+    char *next = strdup(body);
+    char *previous = c->body;
+    if(next == NULL)
+        return 0;
+    c->body = next;
+    if(!kb_save_card(c)) {
+        c->body = previous;
+        free(next);
+        return 0;
+    }
+    free(previous);
     return 1;
 }
 
@@ -410,11 +439,11 @@ krait_kanban_set_project(int col, int index, const char *project)
 {
     KbCard *c = kb_card_at(col, index);
 
-    if(c == NULL || project == NULL)
+    if(c == NULL || project == NULL || strchr(project, '\n') != NULL ||
+       strchr(project, '\r') != NULL || strlen(project) >= sizeof(c->project))
         return 0;
     snprintf(c->project, sizeof(c->project), "%s", project);
-    kb_save_card(c);
-    return 1;
+    return kb_save_card(c);
 }
 
 int
@@ -431,8 +460,13 @@ krait_kanban_move(int col, int index, int to_col)
         return 0;
     snprintf(dst, sizeof(dst), "%s/%s/%s.txt", kb_dir, kb_columns[to_col],
              c->id);
-    if(rename(c->path, dst) != 0)
+    /* link is exclusive: legacy duplicate IDs must never replace a card. */
+    if(link(c->path, dst) != 0)
         return 0;
+    if(unlink(c->path) != 0) {
+        unlink(dst);
+        return 0;
+    }
     krait_kanban_rescan();
     return 1;
 }

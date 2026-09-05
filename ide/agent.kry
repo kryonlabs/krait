@@ -186,11 +186,11 @@ draw_permission_bar :: (bounds: Rectangle) {
     }
 }
 
-# Stored agent histories under ~/.kryon/krait/agent, one per project.
+# Stored agent histories under ~/.kryon/krait/agent, grouped by project and task.
 draw_sessions :: (bounds: Rectangle, st: state.IdeState*) {
     DrawRectangleRec(bounds, GetThemeSurface())
     pad := ScaleUIPx(10)
-    Text("Agent sessions (per project)", (int)bounds.x + pad,
+    Text("Agent sessions (projects and tasks)", (int)bounds.x + pad,
                (int)bounds.y + ScaleUIPx(8), ScaleUIPx(12), GetThemeLink())
     n := krait_agent_session_count()
     if n > 8 {

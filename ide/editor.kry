@@ -421,6 +421,10 @@ editor_reload_if_open :: (st: state.IdeState*, name: const char*) {
         return
     }
     f := &st->open_files[idx]
+    if f->dirty != 0 {
+        state.project_set_status(st, "File changed on disk; unsaved editor changes preserved")
+        return
+    }
     if hx.is_krb_file(name) != 0 {
         krait_hex_open(f->path)
         state.project_set_status(st, "Reloaded (hex)")

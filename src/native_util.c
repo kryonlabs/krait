@@ -238,6 +238,44 @@ krait_write_text_file(const char *path, const char *text)
     return 1;
 }
 
+/* Replace only after the complete file is flushed. Preserve permissions
+ * on existing documents; private defaults for new task/session records. */
+int
+krait_write_text_file_atomic(const char *path, const char *text)
+{
+    char temp[KRAIT_PATH_MAX * 3];
+    struct stat st;
+    int fd, ok;
+    FILE *file;
+    if(path == NULL || text == NULL ||
+       snprintf(temp, sizeof(temp), "%s.tmp-XXXXXX", path) >= (int)sizeof(temp))
+        return 0;
+    fd = mkstemp(temp);
+    if(fd < 0)
+        return 0;
+    if(stat(path, &st) == 0 && fchmod(fd, st.st_mode & 0777) != 0) {
+        close(fd);
+        unlink(temp);
+        return 0;
+    }
+    file = fdopen(fd, "wb");
+    if(file == NULL) {
+        close(fd);
+        unlink(temp);
+        return 0;
+    }
+    ok = fwrite(text, 1, strlen(text), file) == strlen(text);
+    if(fflush(file) != 0 || fsync(fd) != 0)
+        ok = 0;
+    if(fclose(file) != 0)
+        ok = 0;
+    if(ok)
+        ok = rename(temp, path) == 0;
+    if(!ok)
+        unlink(temp);
+    return ok;
+}
+
 int
 krait_ident_start(int ch)
 {

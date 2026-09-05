@@ -65,6 +65,40 @@ test_history_roundtrip(void)
 }
 
 static void
+test_task_sessions(void)
+{
+    const char *project = "/tmp/krait-agent-test-proj";
+    krait_mkdir_p(project);
+    if(krait_ai_configured())
+        return;
+    CHECK(krait_agent_bind_task(project, "card-first"));
+    CHECK(strcmp(krait_agent_task(), "card-first") == 0);
+    CHECK(krait_agent_count() == 0);
+    CHECK(krait_agent_send("first task") == 0);
+    CHECK(krait_agent_count() == 1);
+    CHECK(krait_agent_bind_task(project, "card-second"));
+    CHECK(krait_agent_count() == 0);
+    CHECK(krait_agent_send("second task") == 0);
+    CHECK(krait_agent_bind_task(project, "card-first"));
+    CHECK(krait_agent_count() == 1);
+    krait_agent_bind(project);
+    CHECK(strcmp(krait_agent_task(), "card-first") == 0);
+    CHECK(!krait_agent_bind_task(project, "../escape"));
+    CHECK(strcmp(krait_agent_task(), "card-first") == 0);
+    CHECK(krait_agent_bind_task(project, ""));
+    CHECK(krait_agent_count() == 0);
+    CHECK(krait_agent_session_count() >= 2);
+    for(int i = 0; i < krait_agent_session_count(); i++) {
+        if(strstr(krait_agent_session_name(i), "--card-second") != NULL) {
+            CHECK(krait_agent_open_session(i));
+            CHECK(strcmp(krait_agent_task(), "card-second") == 0);
+            CHECK(krait_agent_count() == 1);
+            break;
+        }
+    }
+}
+
+static void
 test_compile_gate(void)
 {
     char status[256];
@@ -187,6 +221,43 @@ test_tools(void)
     CHECK(results != NULL);
     free(results);
     system("rm -rf /tmp/krait-agent-tools-proj");
+}
+
+static void
+test_change_recovery(void)
+{
+    const char *project = "/tmp/krait-agent-recovery";
+    char full[1024], instruction[1024];
+    char *result, *text = NULL;
+    long len;
+    krait_mkdir_p(project);
+    CHECK(krait_agent_bind_task(project, "recovery"));
+    snprintf(full, sizeof(full), "%s/new.txt", project);
+    unlink(full);
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"new.txt\",\"content\":\"first\"},{\"tool\":\"write\",\"path\":\"new.txt\",\"content\":\"second\"}]");
+    CHECK(result != NULL && strstr(result, "refused") == NULL);
+    free(result);
+    CHECK(krait_agent_can_revert());
+    CHECK(krait_agent_bind_task(project, "elsewhere"));
+    CHECK(!krait_agent_can_revert());
+    CHECK(krait_agent_bind_task(project, "recovery"));
+    CHECK(krait_agent_can_revert());
+    CHECK(krait_write_text_file(full, "user edit"));
+    CHECK(krait_agent_revert() == 0);
+    CHECK(krait_read_file_alloc(full, &text, &len));
+    CHECK(text != NULL && strcmp(text, "user edit") == 0);
+    free(text);
+    CHECK(krait_write_text_file(full, "second"));
+    CHECK(krait_agent_revert() == 1);
+    CHECK(access(full, F_OK) != 0);
+    CHECK(!krait_agent_can_revert());
+
+    snprintf(instruction, sizeof(instruction), "%s/AGENTS.md", project);
+    CHECK(krait_write_text_file(instruction, "Use project conventions."));
+    result = krait_agent_instructions(project);
+    CHECK(result != NULL && strstr(result, "Use project conventions.") != NULL);
+    free(result);
+    unlink(instruction);
 }
 
 /* Hex editor backend: open/edit/save round-trip with .bak backup. */
@@ -696,9 +767,11 @@ main(int argc, char **argv)
            "/tmp/krait-agent-test-proj-other");
 
     test_history_roundtrip();
+    test_task_sessions();
     test_compile_gate();
     test_run_capture();
     test_tools();
+    test_change_recovery();
     test_hex_editor();
     test_provider_selection();
     test_response_parsers();

@@ -63,6 +63,49 @@ test_board_crud(void)
 }
 
 static void
+test_card_identity_and_long_body(void)
+{
+    char ids[4][128];
+    char original[4096], collision[4096];
+    char *body = malloc(20001);
+    char *loaded = NULL;
+    long length;
+    int col, i;
+
+    CHECK(body != NULL);
+    if(body == NULL)
+        return;
+    memset(body, 'x', 20000);
+    body[20000] = 0;
+    for(col = 0; col < 4; col++) {
+        i = krait_kanban_create(col, "Independent task");
+        CHECK(i >= 0);
+        snprintf(ids[col], sizeof(ids[col]), "%s", krait_kanban_card_id(col, i));
+        for(int j = 0; j < col; j++)
+            CHECK(strcmp(ids[j], ids[col]) != 0);
+    }
+    CHECK(krait_kanban_set_body(0, 0, body));
+    krait_kanban_rescan();
+    CHECK(strcmp(krait_kanban_card_body(0, 0), body) == 0);
+    free(body);
+
+    /* A duplicate ID from an older store cannot overwrite its neighbour. */
+    snprintf(original, sizeof(original), "%s", krait_kanban_card_path(0, 0));
+    snprintf(collision, sizeof(collision), "%s/.kryon/krait/kanban/doing/%s.txt",
+             getenv("HOME"), ids[0]);
+    CHECK(krait_write_text_file(collision, "Keep this task\n\n"));
+    CHECK(!krait_kanban_move(0, 0, 1));
+    CHECK(access(original, F_OK) == 0);
+    CHECK(krait_read_file_alloc(collision, &loaded, &length));
+    CHECK(loaded != NULL && strcmp(loaded, "Keep this task\n\n") == 0);
+    free(loaded);
+    unlink(collision);
+    krait_kanban_rescan();
+    for(col = 0; col < 4; col++)
+        CHECK(krait_kanban_delete(col, 0));
+}
+
+static void
 test_project_scaffold_binding(void)
 {
     int i = krait_kanban_create(3, "Ship it");
@@ -167,6 +210,7 @@ main(void)
     system("rm -rf /tmp/krait-kanban-test-proj /tmp/krait-kanban-live-proj");
 
     test_board_crud();
+    test_card_identity_and_long_body();
     test_project_scaffold_binding();
     test_ai_state_without_key();
     test_live_ai_gated();

@@ -9,8 +9,8 @@
  * the shared compile gate whose diagnostics feed back into the next
  * round. The transcript persists per project as JSON lines under
  * ~/.kryon/krait/agent/<name>-<hash>/history.jsonl. Tool execution is
- * synchronous and blocks the UI thread (compile is seconds, run is
- * capped by timeout); the HTTP wait itself stays async via kry_http.
+ * performed on a worker except graphics operations; HTTP waits stay
+ * asynchronous. Task histories and the latest change set survive restart.
  */
 #include "kryon.h"
 #include "ide/state.h"
@@ -31,6 +31,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 
 #define AGENT_MSG_USER 0
 #define AGENT_MSG_ASSISTANT 1
@@ -72,6 +73,8 @@ static int agent_rec_count;
 static AgentMsg agent_msgs[AGENT_MAX_MSGS];
 static int agent_msg_count;
 static char agent_project[KRAIT_PATH_MAX];
+static char agent_task[128];
+static int agent_bind_session(const char *project, const char *task);
 static char agent_history_path[KRAIT_PATH_MAX * 2];
 static KraitAiRequest *agent_req;
 static int agent_round;
@@ -91,7 +94,7 @@ static int agent_image_count;
 typedef struct AgentToolJob {
     char *json;
     char *result;
-    volatile int done;
+    atomic_int done;
 } AgentToolJob;
 static AgentToolJob agent_job;
 static KryThread agent_tool_thread;
@@ -103,7 +106,7 @@ agent_tool_worker(void *userdata)
     AgentToolJob *job = userdata;
 
     job->result = krait_agent_run_tools(job->json);
-    job->done = 1;
+    atomic_store(&job->done, 1);
     return NULL;
 }
 
@@ -127,7 +130,7 @@ agent_start_tools(const char *json, char **result)
     free(agent_job.result);
     agent_job.json = strdup(json);
     agent_job.result = NULL;
-    agent_job.done = 0;
+    atomic_store(&agent_job.done, 0);
     if(!KryThreadStart(&agent_tool_thread, agent_tool_worker, &agent_job))
         return 0;
     agent_tool_thread_running = 1;
@@ -138,7 +141,7 @@ agent_start_tools(const char *json, char **result)
 static int
 agent_poll_tools(char **result)
 {
-    if(!agent_tool_thread_running || !agent_job.done)
+    if(!agent_tool_thread_running || !atomic_load(&agent_job.done))
         return 0;
     KryThreadJoin(&agent_tool_thread);
     agent_tool_thread_running = 0;
@@ -152,7 +155,99 @@ agent_poll_tools(char **result)
 #define AGENT_MAX_WRITTEN 32
 static char agent_written[AGENT_MAX_WRITTEN][256];
 static int agent_written_count;
-static int agent_batch_start;
+
+typedef struct {
+    char path[256];
+    char *before;
+    char *after;
+    int existed;
+} AgentChange;
+static AgentChange agent_changes[AGENT_MAX_WRITTEN];
+static int agent_change_count;
+static int agent_new_batch;
+
+static void
+agent_changes_clear(void)
+{
+    for(int i = 0; i < agent_change_count; i++) {
+        free(agent_changes[i].before);
+        free(agent_changes[i].after);
+    }
+    memset(agent_changes, 0, sizeof(agent_changes));
+    agent_change_count = 0;
+}
+
+static void
+agent_changes_path(char *path, size_t size)
+{
+    snprintf(path, size, "%s.changes.json", agent_history_path);
+}
+
+static int
+agent_changes_save(void)
+{
+    char path[KRAIT_PATH_MAX * 3];
+    KryJsonBuf buf = {0};
+    int ok;
+    agent_changes_path(path, sizeof(path));
+    kry_json_buf_raw(&buf, "[");
+    for(int i = 0; i < agent_change_count; i++) {
+        AgentChange *c = &agent_changes[i];
+        if(i) kry_json_buf_raw(&buf, ",");
+        kry_json_buf_raw(&buf, "{\"path\":");
+        kry_json_buf_str(&buf, c->path);
+        kry_json_buf_raw(&buf, ",\"before\":");
+        kry_json_buf_str(&buf, c->before);
+        kry_json_buf_raw(&buf, ",\"after\":");
+        kry_json_buf_str(&buf, c->after);
+        kry_json_buf_raw(&buf, ",\"existed\":");
+        kry_json_buf_num(&buf, c->existed);
+        kry_json_buf_raw(&buf, "}");
+    }
+    kry_json_buf_raw(&buf, "]");
+    const char *json = kry_json_buf_finish(&buf);
+    ok = json != NULL && krait_write_text_file_atomic(path, json);
+    kry_json_buf_free(&buf);
+    return ok;
+}
+
+static void
+agent_changes_load(void)
+{
+    char path[KRAIT_PATH_MAX * 3];
+    char *text = NULL;
+    long len;
+    agent_changes_clear();
+    agent_changes_path(path, sizeof(path));
+    if(!krait_read_file_alloc(path, &text, &len))
+        return;
+    KryJson *root = kry_json_parse(text);
+    free(text);
+    if(root == NULL)
+        return;
+    for(int i = 0; i < kry_json_count(root) && i < AGENT_MAX_WRITTEN; i++) {
+        KryJson *item = kry_json_at(root, i);
+        const char *p = kry_json_string(kry_json_get(item, "path"));
+        const char *before = kry_json_string(kry_json_get(item, "before"));
+        const char *after = kry_json_string(kry_json_get(item, "after"));
+        if(p == NULL || p[0] == '/' || strstr(p, "..") ||
+           strlen(p) >= sizeof(agent_changes[0].path) || before == NULL || after == NULL)
+            continue;
+        AgentChange *c = &agent_changes[agent_change_count];
+        c->before = strdup(before);
+        c->after = strdup(after);
+        if(c->before == NULL || c->after == NULL) {
+            free(c->before);
+            free(c->after);
+            memset(c, 0, sizeof(*c));
+            break;
+        }
+        snprintf(c->path, sizeof(c->path), "%s", p);
+        c->existed = kry_json_number(kry_json_get(item, "existed")) != 0;
+        agent_change_count++;
+    }
+    kry_json_free(root);
+}
 
 static const char *const agent_system_prompt =
     "You are a coding agent working inside the Krait IDE on a Kryon "
@@ -190,6 +285,37 @@ static const char *const agent_system_prompt =
     "writing /widgets/<i>/tap clicks that widget. Messages beginning "
     "with TOOL RESULTS contain tool output. Finish with a short "
     "plain-text summary of what you changed.";
+
+/* Project instructions are independent of the rolling transcript budget. */
+char *
+krait_agent_instructions(const char *project)
+{
+    char paths[2][KRAIT_PATH_MAX * 2];
+    char *result = calloc(1, 1);
+    size_t used = 0;
+    snprintf(paths[0], sizeof(paths[0]), "%s/.kryon/krait/AGENTS.md",
+             getenv("HOME") != NULL ? getenv("HOME") : ".");
+    snprintf(paths[1], sizeof(paths[1]), "%s/AGENTS.md", project != NULL ? project : ".");
+    for(int i = 0; i < 2 && result != NULL; i++) {
+        char *body = NULL, *next;
+        long len;
+        if(!krait_read_file_alloc(paths[i], &body, &len) || body == NULL)
+            continue;
+        size_t extra = strlen(body) + strlen(paths[i]) + 48;
+        next = realloc(result, used + extra + 1);
+        if(next == NULL) {
+            free(body);
+            free(result);
+            return NULL;
+        }
+        result = next;
+        snprintf(result + used, extra + 1, "\n\nProject instructions (%s):\n%s",
+                 paths[i], body);
+        used = strlen(result);
+        free(body);
+    }
+    return result;
+}
 
 static void
 agent_set_status(const char *fmt, ...)
@@ -235,6 +361,10 @@ agent_history_dir(char *dst, size_t dst_size)
                 *p = '_';
         snprintf(dst, dst_size, "%s/.kryon/krait/agent/%s-%08x", home, clean,
                  agent_path_hash(agent_project));
+        if(agent_task[0] != '\0') {
+            size_t used = strlen(dst);
+            snprintf(dst + used, dst_size - used, "--%s", agent_task);
+        }
     }
 }
 
@@ -487,25 +617,56 @@ static int
 agent_tool_write(const char *path, const char *content)
 {
     char full[KRAIT_PATH_MAX * 2];
-    char bak[KRAIT_PATH_MAX * 2];
     char *orig = NULL;
     long len;
-    int had_orig;
+    int had_orig, index;
+    AgentChange *change;
 
-    if(!agent_path_safe(path))
+    if(!agent_path_safe(path) || strlen(path) >= sizeof(agent_changes[0].path) ||
+       content == NULL)
         return 0;
     snprintf(full, sizeof(full), "%s/%s", agent_project, path);
-    snprintf(bak, sizeof(bak), "%s.bak", full);
     krait_ensure_parent_dir(full);
     had_orig = krait_read_file_alloc(full, &orig, &len);
-    if(had_orig)
-        krait_write_text_file(bak, orig);
-    if(!krait_write_text_file(full, content != NULL ? content : "")) {
+    if(!had_orig && krait_path_exists(full)) {
         free(orig);
         return 0;
     }
-    agent_diff_counts(had_orig ? orig : NULL,
-                      content != NULL ? content : "",
+    if(agent_new_batch) {
+        agent_changes_clear();
+        agent_new_batch = 0;
+    }
+    for(index = 0; index < agent_change_count; index++)
+        if(strcmp(agent_changes[index].path, path) == 0)
+            break;
+    if(index == AGENT_MAX_WRITTEN) {
+        free(orig);
+        return 0;
+    }
+    change = &agent_changes[index];
+    if(index == agent_change_count) {
+        change->before = strdup(had_orig ? orig : "");
+        change->existed = had_orig;
+        snprintf(change->path, sizeof(change->path), "%s", path);
+        agent_change_count++;
+    } else if(!had_orig || (change->after == NULL || strcmp(orig, change->after) != 0)) {
+        free(orig);
+        return 0; /* Another writer changed the file during this batch. */
+    }
+    char *after = strdup(content);
+    if(change->before == NULL || after == NULL) {
+        free(after);
+        free(orig);
+        return 0;
+    }
+    free(change->after);
+    change->after = after;
+    /* Persist the before/after images before modifying the project. */
+    if(!agent_changes_save() || !krait_write_text_file_atomic(full, content)) {
+        free(orig);
+        return 0;
+    }
+    agent_diff_counts(had_orig ? orig : NULL, content,
                       &agent_last_write_added, &agent_last_write_removed);
     if(!had_orig)
         agent_last_write_removed = 0;
@@ -518,7 +679,7 @@ agent_tool_write(const char *path, const char *content)
 }
 
 /* The UI reloads open editors from disk when the agent reports written
- * files; Revert restores the .bak backups of the latest batch. */
+ * files; Revert restores the persisted before-images of the latest batch. */
 int
 krait_agent_written_count(void)
 {
@@ -536,33 +697,48 @@ krait_agent_written_path(int index)
 int
 krait_agent_can_revert(void)
 {
-    return agent_written_count > agent_batch_start && !agent_busy;
+    return agent_change_count > 0 && !agent_busy && !agent_tool_thread_running;
 }
 
 int
 krait_agent_revert(void)
 {
-    int i;
     int restored = 0;
-
     if(!krait_agent_can_revert())
         return 0;
-    for(i = agent_batch_start; i < agent_written_count; i++) {
+    /* Check every file before restoring any: never erase later user edits. */
+    for(int i = 0; i < agent_change_count; i++) {
+        AgentChange *c = &agent_changes[i];
         char full[KRAIT_PATH_MAX * 2];
-        char bak[KRAIT_PATH_MAX * 2];
-        char *orig = NULL;
+        char *current = NULL;
         long len;
-
-        snprintf(full, sizeof(full), "%s/%s", agent_project,
-                 agent_written[i]);
-        snprintf(bak, sizeof(bak), "%s.bak", full);
-        if(krait_read_file_alloc(bak, &orig, &len) && orig != NULL) {
-            if(krait_write_text_file(full, orig))
-                restored++;
-            free(orig);
+        snprintf(full, sizeof(full), "%s/%s", agent_project, c->path);
+        int exists = krait_read_file_alloc(full, &current, &len);
+        int unchanged = exists && (strcmp(current, c->after) == 0 ||
+                                    (c->existed && strcmp(current, c->before) == 0));
+        free(current);
+        if(!unchanged && !(!c->existed && !krait_path_exists(full))) {
+            agent_set_status("Revert stopped: %s changed after the agent write", c->path);
+            return 0;
         }
     }
-    agent_written_count = agent_batch_start;
+    agent_written_count = 0;
+    for(int i = 0; i < agent_change_count; i++) {
+        AgentChange *c = &agent_changes[i];
+        char full[KRAIT_PATH_MAX * 2];
+        snprintf(full, sizeof(full), "%s/%s", agent_project, c->path);
+        int ok = c->existed ? krait_write_text_file_atomic(full, c->before) :
+                             (!krait_path_exists(full) || unlink(full) == 0);
+        if(!ok) {
+            agent_set_status("Revert incomplete: could not restore %s; retry available", c->path);
+            agent_files_changed = restored > 0;
+            return restored;
+        }
+        snprintf(agent_written[agent_written_count++], sizeof(agent_written[0]), "%s", c->path);
+        restored++;
+    }
+    agent_changes_clear();
+    agent_changes_save();
     agent_files_changed = 1;
     agent_set_status("reverted %d file(s)", restored);
     return restored;
@@ -799,7 +975,7 @@ krait_agent_run_tools(const char *json)
         snprintf(out, AGENT_TOOL_OUT_CAP, "TOOL RESULTS: bad action json\n");
         return out;
     }
-    agent_batch_start = agent_written_count;
+    agent_new_batch = 1;
     count = kry_json_count(root);
     for(i = 0; i < count; i++) {
         KryJson *action = kry_json_at(root, i);
@@ -1012,7 +1188,18 @@ agent_build_context(KraitAiMessage *msgs, int max, char *temps[], int *temp_coun
 
     *temp_count = 0;
     msgs[count].role = "system";
-    msgs[count].content = agent_system_prompt;
+    char *instructions = krait_agent_instructions(agent_project);
+    char *system = NULL;
+    if(instructions != NULL && instructions[0] != '\0') {
+        size_t len = strlen(agent_system_prompt) + strlen(instructions) + 1;
+        system = malloc(len);
+        if(system != NULL) {
+            snprintf(system, len, "%s%s", agent_system_prompt, instructions);
+            temps[(*temp_count)++] = system;
+        }
+    }
+    free(instructions);
+    msgs[count].content = system != NULL ? system : agent_system_prompt;
     msgs[count].image_b64 = NULL;
     count++;
     for(i = agent_msg_count - 1; i >= 0 && count < max; i--) {
@@ -1227,6 +1414,7 @@ krait_agent_retry(int index)
 typedef struct {
     char dir_name[256];
     char project[KRAIT_PATH_MAX];
+    char task[128];
     long mtime;
 } AgentSession;
 static AgentSession agent_sessions[AGENT_MAX_SESSIONS];
@@ -1276,6 +1464,15 @@ agent_sessions_scan(void)
         s = &agent_sessions[agent_session_count++];
         snprintf(s->dir_name, sizeof(s->dir_name), "%s", e->d_name);
         snprintf(s->project, sizeof(s->project), "%s", proj);
+        s->task[0] = '\0';
+        snprintf(path, sizeof(path), "%s/%s/task.txt", root, e->d_name);
+        {
+            char *data = NULL;
+            long len;
+            if(krait_read_file_alloc(path, &data, &len) && data != NULL)
+                snprintf(s->task, sizeof(s->task), "%s", krait_trim(data));
+            free(data);
+        }
         s->mtime = (long)st.st_mtime;
     }
     closedir(d);
@@ -1322,8 +1519,7 @@ krait_agent_open_session(int index)
     proj = agent_sessions[index].project;
     if(proj == NULL || proj[0] == '\0' || !krait_path_exists(proj))
         return 0;
-    krait_agent_bind(proj);
-    return 1;
+    return agent_bind_session(proj, agent_sessions[index].task);
 }
 
 static void
@@ -1363,16 +1559,31 @@ agent_finish(const char *text)
         agent_remember(AGENT_MSG_ASSISTANT, text);
 }
 
-void
-krait_agent_bind(const char *project_dir)
+static int
+agent_bind_session(const char *project_dir, const char *task)
 {
     char dir[KRAIT_PATH_MAX * 2];
     int i;
 
     if(project_dir == NULL)
         project_dir = "";
-    if(strcmp(agent_project, project_dir) == 0)
-        return;
+    if(task == NULL)
+        task = "";
+    if(strlen(task) >= sizeof(agent_task))
+        return 0;
+    for(const char *p = task; *p; p++)
+        if(!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+             (*p >= '0' && *p <= '9') || *p == '-' || *p == '_'))
+            return 0;
+    if(strcmp(agent_project, project_dir) == 0 && strcmp(agent_task, task) == 0)
+        return 1;
+    if(agent_busy || agent_tool_thread_running)
+        return 0;
+    free(agent_perm_json);
+    agent_perm_json = NULL;
+    agent_perm_count = 0;
+    agent_perm_always = 0;
+    agent_written_count = 0;
     if(agent_req != NULL) {
         krait_ai_free(agent_req);
         agent_req = NULL;
@@ -1387,6 +1598,7 @@ krait_agent_bind(const char *project_dir)
     free(agent_pending_image);
     agent_pending_image = NULL;
     snprintf(agent_project, sizeof(agent_project), "%s", project_dir);
+    snprintf(agent_task, sizeof(agent_task), "%s", task);
     agent_history_dir(dir, sizeof(dir));
     snprintf(agent_history_path, sizeof(agent_history_path), "%s/history.jsonl",
              dir);
@@ -1402,7 +1614,36 @@ krait_agent_bind(const char *project_dir)
     if(getenv("KRAIT_AGENT_DEBUG") != NULL)
         fprintf(stderr, "agent-bind: project='%s' history='%s'\n",
                 agent_project, agent_history_path);
+    {
+        char task_path[KRAIT_PATH_MAX * 2];
+        snprintf(task_path, sizeof(task_path), "%s/task.txt", dir);
+        krait_write_text_file_atomic(task_path, agent_task);
+    }
     agent_load_history();
+    agent_changes_load();
+    agent_session_scan = 0;
+    return 1;
+}
+
+void
+krait_agent_bind(const char *project_dir)
+{
+    /* Drawing the same project must not replace its selected task session. */
+    if(project_dir != NULL && strcmp(agent_project, project_dir) == 0)
+        return;
+    agent_bind_session(project_dir, "");
+}
+
+int
+krait_agent_bind_task(const char *project_dir, const char *task)
+{
+    return agent_bind_session(project_dir, task);
+}
+
+const char *
+krait_agent_task(void)
+{
+    return agent_task;
 }
 
 int
@@ -1504,23 +1745,29 @@ krait_agent_files_changed(void)
 int
 krait_agent_bridge_card(int col, int index)
 {
-    char prompt[8192];
-    const char *title;
-    const char *body;
-    const char *project;
+    const char *title, *body, *project, *id;
+    char *prompt;
+    size_t size;
+    int result;
 
     if(!krait_ai_configured() || agent_busy)
         return 0;
     title = krait_kanban_card_title(col, index);
     body = krait_kanban_card_body(col, index);
     project = krait_kanban_card_project(col, index);
-    if(title == NULL || title[0] == '\0')
+    id = krait_kanban_card_id(col, index);
+    if(title == NULL || title[0] == '\0' || id[0] == '\0')
         return 0;
-    snprintf(prompt, sizeof(prompt), "Kanban card: %s\n\n%s",
-             title, body != NULL ? body : "");
-    if(project != NULL && project[0] != '\0')
-        krait_agent_bind(project);
-    return krait_agent_send(prompt);
+    if(!agent_bind_session(project, id))
+        return 0;
+    size = strlen(title) + strlen(body) + 32;
+    prompt = malloc(size);
+    if(prompt == NULL)
+        return 0;
+    snprintf(prompt, size, "Kanban card: %s\n\n%s", title, body);
+    result = krait_agent_send(prompt);
+    free(prompt);
+    return result;
 }
 
 int
@@ -1553,6 +1800,9 @@ void
 krait_agent_clear(void)
 {
     int i;
+
+    if(agent_busy || agent_tool_thread_running)
+        return;
 
     if(agent_req != NULL) {
         krait_ai_free(agent_req);
@@ -1697,6 +1947,15 @@ void
 krait_agent_shutdown(void)
 {
     int i;
+
+    if(agent_tool_thread_running) {
+        KryThreadJoin(&agent_tool_thread);
+        agent_tool_thread_running = 0;
+    }
+    free(agent_job.json);
+    free(agent_job.result);
+    memset(&agent_job, 0, sizeof(agent_job));
+    agent_changes_clear();
 
     if(agent_req != NULL) {
         krait_ai_free(agent_req);
