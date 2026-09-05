@@ -41,7 +41,9 @@ the bound project's AGENTS.md; nested directory rules remain to be implemented.
 - [ ] Workspace search/replace with preview, exclusions and regex.
 - [ ] Multi-cursor editing, command palette and configurable shortcuts.
 - [ ] DAP launch/attach, breakpoints, stepping, variables and call stacks.
-- [ ] Configurable build/test tasks and a test-results explorer.
+- [x] Configurable project validation commands, manual Validate, and persisted
+  per-check command/exit/duration/output reports.
+- [ ] Test-results explorer, source-version evidence and completion gates.
 - [ ] Diff/merge review and remote workspaces.
 
 Acceptance: edit, navigate, refactor, test and debug a real non-Kryon project

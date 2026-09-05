@@ -14,6 +14,7 @@ krait_agent_consume_console :: () -> const char* #extern
 krait_agent_clear_console :: () #extern
 krait_agent_streaming_text :: () -> const char* #extern
 krait_agent_compile_errors :: () -> const char* #extern
+krait_agent_validate :: () -> int #extern
 krait_agent_can_resume :: () -> int #extern
 krait_agent_resume :: () -> int #extern
 krait_agent_bind :: (project_dir: const char*) #extern
@@ -1093,6 +1094,11 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
              ScaleUIPx(74), ScaleUIPx(24), efforts, 4, &effort)
     if effort != krait_ai_active_effort() {
         krait_ai_set_effort(effort)
+    }
+    if StyledButton((int)composer.x + ScaleUIPx(98), control_y + ScaleUIPx(34),
+                           ScaleUIPx(86), ScaleUIPx(24), "Validate",
+                           ButtonStyleSecondary, busy, NULL) {
+        krait_agent_validate()
     }
     if krait_agent_can_revert() != 0 {
         rev_w := ScaleUIPx(70)

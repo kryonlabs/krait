@@ -204,8 +204,10 @@ main(void)
     char home[256];
     const char *tmp = getenv("TMPDIR");
 
-    snprintf(home, sizeof(home), "%s/krait-kanban-test-home.%d",
-             tmp != NULL ? tmp : "/tmp", (int)getpid());
+    snprintf(home, sizeof(home), "%s/krait-kanban-test-home.XXXXXX",
+             tmp != NULL ? tmp : "/tmp");
+    if(mkdtemp(home) == NULL)
+        return 1;
     setenv("HOME", home, 1);
     system("rm -rf /tmp/krait-kanban-test-proj /tmp/krait-kanban-live-proj");
 

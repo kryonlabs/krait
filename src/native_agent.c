@@ -83,6 +83,8 @@ static char agent_run_state[32] = "idle";
 static void agent_run_save(const char *state);
 static int agent_http_retries;
 static int agent_busy;
+static int agent_manual_validation;
+static int agent_validation_passed;
 static char agent_status[160];
 static int agent_files_changed;
 
@@ -282,12 +284,14 @@ static const char *const agent_system_prompt =
     "[{\"tool\":\"list\"}, {\"tool\":\"search\",\"query\":\"button\"}, "
     "{\"tool\":\"read\",\"path\":\"main.kry\"}, "
     "{\"tool\":\"write\",\"path\":\"ui.kry\",\"content\":\"...\"}, "
-    "{\"tool\":\"compile\"}, {\"tool\":\"run\",\"cmd\":\"make\"}, "
+    "{\"tool\":\"validate\"}, {\"tool\":\"compile\"}, {\"tool\":\"run\",\"cmd\":\"make\"}, "
     "{\"tool\":\"screenshot\",\"path\":\"main.kry\"}, "
     "{\"tool\":\"card\",\"title\":\"Follow up\",\"body\":\"notes\"}, "
     "{\"tool\":\"sfs_list\",\"path\":\"/widgets\"}, "
     "{\"tool\":\"sfs_read\",\"path\":\"/widgets/0/bounds\"}, "
     "{\"tool\":\"sfs_write\",\"path\":\"/widgets/0/tap\",\"value\":\"1\"}]. "
+    "validate runs the project checks defined in .krait/tasks.json and saves "
+    "their command results. Use it to verify work when configured. "
     "Writes are applied to the project immediately and a compile check "
     "runs after every write batch - fix any errors it reports before "
     "finishing. screenshot renders a .kry screen offscreen and shows the "
@@ -905,6 +909,95 @@ agent_tool_run(const char *cmd, char *out, size_t out_size)
     }
 }
 
+/* Project checks are explicit shell commands, executed with the same
+ * permissions and cancellation behavior as the run tool. */
+static void
+agent_tool_validate(char *out, size_t out_size)
+{
+    char config_path[KRAIT_PATH_MAX * 2], report_path[KRAIT_PATH_MAX * 3];
+    char *config = NULL;
+    long len;
+    KryJson *root = NULL, *tasks = NULL;
+    KryJsonBuf report = {0};
+    int count = 0, passed = 1;
+    size_t used = strlen(out);
+    agent_validation_passed = 0;
+    snprintf(report_path, sizeof(report_path), "%s.validation.json", agent_history_path);
+    if(!krait_write_text_file_atomic(report_path, "{\"version\":1,\"passed\":0,\"state\":\"incomplete\"}")) {
+        snprintf(out + used, out_size - used, "[validate] FAILED: cannot create result record\n");
+        return;
+    }
+    snprintf(config_path, sizeof(config_path), "%s/.krait/tasks.json", agent_project);
+    if(krait_read_file_alloc(config_path, &config, &len) && config != NULL)
+        root = kry_json_parse(config);
+    tasks = root != NULL ? kry_json_get(root, "tasks") : NULL;
+    count = tasks != NULL ? kry_json_count(tasks) : 0;
+    if(kry_json_type(tasks) != KRY_JSON_ARRAY || count < 1 || count > 32) {
+        snprintf(out + used, out_size - used,
+                 "[validate] FAILED: .krait/tasks.json must define 1–32 tasks\n");
+        kry_json_free(root); free(config);
+        return;
+    }
+    /* Validate the entire configuration before executing any command. */
+    for(int i = 0; i < count; i++) {
+        KryJson *task = kry_json_at(tasks, i);
+        const char *name = kry_json_string(kry_json_get(task, "name"));
+        const char *command = kry_json_string(kry_json_get(task, "command"));
+        KryJson *timeout_value = kry_json_get(task, "timeout_seconds");
+        double timeout = kry_json_number(timeout_value);
+        if(name == NULL || !*name || command == NULL || !*command ||
+           (timeout_value != NULL && (kry_json_type(timeout_value) != KRY_JSON_NUMBER ||
+            !(timeout >= 1 && timeout <= 3600) || timeout != (int)timeout))) {
+            snprintf(out + used, out_size - used, "[validate] FAILED: invalid task %d\n", i + 1);
+            kry_json_free(root); free(config);
+            return;
+        }
+    }
+    kry_json_buf_raw(&report, "{\"version\":1,\"project\":");
+    kry_json_buf_str(&report, agent_project);
+    kry_json_buf_raw(&report, ",\"task\":");
+    kry_json_buf_str(&report, agent_task);
+    kry_json_buf_raw(&report, ",\"started_at\":");
+    kry_json_buf_num(&report, (double)time(NULL));
+    kry_json_buf_raw(&report, ",\"results\":[");
+    for(int i = 0; i < count; i++) {
+        KryJson *task = kry_json_at(tasks, i);
+        const char *name = kry_json_string(kry_json_get(task, "name"));
+        const char *command = kry_json_string(kry_json_get(task, "command"));
+        int timeout = (int)kry_json_number(kry_json_get(task, "timeout_seconds"));
+        char output[8192];
+        struct timespec start, end;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        int rc = krait_run_capture_cancel(agent_project, command, timeout > 0 ? timeout : 60,
+                                          output, sizeof(output), agent_command_cancelled, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        double elapsed = (end.tv_sec - start.tv_sec) * 1000.0 +
+                         (end.tv_nsec - start.tv_nsec) / 1000000.0;
+        if(rc != 0) passed = 0;
+        if(i) kry_json_buf_raw(&report, ",");
+        kry_json_buf_raw(&report, "{\"name\":"); kry_json_buf_str(&report, name);
+        kry_json_buf_raw(&report, ",\"command\":"); kry_json_buf_str(&report, command);
+        kry_json_buf_raw(&report, ",\"exit_code\":"); kry_json_buf_num(&report, rc);
+        kry_json_buf_raw(&report, ",\"duration_ms\":"); kry_json_buf_num(&report, elapsed);
+        kry_json_buf_raw(&report, ",\"output\":"); kry_json_buf_str(&report, output);
+        kry_json_buf_raw(&report, "}");
+        used = strlen(out);
+        snprintf(out + used, out_size - used, "[validate %s] %s (exit %d, %.0f ms)\n%s\n",
+                 name, rc == 0 ? "passed" : "FAILED", rc, elapsed, output);
+        if(atomic_load(&agent_stop_requested)) { passed = 0; break; }
+    }
+    kry_json_buf_raw(&report, "],\"passed\":"); kry_json_buf_num(&report, passed);
+    kry_json_buf_raw(&report, "}");
+    const char *json = kry_json_buf_finish(&report);
+    snprintf(report_path, sizeof(report_path), "%s.validation.json", agent_history_path);
+    int saved = json != NULL && krait_write_text_file_atomic(report_path, json);
+    used = strlen(out);
+    snprintf(out + used, out_size - used, "[validate] %s%s\n",
+             passed && saved ? "passed" : "FAILED", saved ? " (report saved)" : " (could not save report)");
+    agent_validation_passed = passed && saved;
+    kry_json_buf_free(&report); kry_json_free(root); free(config);
+}
+
 /* Render the project's screen offscreen, encode the PNG, and hold it for
  * the next request. The tool result reports the size so the model knows
  * the screenshot landed. */
@@ -1108,6 +1201,8 @@ krait_agent_run_tools(const char *json)
                                   out, AGENT_TOOL_OUT_CAP);
         else if(strcmp(tool, "compile") == 0)
             agent_tool_compile(out, AGENT_TOOL_OUT_CAP);
+        else if(strcmp(tool, "validate") == 0)
+            agent_tool_validate(out, AGENT_TOOL_OUT_CAP);
         else if(strcmp(tool, "run") == 0)
             agent_tool_run(kry_json_string(kry_json_get(action, "cmd")),
                            out, AGENT_TOOL_OUT_CAP);
@@ -1863,6 +1958,7 @@ krait_agent_send(const char *text)
         agent_remember(AGENT_MSG_ERROR, krait_ai_config_hint());
         return 0;
     }
+    agent_manual_validation = 0;
     agent_remember(AGENT_MSG_USER, text);
     agent_run_save("running");
     agent_http_retries = 0;
@@ -1959,6 +2055,28 @@ agent_execute_actions(char *reply)
 }
 
 int
+krait_agent_validate(void)
+{
+    char *result = NULL;
+    if(agent_busy || agent_tool_thread_running || agent_project[0] == 0)
+        return 0;
+    atomic_store(&agent_stop_requested, 0);
+    agent_manual_validation = 1;
+    agent_busy = 1;
+    agent_run_save("tools");
+    agent_set_status("Running project validation...");
+    if(agent_start_tools("[{\"tool\":\"validate\"}]", &result)) {
+        agent_busy = 0;
+        agent_manual_validation = 0;
+        free(result);
+        agent_run_save("failed");
+        agent_set_status("Could not start validation worker");
+        return 0;
+    }
+    return 1;
+}
+
+int
 krait_agent_poll(void)
 {
     KraitAiStatus s;
@@ -1985,6 +2103,13 @@ krait_agent_poll(void)
             agent_busy = 0;
             agent_run_save("stopped");
             agent_set_status("stopped");
+            return 0;
+        }
+        if(agent_manual_validation) {
+            agent_manual_validation = 0;
+            agent_busy = 0;
+            agent_run_save(agent_validation_passed ? "review" : "failed");
+            agent_set_status(agent_validation_passed ? "Project validation passed" : "Project validation failed; inspect tool results");
             return 0;
         }
         if(agent_round >= AGENT_MAX_ROUNDS) {

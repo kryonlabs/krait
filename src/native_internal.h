@@ -205,6 +205,7 @@ const char *krait_agent_task(void);
 const char *krait_agent_run_state(void);
 int krait_agent_can_resume(void);
 int krait_agent_resume(void);
+int krait_agent_validate(void);
 char *krait_agent_instructions(const char *project);
 int krait_agent_written_count(void);
 const char *krait_agent_written_path(int index);

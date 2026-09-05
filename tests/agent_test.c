@@ -201,6 +201,52 @@ test_command_cancellation(void)
     CHECK(krait_run_capture("/tmp", "true", 2, NULL, 0) == 0);
 }
 
+static void
+test_project_validation(void)
+{
+    const char *project = "/tmp/krait-validation-test";
+    char directory[1024], config[1024], report_path[2048];
+    char *result, *report = NULL;
+    long len;
+    unsigned hash = 2166136261u;
+    for(const char *p = project; *p; p++) hash = (hash ^ (unsigned char)*p) * 16777619u;
+    snprintf(directory, sizeof(directory), "%s/.krait", project);
+    krait_mkdir_p(directory);
+    snprintf(config, sizeof(config), "%s/.krait/tasks.json", project);
+    CHECK(krait_agent_bind_task(project, "checks"));
+    snprintf(report_path, sizeof(report_path), "%s/.kryon/krait/agent/krait-validation-test-%08x--checks/history.jsonl.validation.json", getenv("HOME"), hash);
+    CHECK(krait_write_text_file_atomic(config,
+        "{\"tasks\":[{\"name\":\"build\",\"command\":\"printf build-ok\"},{\"name\":\"test\",\"command\":\"exit 7\"}]}"));
+    result = krait_agent_run_tools("[{\"tool\":\"validate\"}]");
+    CHECK(result != NULL && strstr(result, "[validate build] passed") != NULL);
+    CHECK(result != NULL && strstr(result, "[validate test] FAILED") != NULL);
+    free(result);
+    CHECK(krait_read_file_alloc(report_path, &report, &len));
+    CHECK(report != NULL && strstr(report, "\"exit_code\":7") != NULL);
+    CHECK(report != NULL && strstr(report, "\"passed\":0") != NULL);
+    free(report); report = NULL;
+    CHECK(krait_write_text_file_atomic(config,
+        "{\"tasks\":[{\"name\":\"test\",\"command\":\"printf all-passed\"}]}"));
+    CHECK(krait_agent_validate());
+    CHECK(!krait_agent_validate()); /* single owner of tool execution */
+    for(int i = 0; i < 500 && krait_agent_busy(); i++) {
+        krait_agent_poll();
+        usleep(10000);
+    }
+    CHECK(!krait_agent_busy());
+    CHECK(strcmp(krait_agent_run_state(), "review") == 0);
+    CHECK(krait_read_file_alloc(report_path, &report, &len));
+    CHECK(report != NULL && strstr(report, "\"passed\":1") != NULL);
+    free(report); report = NULL;
+    CHECK(krait_write_text_file_atomic(config, "{broken"));
+    result = krait_agent_run_tools("[{\"tool\":\"validate\"}]");
+    CHECK(result != NULL && strstr(result, "FAILED") != NULL);
+    free(result);
+    CHECK(krait_read_file_alloc(report_path, &report, &len));
+    CHECK(report != NULL && strstr(report, "\"passed\":0") != NULL);
+    free(report);
+}
+
 /* Tools execute through the same public entry the live loop uses. */
 static void
 test_tools(void)
@@ -824,8 +870,10 @@ main(int argc, char **argv)
     if(getenv("KRAIT_AGENT_CONFIG_CHILD") != NULL)
         return config_child_check();
 
-    snprintf(home, sizeof(home), "%s/krait-agent-test-home.%d",
-             tmp != NULL ? tmp : "/tmp", (int)getpid());
+    snprintf(home, sizeof(home), "%s/krait-agent-test-home.XXXXXX",
+             tmp != NULL ? tmp : "/tmp");
+    if(mkdtemp(home) == NULL)
+        return 1;
     setenv("HOME", home, 1);
     system("rm -rf /tmp/krait-agent-test-proj "
            "/tmp/krait-agent-test-proj-other");
@@ -836,6 +884,7 @@ main(int argc, char **argv)
     test_compile_gate();
     test_run_capture();
     test_command_cancellation();
+    test_project_validation();
     test_tools();
     test_change_recovery();
     test_hex_editor();
