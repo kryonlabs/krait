@@ -113,7 +113,21 @@ session, even when the displayed tool output is truncated. A write refuses
 files changed since that read; reread the file to work from its latest
 contents. Revert also rechecks the current file before replacing it. These
 checks reduce conflicting writes but are not a filesystem transaction with
-external editors. Read fingerprints do not yet persist across restart.
+external editors.
+
+Read fingerprints persist in each task session's `reads.json`, including
+files that were absent when read. Switching tasks or restarting Krait reloads
+them; changes made while the task was closed still cause stale writes to be
+refused. Rereading a file explicitly updates its fingerprint. Successful
+writes and reverts also update the saved fingerprint. Snapshots contain paths
+and SHA-256 digests, not another copy of file contents.
+
+Malformed, unreadable, oversized, or unsavable snapshots disable file-tool
+writes for that session. Restore a valid `reads.json` and reopen the session,
+or start a new task session and read its current files. The corrupt record
+is preserved. Sessions created before this feature can start without a
+snapshot; deleting one also loses its historical read checks. The current
+limit is 16,384 tracked paths per session.
 
 Shell commands use their existing permission controls and are not confined
 by these file-tool rules. Search, screenshots and proposal application still

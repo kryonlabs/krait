@@ -18,6 +18,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <time.h>
+#include <glob.h>
 
 static int failures;
 
@@ -583,6 +584,57 @@ test_selective_review(void)
     CHECK(krait_agent_bind_task(project, "review"));
     CHECK(krait_agent_change_review(0) == 1);
     CHECK(krait_agent_change_review(1) == 2);
+}
+
+static int
+read_snapshot_child(const char *root)
+{
+    if(!krait_agent_bind_task(root, "durable-tests")) return 1;
+    char *result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"source.txt\",\"content\":\"stale agent write\"}]");
+    int ok = result && strstr(result, "refused"); free(result);
+    krait_agent_shutdown();
+    return ok ? 0 : 1;
+}
+
+static void
+test_read_snapshot_restart(const char *binary)
+{
+    char root[] = "/tmp/krait-read-snapshot-XXXXXX", path[1024], pattern[2048];
+    CHECK(mkdtemp(root) != NULL);
+    CHECK(krait_agent_bind_task(root, "durable-tests"));
+    snprintf(path, sizeof(path), "%s/source.txt", root);
+    CHECK(krait_write_text_file_atomic(path, "original"));
+    char *result = krait_agent_run_tools("[{\"tool\":\"read\",\"path\":\"source.txt\"},{\"tool\":\"read\",\"path\":\"absent.txt\"}]"); free(result);
+    CHECK(krait_write_text_file_atomic(path, "external edit"));
+    pid_t child = fork(); CHECK(child >= 0);
+    if(child == 0) {
+        setenv("KRAIT_READ_SNAPSHOT_CHILD", root, 1);
+        execl(binary, binary, (char *)NULL); _exit(127);
+    }
+    if(child > 0) { int status; CHECK(waitpid(child, &status, 0) == child); CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0); }
+    CHECK(krait_agent_bind_task(root, "other-task"));
+    CHECK(krait_agent_bind_task(root, "durable-tests"));
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"source.txt\",\"content\":\"stale agent write\"}]");
+    CHECK(result && strstr(result, "refused")); free(result);
+    snprintf(path, sizeof(path), "%s/absent.txt", root);
+    CHECK(krait_write_text_file_atomic(path, "created externally"));
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"absent.txt\",\"content\":\"overwrite\"}]");
+    CHECK(result && strstr(result, "refused")); free(result);
+    result = krait_agent_run_tools("[{\"tool\":\"read\",\"path\":\"source.txt\"},{\"tool\":\"write\",\"path\":\"source.txt\",\"content\":\"updated\"}]");
+    CHECK(result && strstr(result, "] ok")); free(result);
+    snprintf(pattern, sizeof(pattern), "%s/.kryon/krait/agent/%s-*--durable-tests/reads.json", getenv("HOME"), strrchr(root, '/') + 1);
+    glob_t files = {0};
+    CHECK(glob(pattern, 0, NULL, &files) == 0 && files.gl_pathc == 1);
+    if(files.gl_pathc == 1) {
+        CHECK(krait_write_text_file_atomic(files.gl_pathv[0], "corrupt"));
+        CHECK(krait_agent_bind_task(root, "other-task"));
+        CHECK(krait_agent_bind_task(root, "durable-tests"));
+        result = krait_agent_run_tools("[{\"tool\":\"read\",\"path\":\"source.txt\"},{\"tool\":\"write\",\"path\":\"source.txt\",\"content\":\"overwrite\"}]");
+        CHECK(result && strstr(result, "snapshot unavailable")); free(result);
+        char *text = NULL; long len;
+        CHECK(krait_read_file_alloc(files.gl_pathv[0], &text, &len) && !strcmp(text, "corrupt")); free(text);
+    }
+    globfree(&files);
 }
 
 static void
@@ -1230,6 +1282,7 @@ main(int argc, char **argv)
     const char *tmp = getenv("TMPDIR");
 
     (void)argc;
+    if(getenv("KRAIT_READ_SNAPSHOT_CHILD")) return read_snapshot_child(getenv("KRAIT_READ_SNAPSHOT_CHILD"));
     if(getenv("KRAIT_AGENT_CONFIG_CHILD") != NULL)
         return config_child_check();
 
@@ -1254,6 +1307,7 @@ main(int argc, char **argv)
     test_tools();
     test_change_recovery();
     test_selective_review();
+    test_read_snapshot_restart(argv[0]);
     test_unsaved_write_guard();
     test_file_guards();
     test_checkpoint_history();

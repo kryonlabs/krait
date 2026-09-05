@@ -893,11 +893,82 @@ agent_text_digest(const char *text, char digest[65])
 }
 
 static void
+agent_read_versions_path(char *path, size_t size)
+{
+    char dir[KRAIT_PATH_MAX * 2];
+    agent_history_dir(dir, sizeof(dir), agent_project, agent_task);
+    snprintf(path, size, "%s/reads.json", dir);
+}
+
+static int
+agent_read_versions_save(void)
+{
+    if(agent_read_version_failed) return 0;
+    KryJsonBuf json = {0};
+    kry_json_buf_raw(&json, "{\"version\":1,\"files\":[");
+    for(int i = 0; i < agent_read_version_count; i++) {
+        if(i) kry_json_buf_raw(&json, ",");
+        kry_json_buf_raw(&json, "{\"path\":"); kry_json_buf_str(&json, agent_read_versions[i].path);
+        kry_json_buf_raw(&json, ",\"digest\":"); kry_json_buf_str(&json, agent_read_versions[i].digest);
+        kry_json_buf_raw(&json, "}");
+    }
+    kry_json_buf_raw(&json, "]}");
+    char path[KRAIT_PATH_MAX * 3];
+    agent_read_versions_path(path, sizeof(path));
+    const char *data = kry_json_buf_finish(&json);
+    int ok = data && krait_write_text_file_atomic(path, data);
+    kry_json_buf_free(&json);
+    if(!ok) agent_read_version_failed = 1;
+    return ok;
+}
+
+static void
+agent_read_versions_load(void)
+{
+    char path[KRAIT_PATH_MAX * 3], *text = NULL;
+    long length;
+    agent_read_versions_path(path, sizeof(path));
+    struct stat st;
+    int exists = lstat(path, &st);
+    if(exists != 0 && errno == ENOENT) return; /* Older sessions have no snapshot. */
+    agent_read_version_failed = 1;
+    if(exists != 0) return;
+    if(!S_ISREG(st.st_mode) || st.st_size > 8 * 1024 * 1024 ||
+       !krait_read_file_alloc(path, &text, &length)) return;
+    KryJson *json = kry_json_parse(text); free(text);
+    KryJson *files = kry_json_get(json, "files");
+    int count = kry_json_count(files);
+    if(kry_json_number(kry_json_get(json, "version")) != 1 ||
+       kry_json_type(files) != KRY_JSON_ARRAY || count > 16384) { kry_json_free(json); return; }
+    AgentReadVersion *versions = calloc(count ? (size_t)count : 1, sizeof(*versions));
+    if(!versions) { kry_json_free(json); return; }
+    int valid = 1;
+    for(int i = 0; i < count && valid; i++) {
+        KryJson *item = kry_json_at(files, i);
+        const char *file = kry_json_string(kry_json_get(item, "path"));
+        const char *digest = kry_json_string(kry_json_get(item, "digest"));
+        if(!agent_path_safe(file) || !digest || (strcmp(digest, "-") &&
+            (strlen(digest) != 64 || strspn(digest, "0123456789abcdef") != 64))) { valid = 0; break; }
+        for(int j = 0; j < i; j++) if(!strcmp(versions[j].path, file)) valid = 0;
+        snprintf(versions[i].path, sizeof(versions[i].path), "%s", file);
+        snprintf(versions[i].digest, sizeof(versions[i].digest), "%s", digest);
+    }
+    kry_json_free(json);
+    if(!valid) { free(versions); return; }
+    free(agent_read_versions);
+    agent_read_versions = versions;
+    agent_read_version_count = count;
+    agent_read_version_capacity = count ? count : 1;
+    agent_read_version_failed = 0;
+}
+
+static void
 agent_remember_read(const char *path, const char *text)
 {
     int i;
     for(i = 0; i < agent_read_version_count; i++)
         if(!strcmp(path, agent_read_versions[i].path)) break;
+    if(i >= 16384) { agent_read_version_failed = 1; return; }
     if(i == agent_read_version_capacity) {
         int capacity = agent_read_version_capacity ? agent_read_version_capacity * 2 : 64;
         AgentReadVersion *next = realloc(agent_read_versions, (size_t)capacity * sizeof(*next));
@@ -909,6 +980,7 @@ agent_remember_read(const char *path, const char *text)
     snprintf(agent_read_versions[i].path, sizeof(agent_read_versions[i].path), "%s", path);
     if(text != NULL) agent_text_digest(text, agent_read_versions[i].digest);
     else snprintf(agent_read_versions[i].digest, sizeof(agent_read_versions[i].digest), "-");
+    agent_read_versions_save();
 }
 
 static int
@@ -1651,7 +1723,8 @@ krait_agent_run_tools(const char *json)
                 snprintf(out + used, AGENT_TOOL_OUT_CAP - used,
                          "[write] refused: %s%s\n",
                          path != NULL ? path : "",
-                         agent_editor_dirty(agent_project, path) ? " (unsaved editor changes; save or close the file first)" : "");
+                         agent_editor_dirty(agent_project, path) ? " (unsaved editor changes; save or close the file first)" :
+                         agent_read_version_failed ? " (file-read snapshot unavailable; restore reads.json or use a new session)" : "");
             }
         } else if(strcmp(tool, "card") == 0)
             agent_tool_card(kry_json_string(kry_json_get(action, "title")),
@@ -2263,6 +2336,8 @@ agent_bind_session(const char *project_dir, const char *task)
     agent_load_history();
     agent_changes_load();
     agent_run_load();
+    agent_read_versions_load();
+    if(agent_read_version_failed) agent_set_status("File-read snapshot unavailable: file writes disabled for this session");
     agent_session_scan = 0;
     return 1;
 }

@@ -29,8 +29,8 @@ acceptance checks before marking it done.
 - [ ] Historical rollback, retention controls, and large-file review without preview limits.
 - [x] Detect stale writes against full file-tool read versions in the active session.
 - [x] Refuse file writes and reverts against the UI snapshot of unsaved files.
-- [ ] Coordinate editor mutations atomically with writes, normalize path aliases,
-  and persist read versions across restart.
+- [x] Persist task-scoped read fingerprints across session switching and restart.
+- [ ] Coordinate editor mutations atomically with writes and normalize path aliases.
 - [ ] Make multi-file changes transactional; handle external writers and
   filesystem errors without losing the previous recovery checkpoint.
 - [x] Descriptor-relative read/write/revert with symlink refusal and nested-repository write protection.
