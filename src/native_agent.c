@@ -46,6 +46,9 @@
 static int agent_max_rounds = 12;
 static int agent_max_actions = 64;
 static int agent_request_timeout = 180;
+static int agent_max_run_seconds;
+static atomic_llong agent_deadline_ms;
+static atomic_int agent_deadline_hit;
 #define AGENT_CONTEXT_CHARS 24000
 #define AGENT_CONTEXT_KEEP_TOOLS 6
 #define AGENT_READ_CAP 16384
@@ -425,7 +428,7 @@ int
 krait_agent_limits_load(const char *project)
 {
     if(agent_busy || agent_tool_thread_running) return 0;
-    agent_max_rounds = 12; agent_max_actions = 64; agent_request_timeout = 180;
+    agent_max_rounds = 12; agent_max_actions = 64; agent_request_timeout = 180; agent_max_run_seconds = 0;
     char path[KRAIT_PATH_MAX * 2], *text = NULL;
     long len;
     snprintf(path, sizeof(path), "%s/.krait/agent.json", project ? project : ".");
@@ -434,32 +437,60 @@ krait_agent_limits_load(const char *project)
     if(!S_ISREG(st.st_mode) || st.st_size > 65536 || !krait_read_file_alloc(path, &text, &len)) return 0;
     KryJson *root = kry_json_parse(text); free(text);
     if(kry_json_type(root) != KRY_JSON_OBJECT) { kry_json_free(root); return 0; }
-    const char *names[] = {"max_tool_rounds", "max_actions_per_batch", "request_timeout_seconds"};
-    int values[] = {12, 64, 180};
-    int maxima[] = {100, 64, 3600};
+    const char *names[] = {"max_tool_rounds", "max_actions_per_batch", "request_timeout_seconds", "max_run_seconds"};
+    int values[] = {12, 64, 180, 0};
+    int maxima[] = {100, 64, 3600, 86400};
     int valid = 1;
     for(int i = 0; i < kry_json_count(root); i++) {
         const char *key = kry_json_key(root, i);
-        if(!key || (strcmp(key, names[0]) && strcmp(key, names[1]) && strcmp(key, names[2]))) valid = 0;
+        if(!key || (strcmp(key, names[0]) && strcmp(key, names[1]) && strcmp(key, names[2]) && strcmp(key, names[3]))) valid = 0;
     }
-    for(int i = 0; i < 3; i++) {
+    for(int i = 0; i < 4; i++) {
         KryJson *value = kry_json_get(root, names[i]);
         if(!value) continue;
         double number = kry_json_number(value);
-        if(kry_json_type(value) != KRY_JSON_NUMBER || !(number >= 1 && number <= maxima[i]) || number != (int)number) {
+        if(kry_json_type(value) != KRY_JSON_NUMBER || !(number >= (i == 3 ? 0 : 1) && number <= maxima[i]) || number != (int)number) {
             valid = 0; break;
         }
         values[i] = (int)number;
     }
     kry_json_free(root);
     if(!valid) return 0;
-    agent_max_rounds = values[0]; agent_max_actions = values[1]; agent_request_timeout = values[2];
+    agent_max_rounds = values[0]; agent_max_actions = values[1]; agent_request_timeout = values[2]; agent_max_run_seconds = values[3];
     return 1;
 }
 
 int krait_agent_limit(int field)
 {
-    return field == 0 ? agent_max_rounds : field == 1 ? agent_max_actions : field == 2 ? agent_request_timeout : 0;
+    return field == 0 ? agent_max_rounds : field == 1 ? agent_max_actions : field == 2 ? agent_request_timeout : field == 3 ? agent_max_run_seconds : 0;
+}
+
+static long long
+agent_monotonic_ms(void)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+void
+krait_agent_run_budget_start(void)
+{
+    atomic_store(&agent_deadline_ms, agent_max_run_seconds ? agent_monotonic_ms() + (long long)agent_max_run_seconds * 1000 : 0);
+    atomic_store(&agent_deadline_hit, 0);
+    atomic_store(&agent_stop_requested, 0);
+}
+
+static int
+agent_deadline_expired(void)
+{
+    long long deadline = atomic_load(&agent_deadline_ms);
+    if(deadline && agent_monotonic_ms() >= deadline) {
+        atomic_store(&agent_deadline_hit, 1);
+        atomic_store(&agent_stop_requested, 1);
+        return 1;
+    }
+    return 0;
 }
 
 /* Project instructions are independent of the rolling transcript budget. */
@@ -1390,7 +1421,7 @@ static int
 agent_command_cancelled(void *unused)
 {
     (void)unused;
-    return atomic_load(&agent_stop_requested);
+    return agent_deadline_expired() || atomic_load(&agent_stop_requested);
 }
 
 static void
@@ -1867,7 +1898,7 @@ krait_agent_run_tools(const char *json)
         const char *tool = kry_json_string(kry_json_get(action, "tool"));
         size_t before;
 
-        if(atomic_load(&agent_stop_requested))
+        if(agent_command_cancelled(NULL))
             break;
         if(tool == NULL)
             continue;
@@ -2247,6 +2278,7 @@ agent_execute_actions(char *reply);
 void
 krait_agent_permission_respond(int allow, int always)
 {
+    if(agent_deadline_expired()) { krait_agent_stop(); return; }
     char *json = agent_perm_json;
 
     if(json == NULL)
@@ -2424,7 +2456,14 @@ agent_start_request(void)
                                     &temp_count);
     int i;
 
-    agent_req = krait_ai_chat(msgs, count, agent_request_timeout);
+    int timeout = agent_request_timeout;
+    long long deadline = atomic_load(&agent_deadline_ms);
+    if(deadline) {
+        long long remaining = (deadline - agent_monotonic_ms() + 999) / 1000;
+        if(remaining < 1) remaining = 1;
+        if(remaining < timeout) timeout = (int)remaining;
+    }
+    agent_req = krait_ai_chat(msgs, count, timeout);
     for(i = 0; i < temp_count; i++)
         free(temps[i]);
     free(agent_pending_image);
@@ -2494,6 +2533,8 @@ agent_bind_session(const char *project_dir, const char *task)
     agent_busy = 0;
     agent_round = 0;
     agent_stop_requested = 0;
+    atomic_store(&agent_deadline_ms, 0);
+    atomic_store(&agent_deadline_hit, 0);
     agent_set_status("");
     free(agent_pending_image);
     agent_pending_image = NULL;
@@ -2697,7 +2738,7 @@ krait_agent_send(const char *text)
     agent_http_retries = 0;
     agent_busy = 1;
     agent_round = 0;
-    agent_stop_requested = 0;
+    krait_agent_run_budget_start();
     agent_start_request();
     return 1;
 }
@@ -2718,9 +2759,9 @@ krait_agent_stop(void)
     }
     if(!agent_tool_thread_running) {
         agent_busy = 0;
-        agent_set_status("stopped");
+        agent_set_status(atomic_load(&agent_deadline_hit) ? "Run deadline reached" : "stopped");
     } else {
-        agent_set_status("Stopping active command; waiting for tool cleanup");
+        agent_set_status(atomic_load(&agent_deadline_hit) ? "Run deadline reached; waiting for tool cleanup" : "Stopping active command; waiting for tool cleanup");
     }
 }
 
@@ -2793,7 +2834,10 @@ krait_agent_validate(void)
     char *result = NULL;
     if(agent_busy || agent_tool_thread_running || agent_project[0] == 0)
         return 0;
-    atomic_store(&agent_stop_requested, 0);
+    if(!krait_agent_limits_load(agent_project)) {
+        agent_set_status("Invalid .krait/agent.json; validation not started"); return 0;
+    }
+    krait_agent_run_budget_start();
     agent_manual_validation = 1;
     agent_busy = 1;
     agent_run_save("tools");
@@ -2819,6 +2863,10 @@ krait_agent_poll(void)
     if(!agent_busy)
         return 1;
 
+    if(agent_deadline_expired()) {
+        krait_agent_stop();
+        if(!agent_busy) return 0;
+    }
     /* a threaded tool batch is in flight */
     if(agent_req == NULL) {
         if(!agent_tool_thread_running)
@@ -2835,7 +2883,7 @@ krait_agent_poll(void)
         if(atomic_load(&agent_stop_requested)) {
             agent_busy = 0;
             agent_run_save("stopped");
-            agent_set_status("stopped");
+            agent_set_status(atomic_load(&agent_deadline_hit) ? "Run deadline reached" : "stopped");
             return 0;
         }
         if(agent_manual_validation) {
@@ -2892,7 +2940,7 @@ krait_agent_poll(void)
     }
     if(agent_stop_requested) {
         agent_busy = 0;
-        agent_set_status("stopped");
+        agent_set_status(atomic_load(&agent_deadline_hit) ? "Run deadline reached" : "stopped");
         agent_remember(AGENT_MSG_ASSISTANT,
                        reply[0] != '\0' ? reply : "(stopped)");
         free(reply);

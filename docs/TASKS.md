@@ -183,12 +183,14 @@ Optional `.krait/agent.json` sets limits for each new agent run:
 {
   "max_tool_rounds": 12,
   "max_actions_per_batch": 64,
-  "request_timeout_seconds": 180
+  "request_timeout_seconds": 180,
+  "max_run_seconds": 0
 }
 ```
 
 All fields are optional integers. Tool rounds accept 1–100, actions per batch
-1–64, and request timeouts 1–3600 seconds. Missing fields use the values shown
+1–64, request timeouts 1–3600 seconds, and total run deadlines 0–86400
+seconds. A zero run deadline disables the total limit. Missing fields use the values shown
 above. Unknown fields, malformed JSON, and out-of-range values prevent a run
 from starting. Krait reads the configuration before Send or Resume; editing
 it does not change an active run.
@@ -197,8 +199,17 @@ A tool round is one model response containing actions. Once its round limit
 is reached, Krait retains the conversation and changes, stops further model
 requests, and reports the limit. A batch exceeding its action limit is
 refused as a whole before executing any action. The request timeout applies
-to each provider request, including retries; it is not a total run deadline.
-Manual validation still uses the per-command timeouts in `.krait/tasks.json`.
+to each provider request, including retries, and is capped by the remaining
+run budget. Manual validation uses both this run deadline and the per-command
+timeouts in `.krait/tasks.json`.
 
-These controls do not impose token, monetary, or total elapsed-time budgets.
-Context summarization and those additional budgets remain planned.
+The run deadline uses monotonic elapsed time, including provider and approval
+waits. On expiry, command process groups are cancelled and subsequent actions
+are skipped. Polling releases pending provider requests and approvals; a late
+approval cannot start another batch. Resume starts a fresh run budget.
+
+Deadline enforcement is cooperative: in-progress compile and graphics
+operations finish before returning control, and command termination includes
+its cleanup grace period. A deadline therefore does not guarantee that all
+resources are released at that exact second. Token and monetary budgets and
+context summarization remain planned.

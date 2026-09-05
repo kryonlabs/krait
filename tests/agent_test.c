@@ -619,6 +619,38 @@ test_selective_review(void)
 }
 
 static void
+test_run_deadline(void)
+{
+    char root[] = "/tmp/krait-deadline-XXXXXX", path[1024], config[1024];
+    CHECK(mkdtemp(root) != NULL);
+    CHECK(krait_agent_bind_task(root, "deadline"));
+    snprintf(path, sizeof(path), "%s/.krait", root); krait_mkdir_p(path);
+    snprintf(config, sizeof(config), "%s/.krait/agent.json", root);
+    CHECK(krait_write_text_file_atomic(config, "{\"max_run_seconds\":1}"));
+    CHECK(krait_agent_limits_load(root));
+    CHECK(krait_agent_limit(3) == 1);
+    krait_agent_run_budget_start();
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    char *result = krait_agent_run_tools("[{\"tool\":\"run\",\"cmd\":\"sleep 20\"},{\"tool\":\"write\",\"path\":\"late.txt\",\"content\":\"must not execute\"}]");
+    free(result);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    CHECK(end.tv_sec - start.tv_sec < 10);
+    snprintf(path, sizeof(path), "%s/late.txt", root); CHECK(access(path, F_OK) != 0);
+    snprintf(path, sizeof(path), "%s/.krait/tasks.json", root);
+    CHECK(krait_write_text_file_atomic(path, "{\"tasks\":[{\"name\":\"long\",\"command\":\"sleep 20\"}]}"));
+    CHECK(krait_agent_validate());
+    for(int i = 0; i < 500 && krait_agent_busy(); i++) { krait_agent_poll(); usleep(10000); }
+    CHECK(!krait_agent_busy());
+    CHECK(!strcmp(krait_agent_run_state(), "stopped"));
+    CHECK(!krait_agent_validation_current());
+    CHECK(unlink(config) == 0);
+    CHECK(krait_agent_limits_load(root));
+    krait_agent_run_budget_start();
+    CHECK(krait_agent_limit(3) == 0);
+}
+
+static void
 test_agent_limits(void)
 {
     char root[] = "/tmp/krait-limits-XXXXXX", path[1024], target[1024];
@@ -1407,6 +1439,7 @@ main(int argc, char **argv)
     test_tools();
     test_change_recovery();
     test_selective_review();
+    test_run_deadline();
     test_agent_limits();
     test_validation_archive_failure();
     test_read_snapshot_restart(argv[0]);
