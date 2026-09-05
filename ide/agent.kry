@@ -26,6 +26,11 @@ krait_agent_busy :: () -> int #extern
 krait_agent_files_changed :: () -> int #extern
 krait_agent_written_count :: () -> int #extern
 krait_agent_written_path :: (index: int) -> const char* #extern
+krait_agent_change_count :: () -> int #extern
+krait_agent_change_path :: (index: int) -> const char* #extern
+krait_agent_change_content :: (index: int, after: int) -> const char* #extern
+krait_agent_change_review :: (index: int) -> int #extern
+krait_agent_review_change :: (index: int, accept: int) -> int #extern
 krait_agent_can_revert :: () -> int #extern
 krait_agent_revert :: () -> int #extern
 krait_agent_send :: (text: const char*) -> int #extern
@@ -87,6 +92,9 @@ agent_bound :: int #global
 agent_expanded :: int #global
 agent_pinned :: int #global
 agent_sessions_open :: int #global
+agent_review_open :: int #global
+agent_review_index :: int #global
+agent_review_scroll :: int #global
 agent_accounts_open :: int #global
 agent_sidebar_scroll :: int #global
 
@@ -933,6 +941,88 @@ draw_agent_header :: (bounds: Rectangle, st: state.IdeState*, busy: int) {
                         0, NULL)
 }
 
+draw_change_review :: (bounds: Rectangle, busy: int) {
+    pad := ScaleUIPx(10)
+    x := (int)bounds.x + pad
+    y := (int)bounds.y + pad
+    if busy != 0 {
+        Text("Changes are available when the active run stops.", x, y, ScaleUIPx(13), GetThemeText())
+        return
+    }
+    count := krait_agent_change_count()
+    if count == 0 {
+        Text("No recorded file changes in this session.", x, y, ScaleUIPx(13), GetThemeText())
+        return
+    }
+    if agent_review_index >= count {
+        agent_review_index = count - 1
+    }
+    if agent_review_index < 0 {
+        agent_review_index = 0
+    }
+    if StyledButton(x, y, ScaleUIPx(32), ScaleUIPx(28), "<", ButtonStyleSecondary,
+                           agent_review_index == 0, NULL) {
+        agent_review_index = agent_review_index - 1
+        agent_review_scroll = 0
+    }
+    if StyledButton(x + ScaleUIPx(38), y, ScaleUIPx(32), ScaleUIPx(28), ">", ButtonStyleSecondary,
+                           agent_review_index == count - 1, NULL) {
+        agent_review_index = agent_review_index + 1
+        agent_review_scroll = 0
+    }
+    label: [512] char
+    snprintf(label, sizeof(label), "%d/%d  %s", agent_review_index + 1, count,
+             krait_agent_change_path(agent_review_index))
+    Text(label, x + ScaleUIPx(80), y + ScaleUIPx(6), ScaleUIPx(12), GetThemeLink())
+    y = y + ScaleUIPx(34)
+    review := krait_agent_change_review(agent_review_index)
+    if StyledButton(x, y, ScaleUIPx(104), ScaleUIPx(28), "Accept file", ButtonStylePrimary,
+                           review != 0, NULL) {
+        krait_agent_review_change(agent_review_index, 1)
+    }
+    if StyledButton(x + ScaleUIPx(112), y, ScaleUIPx(104), ScaleUIPx(28), "Revert file", ButtonStyleSecondary,
+                           review != 0, NULL) {
+        krait_agent_review_change(agent_review_index, 0)
+    }
+    Text(review == 1 ? "Accepted" : (review == 2 ? "Reverted" : "Pending review"),
+               x + ScaleUIPx(226), y + ScaleUIPx(6), ScaleUIPx(12), GetThemeIcon())
+    y = y + ScaleUIPx(36)
+    half := ((int)bounds.width - pad * 3) / 2
+    line_h := ScaleUIPx(18)
+    available := (int)(bounds.y + bounds.height) - y - pad - line_h
+    rows := available / line_h
+    if rows < 1 { return }
+    before := krait_agent_change_content(agent_review_index, 0)
+    after := krait_agent_change_content(agent_review_index, 1)
+    total_before := krait_wrap_lines(before, half - pad * 2, ScaleUIPx(12), 10000)
+    total_after := krait_wrap_lines(after, half - pad * 2, ScaleUIPx(12), 10000)
+    total := total_before > total_after ? total_before : total_after
+    if total >= 4096 {
+        Text("Preview limited to 4096 wrapped lines; inspect the file in the editor.", x,
+                   (int)(bounds.y + bounds.height) - ScaleUIPx(16), ScaleUIPx(10), GetThemeIcon())
+        rows = rows - 1
+    }
+    if CheckCollisionPointRec(GetMousePosition(), bounds) {
+        agent_review_scroll = agent_review_scroll - (int)(GetMouseWheelMove() * 3.0)
+    }
+    max_scroll := total > rows ? total - rows : 0
+    if agent_review_scroll > max_scroll { agent_review_scroll = max_scroll }
+    if agent_review_scroll < 0 { agent_review_scroll = 0 }
+    for int pane = 0; pane < 2; pane++ {
+        px := x + pane * (half + pad)
+        Text(pane == 0 ? "Before" : "After", px, y, ScaleUIPx(12), GetThemeLink())
+        text := pane == 0 ? before : after
+        BeginScissorMode(px, y + line_h, half, available)
+        for int row = 0; row < rows; row++ {
+            line: [2048] char
+            krait_wrap_line(text, half - pad * 2, ScaleUIPx(12), 10000,
+                            agent_review_scroll + row, line, sizeof(line))
+            Text(line, px, y + line_h * (row + 1), ScaleUIPx(12), GetThemeText())
+        }
+        EndScissorMode()
+    }
+}
+
 draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     agent_bind(st)
     krait_agent_poll()
@@ -999,7 +1089,11 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     }
     transcript := (Rectangle){bounds.x, (float)content_top, bounds.width,
                               transcript_h}
-    draw_transcript(transcript, busy, st)
+    if agent_review_open != 0 {
+        draw_change_review(transcript, busy)
+    } else {
+        draw_transcript(transcript, busy, st)
+    }
     if strlen(status) > 0 {
         Text(status, (int)bounds.x + pad,
                    input_y - ScaleUIPx(20), ScaleUIPx(12), GetThemeLink())
@@ -1099,6 +1193,12 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
                            ScaleUIPx(86), ScaleUIPx(24), "Validate",
                            ButtonStyleSecondary, busy, NULL) {
         krait_agent_validate()
+    }
+    if StyledButton((int)composer.x + ScaleUIPx(192), control_y + ScaleUIPx(34),
+                           ScaleUIPx(100), ScaleUIPx(24), agent_review_open != 0 ? "Conversation" : "Changes",
+                           ButtonStyleSecondary, 0, NULL) {
+        agent_review_open = agent_review_open == 0 ? 1 : 0
+        agent_review_scroll = 0
     }
     if krait_agent_can_revert() != 0 {
         rev_w := ScaleUIPx(70)

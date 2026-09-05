@@ -71,3 +71,21 @@ Each successful move into Done records an acceptance event beneath
 criteria, task/source fingerprints and acceptance timestamp. They remain
 available after card deletion; a history browser is still planned. Board
 imports and direct file edits do not yet enforce this workflow.
+
+## Reviewing agent file changes
+
+Click **Changes** in the Agent view to inspect the latest write batch.
+Use the arrows to select a file and scroll its Before/After contents.
+**Accept file** keeps that file's changes; **Revert file** restores its
+previous contents (or removes a newly created file). Both actions refuse
+files that have subsequently changed. The batch Revert action restores only
+pending files, preserving accepted files. Decisions survive session switching
+and restart alongside the recorded before/after contents.
+
+File acceptance is separate from accepting a Kanban task: it confirms that
+file's edits, while task acceptance also requires current validation and
+completed dependencies. Unsaved editor buffers are preserved on reload.
+The preview currently displays up to 4096 wrapped lines per version and
+indicates that limit. Open larger files in the editor for complete review.
+Only the latest batch is retained; checkpoint-history browsing remains on
+the roadmap.

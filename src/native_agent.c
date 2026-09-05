@@ -176,6 +176,7 @@ typedef struct {
     char *before;
     char *after;
     int existed;
+    int review; /* 0 pending, 1 accepted, 2 reverted */
 } AgentChange;
 static AgentChange agent_changes[AGENT_MAX_WRITTEN];
 static int agent_change_count;
@@ -217,6 +218,8 @@ agent_changes_save(void)
         kry_json_buf_str(&buf, c->after);
         kry_json_buf_raw(&buf, ",\"existed\":");
         kry_json_buf_num(&buf, c->existed);
+        kry_json_buf_raw(&buf, ",\"review\":");
+        kry_json_buf_num(&buf, c->review);
         kry_json_buf_raw(&buf, "}");
     }
     kry_json_buf_raw(&buf, "]");
@@ -259,6 +262,8 @@ agent_changes_load(void)
         }
         snprintf(c->path, sizeof(c->path), "%s", p);
         c->existed = kry_json_number(kry_json_get(item, "existed")) != 0;
+        c->review = (int)kry_json_number(kry_json_get(item, "review"));
+        if(c->review < 0 || c->review > 2) c->review = 0;
         agent_change_count++;
     }
     kry_json_free(root);
@@ -767,52 +772,107 @@ krait_agent_written_path(int index)
 }
 
 int
+krait_agent_change_count(void)
+{
+    return agent_busy || agent_tool_thread_running ? 0 : agent_change_count;
+}
+
+const char *
+krait_agent_change_path(int index)
+{
+    return index >= 0 && index < krait_agent_change_count() ? agent_changes[index].path : "";
+}
+
+const char *
+krait_agent_change_content(int index, int after)
+{
+    if(index < 0 || index >= krait_agent_change_count()) return "";
+    return after ? agent_changes[index].after : agent_changes[index].before;
+}
+
+int
+krait_agent_change_review(int index)
+{
+    return index >= 0 && index < krait_agent_change_count() ? agent_changes[index].review : -1;
+}
+
+static int
+agent_change_matches(AgentChange *c, int reverting)
+{
+    char full[KRAIT_PATH_MAX * 2];
+    char *current = NULL;
+    long len;
+    snprintf(full, sizeof(full), "%s/%s", agent_project, c->path);
+    int exists = krait_read_file_alloc(full, &current, &len);
+    int matches = exists && (strcmp(current, c->after) == 0 ||
+                             (reverting && c->existed && strcmp(current, c->before) == 0));
+    free(current);
+    return matches || (reverting && !c->existed && !krait_path_exists(full));
+}
+
+int
+krait_agent_review_change(int index, int accept)
+{
+    if(index < 0 || index >= krait_agent_change_count() || agent_changes[index].review != 0)
+        return 0;
+    AgentChange *c = &agent_changes[index];
+    if(!agent_change_matches(c, !accept)) {
+        agent_set_status("Review stopped: %s changed after the agent write", c->path);
+        return 0;
+    }
+    if(!accept) {
+        char full[KRAIT_PATH_MAX * 2];
+        snprintf(full, sizeof(full), "%s/%s", agent_project, c->path);
+        int ok = c->existed ? krait_write_text_file_atomic(full, c->before) :
+                             (!krait_path_exists(full) || unlink(full) == 0);
+        if(!ok) {
+            agent_set_status("Could not restore %s; retry available", c->path);
+            return 0;
+        }
+        agent_written_count = 1;
+        snprintf(agent_written[0], sizeof(agent_written[0]), "%s", c->path);
+        agent_files_changed = 1;
+    }
+    c->review = accept ? 1 : 2;
+    if(!agent_changes_save()) {
+        c->review = 0;
+        agent_set_status("Could not save review decision; retry available");
+        return 0;
+    }
+    agent_set_status("%s %s", accept ? "Accepted" : "Reverted", c->path);
+    return 1;
+}
+
+int
 krait_agent_can_revert(void)
 {
-    return agent_change_count > 0 && !agent_busy && !agent_tool_thread_running;
+    for(int i = 0; i < krait_agent_change_count(); i++)
+        if(agent_changes[i].review == 0) return 1;
+    return 0;
 }
 
 int
 krait_agent_revert(void)
 {
     int restored = 0;
-    if(!krait_agent_can_revert())
-        return 0;
-    /* Check every file before restoring any: never erase later user edits. */
+    char paths[AGENT_MAX_WRITTEN][256];
+    if(!krait_agent_can_revert()) return 0;
+    /* Check all pending files before touching any. Accepted files stay put. */
     for(int i = 0; i < agent_change_count; i++) {
-        AgentChange *c = &agent_changes[i];
-        char full[KRAIT_PATH_MAX * 2];
-        char *current = NULL;
-        long len;
-        snprintf(full, sizeof(full), "%s/%s", agent_project, c->path);
-        int exists = krait_read_file_alloc(full, &current, &len);
-        int unchanged = exists && (strcmp(current, c->after) == 0 ||
-                                    (c->existed && strcmp(current, c->before) == 0));
-        free(current);
-        if(!unchanged && !(!c->existed && !krait_path_exists(full))) {
-            agent_set_status("Revert stopped: %s changed after the agent write", c->path);
+        if(agent_changes[i].review == 0 && !agent_change_matches(&agent_changes[i], 1)) {
+            agent_set_status("Revert stopped: %s changed after the agent write", agent_changes[i].path);
             return 0;
         }
     }
-    agent_written_count = 0;
     for(int i = 0; i < agent_change_count; i++) {
-        AgentChange *c = &agent_changes[i];
-        char full[KRAIT_PATH_MAX * 2];
-        snprintf(full, sizeof(full), "%s/%s", agent_project, c->path);
-        int ok = c->existed ? krait_write_text_file_atomic(full, c->before) :
-                             (!krait_path_exists(full) || unlink(full) == 0);
-        if(!ok) {
-            agent_set_status("Revert incomplete: could not restore %s; retry available", c->path);
-            agent_files_changed = restored > 0;
-            return restored;
-        }
-        snprintf(agent_written[agent_written_count++], sizeof(agent_written[0]), "%s", c->path);
-        restored++;
+        if(agent_changes[i].review != 0) continue;
+        if(!krait_agent_review_change(i, 0)) break;
+        snprintf(paths[restored++], sizeof(paths[0]), "%s", agent_changes[i].path);
     }
-    agent_changes_clear();
-    agent_changes_save();
-    agent_files_changed = 1;
-    agent_set_status("reverted %d file(s)", restored);
+    agent_written_count = restored;
+    for(int i = 0; i < restored; i++)
+        snprintf(agent_written[i], sizeof(agent_written[0]), "%s", paths[i]);
+    agent_files_changed = restored > 0;
     return restored;
 }
 

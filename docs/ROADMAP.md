@@ -24,7 +24,8 @@ acceptance checks before marking it done.
 - [x] Editable acceptance criteria and task-spec validation.
 - [x] Persist acceptance events with task/source fingerprints and criteria.
 - [ ] Acceptance-history browser and dependency-aware scheduling.
-- [ ] Review UI for changes, selective acceptance, and checkpoint history.
+- [x] Before/after review UI and persisted per-file acceptance/revert.
+- [ ] Checkpoint history and full large-file review without preview limits.
 - [ ] Detect stale writes against read versions and unsaved editor contents.
 - [ ] Make multi-file changes transactional; handle external writers and
   filesystem errors without losing the previous recovery checkpoint.

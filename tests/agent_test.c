@@ -423,6 +423,50 @@ test_change_recovery(void)
     unlink(instruction);
 }
 
+static void
+test_selective_review(void)
+{
+    const char *project = "/tmp/krait-selective-review";
+    char a[1024], b[1024];
+    char *result, *text = NULL;
+    long len;
+    krait_mkdir_p(project);
+    snprintf(a, sizeof(a), "%s/a.txt", project);
+    snprintf(b, sizeof(b), "%s/b.txt", project);
+    CHECK(krait_write_text_file_atomic(a, "original a"));
+    CHECK(krait_write_text_file_atomic(b, "original b"));
+    CHECK(krait_agent_bind_task(project, "review"));
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"a.txt\",\"content\":\"new a\"},{\"tool\":\"write\",\"path\":\"b.txt\",\"content\":\"new b\"}]");
+    free(result);
+    CHECK(krait_agent_change_count() == 2);
+    CHECK(strcmp(krait_agent_change_content(0, 0), "original a") == 0);
+    CHECK(strcmp(krait_agent_change_content(0, 1), "new a") == 0);
+    CHECK(krait_agent_review_change(0, 1));
+    CHECK(krait_agent_change_review(0) == 1);
+    CHECK(!krait_agent_review_change(0, 0));
+    CHECK(krait_write_text_file_atomic(b, "user changed b"));
+    CHECK(!krait_agent_review_change(1, 0));
+    CHECK(krait_agent_change_review(1) == 0);
+    CHECK(krait_agent_bind_task(project, "elsewhere"));
+    CHECK(krait_agent_bind_task(project, "review"));
+    CHECK(krait_agent_change_review(0) == 1);
+    CHECK(krait_agent_change_review(1) == 0);
+    CHECK(krait_write_text_file_atomic(b, "new b"));
+    CHECK(krait_agent_revert() == 1);
+    CHECK(krait_agent_change_review(1) == 2);
+    CHECK(!krait_agent_can_revert());
+    CHECK(krait_read_file_alloc(a, &text, &len));
+    CHECK(text != NULL && strcmp(text, "new a") == 0);
+    free(text); text = NULL;
+    CHECK(krait_read_file_alloc(b, &text, &len));
+    CHECK(text != NULL && strcmp(text, "original b") == 0);
+    free(text);
+    CHECK(krait_agent_bind_task(project, "elsewhere"));
+    CHECK(krait_agent_bind_task(project, "review"));
+    CHECK(krait_agent_change_review(0) == 1);
+    CHECK(krait_agent_change_review(1) == 2);
+}
+
 /* Hex editor backend: open/edit/save round-trip with .bak backup. */
 static void
 test_hex_editor(void)
@@ -941,6 +985,7 @@ main(int argc, char **argv)
     test_card_acceptance_gate();
     test_tools();
     test_change_recovery();
+    test_selective_review();
     test_hex_editor();
     test_provider_selection();
     test_response_parsers();
