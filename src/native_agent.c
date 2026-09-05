@@ -1389,6 +1389,31 @@ agent_tool_run(const char *cmd, char *out, size_t out_size)
     }
 }
 
+static int
+agent_validation_archive(void)
+{
+    char current[KRAIT_PATH_MAX * 3], dir[KRAIT_PATH_MAX * 3], path[KRAIT_PATH_MAX * 3];
+    snprintf(current, sizeof(current), "%s.validation.json", agent_history_path);
+    struct stat st;
+    if(lstat(current, &st) != 0) return errno == ENOENT;
+    if(!S_ISREG(st.st_mode) || st.st_size > 1024 * 1024) return 0;
+    char *text = NULL; long len;
+    if(!krait_read_file_alloc(current, &text, &len)) return 0;
+    snprintf(dir, sizeof(dir), "%s.validation-history", agent_history_path);
+    krait_mkdir_p(dir);
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    if(snprintf(path, sizeof(path), "%s/run-%020ld-%06ld-XXXXXX", dir,
+                (long)now.tv_sec, (long)now.tv_usec) >= (int)sizeof(path)) { free(text); return 0; }
+    int fd = mkstemp(path);
+    if(fd < 0) { free(text); return 0; }
+    close(fd);
+    int ok = krait_write_text_file_atomic(path, text);
+    free(text);
+    if(!ok) unlink(path);
+    return ok;
+}
+
 /* Project checks are explicit shell commands, executed with the same
  * permissions and cancellation behavior as the run tool. */
 static void
@@ -1403,6 +1428,9 @@ agent_tool_validate(char *out, size_t out_size)
     int count = 0, passed = 1;
     size_t used = strlen(out);
     agent_validation_passed = 0;
+    if(!agent_validation_archive()) {
+        snprintf(out + used, out_size - used, "[validate] FAILED: cannot preserve the previous report; no commands ran\n"); return;
+    }
     snprintf(report_path, sizeof(report_path), "%s.validation.json", agent_history_path);
     if(!krait_write_text_file_atomic(report_path, "{\"version\":1,\"passed\":0,\"state\":\"incomplete\"}")) {
         snprintf(out + used, out_size - used, "[validate] FAILED: cannot create result record\n");
@@ -1533,10 +1561,45 @@ krait_agent_validation_current(void)
 
 static KryJson *validation_view;
 static char validation_view_status[160];
+static struct dirent **validation_history;
+static int validation_history_count;
+static int validation_history_selected = -1;
+
+static void
+agent_validation_history_clear(void)
+{
+    for(int i = 0; i < validation_history_count; i++) free(validation_history[i]);
+    free(validation_history); validation_history = NULL;
+    validation_history_count = 0; validation_history_selected = -1;
+}
+
+static int
+agent_validation_history_filter(const struct dirent *entry)
+{
+    return !strncmp(entry->d_name, "run-", 4);
+}
+
+int krait_agent_checks_history_count(void) { return validation_history_count; }
+int krait_agent_checks_selected(void) { return validation_history_selected; }
+const char *krait_agent_checks_name(void)
+{
+    static char label[96];
+    if(validation_history_selected < 0) return "Latest report";
+    const char *name = validation_history[validation_history_selected]->d_name;
+    char *end = NULL;
+    time_t timestamp = (time_t)strtoll(name + 4, &end, 10);
+    struct tm utc;
+    if(!end || *end != '-' || !gmtime_r(&timestamp, &utc) ||
+       !strftime(label, sizeof(label), "Archived %Y-%m-%d %H:%M:%S UTC", &utc))
+        snprintf(label, sizeof(label), "Archived report %d", validation_history_selected + 1);
+    return label;
+}
 
 int
-krait_agent_checks_load(void)
+krait_agent_checks_select(int index)
 {
+    if(index < -1 || index >= validation_history_count) return 0;
+    validation_history_selected = index;
     kry_json_free(validation_view); validation_view = NULL;
     snprintf(validation_view_status, sizeof(validation_view_status), "No saved validation report");
     if(agent_busy || agent_tool_thread_running) {
@@ -1544,7 +1607,8 @@ krait_agent_checks_load(void)
     }
     char path[KRAIT_PATH_MAX * 3], *text = NULL;
     long len;
-    snprintf(path, sizeof(path), "%s.validation.json", agent_history_path);
+    if(index < 0) snprintf(path, sizeof(path), "%s.validation.json", agent_history_path);
+    else snprintf(path, sizeof(path), "%s.validation-history/%s", agent_history_path, validation_history[index]->d_name);
     struct stat st;
     if(stat(path, &st) != 0) return 0;
     if(st.st_size > 1024 * 1024 || !krait_read_file_alloc(path, &text, &len)) {
@@ -1570,8 +1634,21 @@ krait_agent_checks_load(void)
     validation_view = root;
     int passed = kry_json_number(kry_json_get(root, "passed")) == 1;
     snprintf(validation_view_status, sizeof(validation_view_status), "%s — %d recorded checks",
-        passed ? (krait_agent_validation_current() ? "Passed; evidence is current" : "Passed; evidence is stale") : "Validation failed", count);
+        passed ? (index >= 0 ? "Historical pass; not active acceptance evidence" :
+                  krait_agent_validation_current() ? "Passed; evidence current at refresh" : "Passed; evidence is stale") : "Validation failed", count);
     return count;
+}
+
+int
+krait_agent_checks_load(void)
+{
+    if(agent_busy || agent_tool_thread_running) return 0;
+    agent_validation_history_clear();
+    char dir[KRAIT_PATH_MAX * 3];
+    snprintf(dir, sizeof(dir), "%s.validation-history", agent_history_path);
+    validation_history_count = scandir(dir, &validation_history, agent_validation_history_filter, alphasort);
+    if(validation_history_count < 0) validation_history_count = 0;
+    return krait_agent_checks_select(-1);
 }
 
 const char *krait_agent_checks_status(void) { return validation_view_status; }
@@ -2356,6 +2433,7 @@ agent_bind_session(const char *project_dir, const char *task)
     agent_checkpoints_reset();
     agent_written_count = 0;
     kry_json_free(validation_view); validation_view = NULL;
+    agent_validation_history_clear();
     snprintf(validation_view_status, sizeof(validation_view_status), "Session changed; refresh to load its checks");
     agent_read_version_count = 0;
     agent_read_version_failed = 0;
@@ -2801,6 +2879,7 @@ krait_agent_shutdown(void)
     agent_changes_clear();
     agent_checkpoints_reset();
     kry_json_free(validation_view); validation_view = NULL;
+    agent_validation_history_clear();
     free(agent_read_versions);
     agent_read_versions = NULL;
     agent_read_version_count = agent_read_version_capacity = 0;

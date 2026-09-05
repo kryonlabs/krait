@@ -249,6 +249,14 @@ test_project_validation(void)
     CHECK(krait_agent_validation_current());
     CHECK(krait_agent_checks_load() == 1);
     CHECK(strstr(krait_agent_checks_status(), "current"));
+    CHECK(krait_agent_checks_history_count() == 1);
+    CHECK(krait_agent_checks_select(0) == 2);
+    CHECK(krait_agent_checks_selected() == 0);
+    CHECK(krait_agent_check_number(1, 0) == 7);
+    CHECK(krait_agent_validation_current()); /* Browsing failure does not replace current evidence. */
+    CHECK(krait_agent_checks_select(-1) == 1);
+    CHECK(krait_agent_checks_selected() == -1);
+
     char source[1024];
     snprintf(source, sizeof(source), "%s/source.txt", project);
     CHECK(krait_write_text_file_atomic(source, "changed after validation"));
@@ -258,6 +266,14 @@ test_project_validation(void)
     unlink(source);
     CHECK(krait_agent_validation_current());
     free(report); report = NULL;
+    CHECK(krait_agent_bind_task(project, "history-isolation"));
+    CHECK(krait_agent_checks_history_count() == 0);
+    CHECK(krait_agent_checks_load() == 0);
+    CHECK(krait_agent_bind_task(project, "checks"));
+    CHECK(krait_agent_checks_load() == 1);
+    CHECK(krait_agent_checks_history_count() == 1);
+    CHECK(krait_agent_checks_select(0) == 2);
+    CHECK(krait_agent_checks_select(-1) == 1);
     CHECK(krait_write_text_file_atomic(report_path, "{broken"));
     CHECK(krait_agent_checks_load() == 0);
     CHECK(krait_agent_checks_count() == 0);
@@ -600,6 +616,37 @@ test_selective_review(void)
     CHECK(krait_agent_bind_task(project, "review"));
     CHECK(krait_agent_change_review(0) == 1);
     CHECK(krait_agent_change_review(1) == 2);
+}
+
+static void
+test_validation_archive_failure(void)
+{
+    char root[] = "/tmp/krait-validation-archive-XXXXXX";
+    char path[2048], pattern[2048];
+    CHECK(mkdtemp(root) != NULL);
+    snprintf(path, sizeof(path), "%s/.krait", root); krait_mkdir_p(path);
+    snprintf(path, sizeof(path), "%s/.krait/tasks.json", root);
+    CHECK(krait_write_text_file_atomic(path, "{\"tasks\":[{\"name\":\"check\",\"command\":\"printf first\"}]}"));
+    CHECK(krait_agent_bind_task(root, "archive-test"));
+    char *result = krait_agent_run_tools("[{\"tool\":\"validate\"}]"); free(result);
+    CHECK(krait_agent_checks_load() == 1);
+    snprintf(pattern, sizeof(pattern), "%s/.kryon/krait/agent/%s-*--archive-test/history.jsonl.validation.json", getenv("HOME"), strrchr(root, '/') + 1);
+    glob_t files = {0};
+    CHECK(glob(pattern, 0, NULL, &files) == 0 && files.gl_pathc == 1);
+    if(files.gl_pathc == 1) {
+        const char *suffix = strstr(files.gl_pathv[0], ".validation.json");
+        CHECK(suffix != NULL);
+        if(suffix) {
+            snprintf(path, sizeof(path), "%.*s.validation-history", (int)(suffix - files.gl_pathv[0]), files.gl_pathv[0]);
+            CHECK(krait_write_text_file_atomic(path, "blocks archive directory"));
+            result = krait_agent_run_tools("[{\"tool\":\"validate\"}]");
+            CHECK(result && strstr(result, "no commands ran")); free(result);
+            CHECK(krait_agent_checks_load() == 1);
+            CHECK(!strcmp(krait_agent_check_text(0, 2), "first"));
+            CHECK(krait_agent_validation_current());
+        }
+    }
+    globfree(&files);
 }
 
 static int
@@ -1328,6 +1375,7 @@ main(int argc, char **argv)
     test_tools();
     test_change_recovery();
     test_selective_review();
+    test_validation_archive_failure();
     test_read_snapshot_restart(argv[0]);
     test_unsaved_write_guard();
     test_file_guards();

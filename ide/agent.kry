@@ -97,6 +97,10 @@ agent_expanded :: int #global
 agent_pinned :: int #global
 agent_sessions_open :: int #global
 krait_agent_checks_load :: () -> int #extern
+krait_agent_checks_select :: (index: int) -> int #extern
+krait_agent_checks_history_count :: () -> int #extern
+krait_agent_checks_selected :: () -> int #extern
+krait_agent_checks_name :: () -> const char* #extern
 krait_agent_checks_status :: () -> const char* #extern
 krait_agent_checks_count :: () -> int #extern
 krait_agent_check_text :: (index: int, field: int) -> const char* #extern
@@ -963,6 +967,28 @@ draw_checks :: (bounds: Rectangle, busy: int) {
         agent_check_scroll = 0
     }
     Text(krait_agent_checks_status(), x + ScaleUIPx(100), y + ScaleUIPx(6), ScaleUIPx(12), GetThemeText())
+    y = y + ScaleUIPx(34)
+    history := krait_agent_checks_history_count()
+    selected := krait_agent_checks_selected()
+    if StyledButton(x, y, ScaleUIPx(64), ScaleUIPx(26), "Older", ButtonStyleSecondary,
+                    busy != 0 || history == 0 || selected == 0, NULL) {
+        krait_agent_checks_select(selected < 0 ? history - 1 : selected - 1)
+        agent_check_index = 0
+        agent_check_scroll = 0
+    }
+    if StyledButton(x + ScaleUIPx(70), y, ScaleUIPx(64), ScaleUIPx(26), "Newer", ButtonStyleSecondary,
+                    busy != 0 || selected < 0, NULL) {
+        krait_agent_checks_select(selected + 1 >= history ? -1 : selected + 1)
+        agent_check_index = 0
+        agent_check_scroll = 0
+    }
+    if StyledButton(x + ScaleUIPx(140), y, ScaleUIPx(64), ScaleUIPx(26), "Latest", ButtonStyleSecondary,
+                    busy != 0 || selected < 0, NULL) {
+        krait_agent_checks_load()
+        agent_check_index = 0
+        agent_check_scroll = 0
+    }
+    Text(krait_agent_checks_name(), x + ScaleUIPx(216), y + ScaleUIPx(6), ScaleUIPx(11), GetThemeIcon())
     y = y + ScaleUIPx(34)
     count := krait_agent_checks_count()
     if count == 0 { return }

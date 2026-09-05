@@ -61,7 +61,8 @@ the bound project's AGENTS.md; nested directory rules remain to be implemented.
 - [x] Source snapshot evidence and refusal to accept stale validation.
 - [x] Saved validation-command results view with exit codes, timings, output
   and source/task freshness checks on refresh.
-- [ ] Individual test-case explorer, report history, and completion gates across
+- [x] Archive and browse validation reports without changing active acceptance evidence.
+- [ ] Individual test-case explorer, report retention, and completion gates across
   external synchronization.
 - [ ] Diff/merge review and remote workspaces.
 

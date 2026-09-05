@@ -159,4 +159,17 @@ show a message rather than the previous session's results.
 This view reports the commands from `.krait/tasks.json`, not individual test
 cases parsed from framework output. Command display is limited to four wrapped
 lines and captured output retains the runner's 8192-byte limit. Test-case
-parsers, validation history and source navigation remain planned.
+parsers and source navigation remain planned.
+
+
+Each new validation archives the previous report in the session's
+`history.jsonl.validation-history/` directory before replacing it. **Older**,
+**Newer**, and **Latest** browse these reports in Checks. Archived passes are
+historical evidence only; browsing them does not change the latest report or
+allow acceptance based on an older pass. Refresh returns to the latest report.
+History survives task switching and restart. A failed archive blocks the new
+run and preserves the previous report. Incomplete reports are retained too,
+though the viewer can only display their incomplete-report message.
+
+History currently grows without automatic pruning; retention controls and
+comparison of individual test cases remain planned.
