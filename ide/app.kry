@@ -49,7 +49,7 @@ top_menus :: [5] Menu #global
 file_menu_items :: [4] MenuItem #global
 edit_menu_items :: [2] MenuItem #global
 view_menu_items :: [5] MenuItem #global
-tools_menu_items :: [4] MenuItem #global
+tools_menu_items :: [5] MenuItem #global
 project_menu_items :: [2] MenuItem #global
 pane_tabs :: [state.IDE_MAX_PANE_TABS] Tab #global
 pane_tab_scroll :: [state.IDE_MAX_PANE_GROUPS] int #global
@@ -72,6 +72,7 @@ pane_tab_scroll :: [state.IDE_MAX_PANE_GROUPS] int #global
     MENU_TOOLS_GIT,
     MENU_PROJECT_METADATA,
     MENU_PROJECT_FILE,
+    MENU_TOOLS_COMMANDS,
 }
 
 apply_krait_theme :: () {
@@ -195,6 +196,99 @@ frame_throttle :: () {
 
 krait_agent_sync_editors :: (st: state.IdeState*) #extern
 
+krait_command_matches :: (query: const char*, label: const char*) -> int #extern
+palette_open :: int #global
+palette_query :: [256] char #global
+palette_cursor :: int #global
+palette_focus :: int #global
+palette_selected :: int #global
+palette_scroll :: int #global
+
+open_palette :: () {
+    palette_open = 1
+    palette_query[0] = 0
+    palette_cursor = 0
+    palette_selected = 0
+    palette_scroll = 0
+    palette_focus = 1
+    top_menu_open = -1
+    SetUIFocus(9200)
+}
+
+draw_palette :: () {
+    prepare_top_menus()
+    w := GetScreenWidth() - ScaleUIPx(24)
+    if w > ScaleUIPx(660) { w = ScaleUIPx(660) }
+    h := GetScreenHeight() - ScaleUIPx(24)
+    if h > ScaleUIPx(570) { h = ScaleUIPx(570) }
+    frame := ModalFrame(w, h, "Commands", (Texture2D){0}, (Texture2D){0})
+    if IsKeyPressed(KEY_ESCAPE) {
+        palette_open = 0
+        SetUIFocus(0)
+        return
+    }
+    x := frame.content_x
+    y := frame.content_y
+    old: [256] char
+    snprintf(old, sizeof(old), "%s", palette_query)
+    committed := 0
+    EditText((TextEdit){palette_query, sizeof(palette_query), &palette_cursor,
+                       sizeof(palette_query) - 1, (TextInputFilter){0}, NULL, &committed})
+    input := (Rectangle){(float)x, (float)y, (float)frame.content_w, (float)ScaleUIPx(30)}
+    DrawRectangleLinesEx(input, 1.0, GetThemeLink())
+    BeginScissorMode(x + ScaleUIPx(6), y, frame.content_w - ScaleUIPx(12), ScaleUIPx(30))
+    Text(palette_query[0] == 0 ? "Type a command..." : palette_query, x + ScaleUIPx(6), y + ScaleUIPx(6), ScaleUIPx(14), GetThemeText())
+    EndScissorMode()
+    if strcmp(old, palette_query) != 0 { palette_selected = 0; palette_scroll = 0 }
+    ids: [32] int
+    groups: [32] int
+    indices: [32] int
+    count := 0
+    for int group = 0; group < 5; group++ {
+        for int i = 0; i < top_menus[group].item_count; i++ {
+            item := &top_menus[group].items[i]
+            label: [256] char
+            snprintf(label, sizeof(label), "%s: %s", top_menus[group].label, item->label)
+            if item->disabled == 0 && krait_command_matches(palette_query, label) != 0 && count < 32 {
+                ids[count] = item->id
+                groups[count] = group
+                indices[count] = i
+                count = count + 1
+            }
+        }
+    }
+    if IsKeyPressed(KEY_DOWN) { palette_selected = palette_selected + 1 }
+    if IsKeyPressed(KEY_UP) { palette_selected = palette_selected - 1 }
+    if palette_selected >= count { palette_selected = count - 1 }
+    if palette_selected < 0 { palette_selected = 0 }
+    y = y + ScaleUIPx(40)
+    row_h := ScaleUIPx(32)
+    rows := (frame.content_h - ScaleUIPx(68)) / row_h
+    if rows < 1 { rows = 1 }
+    if palette_selected < palette_scroll { palette_scroll = palette_selected }
+    if palette_selected >= palette_scroll + rows { palette_scroll = palette_selected - rows + 1 }
+    chosen := 0
+    if count > 0 && (committed != 0 || IsKeyPressed(KEY_ENTER)) { chosen = ids[palette_selected] }
+    for int row = palette_scroll; row < count && row < palette_scroll + rows; row++ {
+        item := &top_menus[groups[row]].items[indices[row]]
+        label: [320] char
+        snprintf(label, sizeof(label), "%s: %s   %s", top_menus[groups[row]].label, item->label, item->accelerator)
+        if StyledButton(x, y, frame.content_w, row_h - ScaleUIPx(2), label,
+                        row == palette_selected ? ButtonStyleTabSelected : ButtonStyleSecondary, 0, NULL) {
+            chosen = ids[row]
+        }
+        y = y + row_h
+    }
+    if count == 0 { Text("No available commands match", x, y, ScaleUIPx(13), GetThemeText()) }
+    Text("Type to filter · Up/Down to select · Enter to run · Esc to close", x,
+         frame.content_y + frame.content_h - ScaleUIPx(20), ScaleUIPx(11), GetThemeIcon())
+    if chosen != 0 {
+        palette_open = 0
+        SetUIFocus(0)
+        handle_top_menu(chosen)
+    }
+}
+
 App :: () #ui {
     Screen root: {
     frame_throttle()
@@ -203,6 +297,13 @@ App :: () #ui {
     h := GetScreenHeight()
     apply_krait_theme()
     ClearBackground(GetThemeBackground())
+    if ed.mod_key_down() && (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) && IsKeyPressed(KEY_P) {
+        open_palette()
+    }
+    if palette_open != 0 {
+        BeginUIModalLayer()
+        draw_palette()
+    } else {
     if kb.kanban_detail_open != 0 && kb.kanban_valid_selection() != 0 {
         BeginUIModalLayer()
     }
@@ -285,6 +386,7 @@ App :: () #ui {
         krait_layout_save(&istate)
         istate.layout_dirty = 0
     }
+    }
     krait_agent_sync_editors(&istate)
     Overlays()
     }
@@ -347,6 +449,8 @@ prepare_top_menus :: () {
                   MENU_TOOLS_GIT,
                   has_project == 0 || mods.enabled(&istate, "git") == 0 ? 1 : 0, 0)
 
+    set_menu_item(&tools_menu_items[4], MenuCommand, "Commands", "Ctrl+Shift+P", MENU_TOOLS_COMMANDS, 0, 0)
+
     set_menu_item(&project_menu_items[0], MenuCommand, "Metadata", "",
                   MENU_PROJECT_METADATA, has_project == 0 ? 1 : 0, 0)
     set_menu_item(&project_menu_items[1], MenuCommand, "project.kryon", "",
@@ -363,14 +467,16 @@ prepare_top_menus :: () {
     top_menus[2].item_count = 5
     top_menus[3].label = "Tools"
     top_menus[3].items = tools_menu_items
-    top_menus[3].item_count = 4
+    top_menus[3].item_count = 5
     top_menus[4].label = "Project"
     top_menus[4].items = project_menu_items
     top_menus[4].item_count = 2
 }
 
 handle_top_menu :: (cmd: int) {
-    if cmd == MENU_FILE_OPEN_PROJECT {
+    if cmd == MENU_TOOLS_COMMANDS {
+        open_palette()
+    } else if cmd == MENU_FILE_OPEN_PROJECT {
         istate.picker_open = istate.picker_open == 0 ? 1 : 0
     } else if cmd == MENU_FILE_SAVE {
         ed.editor_save_active(&istate)

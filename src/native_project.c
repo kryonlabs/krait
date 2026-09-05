@@ -636,3 +636,26 @@ krait_replace_apply(IdeState *st)
     snprintf(replacement_status, sizeof(replacement_status), "Replaced %d files; recovery record: %.350s", applied, backup);
     return applied;
 }
+
+/* Every whitespace-separated query word must occur in the command label. */
+int
+krait_command_matches(const char *query, const char *label)
+{
+    if(!query || !label) return 0;
+    while(*query) {
+        while(isspace((unsigned char)*query)) query++;
+        const char *end = query;
+        while(*end && !isspace((unsigned char)*end)) end++;
+        size_t n = (size_t)(end - query);
+        if(!n) break;
+        int found = 0;
+        for(const char *p = label; *p && !found; p++) {
+            size_t i = 0;
+            while(i < n && p[i] && tolower((unsigned char)p[i]) == tolower((unsigned char)query[i])) i++;
+            found = i == n;
+        }
+        if(!found) return 0;
+        query = end;
+    }
+    return 1;
+}

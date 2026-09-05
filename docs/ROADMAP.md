@@ -53,7 +53,8 @@ the bound project's AGENTS.md; nested directory rules remain to be implemented.
 - [x] Bounded workspace replacement with before/after preview, exclusions,
   stale-file and unsaved-buffer checks, and persistent recovery records.
 - [ ] Transactional workspace replacement, recovery UI and larger search scope.
-- [ ] Multi-cursor editing, command palette and configurable shortcuts.
+- [x] Searchable command palette for available menu actions with keyboard selection.
+- [ ] Multi-cursor editing, configurable shortcuts and extensible command registration.
 - [ ] DAP launch/attach, breakpoints, stepping, variables and call stacks.
 - [x] Configurable project validation commands, manual Validate, and persisted
   per-check command/exit/duration/output reports.

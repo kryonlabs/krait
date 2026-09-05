@@ -1300,6 +1300,11 @@ main(int argc, char **argv)
     test_compile_gate();
     test_run_capture();
     test_command_cancellation();
+    CHECK(krait_command_matches("  SAVE file ", "File: Save"));
+    CHECK(krait_command_matches("term kaps", "Tools: Kapsule Terminal"));
+    CHECK(krait_command_matches("", "Edit: Undo"));
+    CHECK(!krait_command_matches("undo redo", "Edit: Undo"));
+    CHECK(!krait_command_matches("terminal extra", "Tools: Kapsule Terminal"));
     test_workspace_search();
     test_workspace_replacement();
     test_project_validation();

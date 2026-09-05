@@ -47,3 +47,11 @@ count matching lines, so multiple hits in one file also consume this limit.
 Files and replacement outputs are limited to 16 MiB each. The visual preview
 shows at most 4096 wrapped lines. Unreadable or ignored search paths are not
 included; this is not a whole-filesystem refactoring tool.
+
+Open the command palette with **Ctrl+Shift+P** (Cmd+Shift+P on macOS), or
+**Tools → Commands**. Type words from an action's category or label, such as
+`file save` or `kaps term`. All query words must match, regardless of case or
+order. Up/Down selects a result, Enter runs it, and Escape closes the palette.
+Only currently available menu actions appear. Ctrl+P remains filename Quick
+Open. Commands share the menu handlers and availability checks; configurable
+bindings and extension-provided commands remain planned.

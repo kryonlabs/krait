@@ -160,6 +160,7 @@ void krait_kryon_dir(char *out, size_t out_size);
 
 /* ---- native_project.c: in-project content search ---- */
 int krait_project_file_replace(const char *root, const char *path, const char *expected, int existed, const char *content);
+int krait_command_matches(const char *query, const char *label);
 void krait_replace_clear(void);
 const char *krait_replace_status(void);
 int krait_replace_count(void);
