@@ -185,6 +185,114 @@ static AgentChange agent_changes[AGENT_MAX_WRITTEN];
 static int agent_change_count;
 static int agent_new_batch;
 
+static KryJson *agent_checkpoint_view;
+static struct dirent **agent_checkpoint_entries;
+static int agent_checkpoint_count = -1;
+static int agent_checkpoint_selected = -1;
+
+static void
+agent_checkpoints_reset(void)
+{
+    kry_json_free(agent_checkpoint_view);
+    agent_checkpoint_view = NULL;
+    for(int i = 0; i < agent_checkpoint_count; i++) free(agent_checkpoint_entries[i]);
+    free(agent_checkpoint_entries);
+    agent_checkpoint_entries = NULL;
+    agent_checkpoint_count = -1;
+    agent_checkpoint_selected = -1;
+}
+
+static int
+agent_checkpoint_filter(const struct dirent *entry)
+{
+    return strncmp(entry->d_name, "batch-", 6) == 0;
+}
+
+int
+krait_agent_checkpoint_count(void)
+{
+    char dir[KRAIT_PATH_MAX * 3];
+    if(agent_busy || agent_tool_thread_running) return 0;
+    if(agent_checkpoint_count >= 0) return agent_checkpoint_count;
+    snprintf(dir, sizeof(dir), "%s.checkpoints", agent_history_path);
+    agent_checkpoint_count = scandir(dir, &agent_checkpoint_entries, agent_checkpoint_filter, alphasort);
+    if(agent_checkpoint_count < 0) agent_checkpoint_count = 0;
+    return agent_checkpoint_count;
+}
+
+int
+krait_agent_checkpoint_selected(void)
+{
+    return agent_checkpoint_selected;
+}
+
+const char *
+krait_agent_checkpoint_name(void)
+{
+    return agent_checkpoint_selected >= 0 && agent_checkpoint_selected < agent_checkpoint_count ?
+        agent_checkpoint_entries[agent_checkpoint_selected]->d_name : "Latest batch";
+}
+
+int
+krait_agent_checkpoint_select(int index)
+{
+    char path[KRAIT_PATH_MAX * 3], *text = NULL;
+    long len;
+    if(agent_busy || agent_tool_thread_running || index < -1) return 0;
+    if(index == -1) {
+        kry_json_free(agent_checkpoint_view);
+        agent_checkpoint_view = NULL;
+        agent_checkpoint_selected = -1;
+        return 1;
+    }
+    if(index >= krait_agent_checkpoint_count()) return 0;
+    snprintf(path, sizeof(path), "%s.checkpoints/%s", agent_history_path,
+             agent_checkpoint_entries[index]->d_name);
+    if(!krait_read_file_alloc(path, &text, &len)) return 0;
+    KryJson *root = kry_json_parse(text);
+    free(text);
+    if(kry_json_type(root) != KRY_JSON_ARRAY) { kry_json_free(root); return 0; }
+    for(int i = 0; i < kry_json_count(root); i++) {
+        KryJson *item = kry_json_at(root, i);
+        if(kry_json_string(kry_json_get(item, "path")) == NULL ||
+           kry_json_string(kry_json_get(item, "before")) == NULL ||
+           kry_json_string(kry_json_get(item, "after")) == NULL) {
+            kry_json_free(root); return 0;
+        }
+    }
+    kry_json_free(agent_checkpoint_view);
+    agent_checkpoint_view = root;
+    agent_checkpoint_selected = index;
+    return 1;
+}
+
+static int
+agent_checkpoint_archive(void)
+{
+    char current[KRAIT_PATH_MAX * 3], dir[KRAIT_PATH_MAX * 3], path[KRAIT_PATH_MAX * 3];
+    char *text = NULL;
+    long len;
+    if(agent_change_count == 0) return 1;
+    snprintf(current, sizeof(current), "%s.changes.json", agent_history_path);
+    if(!krait_read_file_alloc(current, &text, &len)) return 0;
+    snprintf(dir, sizeof(dir), "%s.checkpoints", agent_history_path);
+    krait_mkdir_p(dir);
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    if(snprintf(path, sizeof(path), "%s/batch-%020ld-%06ld-XXXXXX", dir,
+                (long)now.tv_sec, (long)now.tv_usec) >= (int)sizeof(path)) {
+        free(text); return 0;
+    }
+    int fd = mkstemp(path);
+    if(fd < 0) { free(text); return 0; }
+    close(fd);
+    int ok = krait_write_text_file_atomic(path, text);
+    free(text);
+    if(!ok) unlink(path);
+    else agent_checkpoints_reset();
+    return ok;
+}
+
 static void
 agent_changes_clear(void)
 {
@@ -890,6 +998,7 @@ agent_tool_write(const char *path, const char *content)
         return 0;
     }
     if(agent_new_batch) {
+        if(!agent_checkpoint_archive()) { free(orig); return 0; }
         agent_changes_clear();
         agent_new_batch = 0;
     }
@@ -955,26 +1064,35 @@ krait_agent_written_path(int index)
 int
 krait_agent_change_count(void)
 {
-    return agent_busy || agent_tool_thread_running ? 0 : agent_change_count;
+    return agent_busy || agent_tool_thread_running ? 0 :
+        agent_checkpoint_view != NULL ? kry_json_count(agent_checkpoint_view) : agent_change_count;
 }
 
 const char *
 krait_agent_change_path(int index)
 {
-    return index >= 0 && index < krait_agent_change_count() ? agent_changes[index].path : "";
+    if(index < 0 || index >= krait_agent_change_count()) return "";
+    if(agent_checkpoint_view != NULL)
+        return kry_json_string(kry_json_get(kry_json_at(agent_checkpoint_view, index), "path"));
+    return agent_changes[index].path;
 }
 
 const char *
 krait_agent_change_content(int index, int after)
 {
     if(index < 0 || index >= krait_agent_change_count()) return "";
+    if(agent_checkpoint_view != NULL)
+        return kry_json_string(kry_json_get(kry_json_at(agent_checkpoint_view, index), after ? "after" : "before"));
     return after ? agent_changes[index].after : agent_changes[index].before;
 }
 
 int
 krait_agent_change_review(int index)
 {
-    return index >= 0 && index < krait_agent_change_count() ? agent_changes[index].review : -1;
+    if(index < 0 || index >= krait_agent_change_count()) return -1;
+    if(agent_checkpoint_view != NULL)
+        return (int)kry_json_number(kry_json_get(kry_json_at(agent_checkpoint_view, index), "review"));
+    return agent_changes[index].review;
 }
 
 static int
@@ -991,7 +1109,7 @@ agent_change_matches(AgentChange *c, int reverting)
 int
 krait_agent_review_change(int index, int accept)
 {
-    if(index < 0 || index >= krait_agent_change_count() || agent_changes[index].review != 0)
+    if(agent_checkpoint_view != NULL || index < 0 || index >= krait_agent_change_count() || agent_changes[index].review != 0)
         return 0;
     AgentChange *c = &agent_changes[index];
     if(!agent_change_matches(c, !accept)) {
@@ -1028,6 +1146,7 @@ krait_agent_review_change(int index, int accept)
 int
 krait_agent_can_revert(void)
 {
+    if(agent_checkpoint_view != NULL) return 0;
     for(int i = 0; i < krait_agent_change_count(); i++)
         if(agent_changes[i].review == 0) return 1;
     return 0;
@@ -2054,6 +2173,7 @@ agent_bind_session(const char *project_dir, const char *task)
     agent_perm_json = NULL;
     agent_perm_count = 0;
     agent_perm_always = 0;
+    agent_checkpoints_reset();
     agent_written_count = 0;
     agent_read_version_count = 0;
     agent_read_version_failed = 0;
@@ -2256,6 +2376,7 @@ krait_agent_send(const char *text)
         agent_remember(AGENT_MSG_ERROR, krait_ai_config_hint());
         return 0;
     }
+    agent_checkpoints_reset();
     agent_manual_validation = 0;
     agent_remember(AGENT_MSG_USER, text);
     agent_run_save("running");
@@ -2494,6 +2615,7 @@ krait_agent_shutdown(void)
     free(agent_job.result);
     memset(&agent_job, 0, sizeof(agent_job));
     agent_changes_clear();
+    agent_checkpoints_reset();
     free(agent_read_versions);
     agent_read_versions = NULL;
     agent_read_version_count = agent_read_version_capacity = 0;

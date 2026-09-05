@@ -520,6 +520,58 @@ test_file_guards(void)
     CHECK(result != NULL && strstr(result, "[write nested/deep/new.txt] ok") != NULL); free(result);
 }
 
+static void
+test_checkpoint_history(void)
+{
+    char project[] = "/tmp/krait-checkpoints-XXXXXX";
+    CHECK(mkdtemp(project) != NULL);
+    CHECK(krait_agent_bind_task(project, "history"));
+    char *result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"a.txt\",\"content\":\"first\"}]");
+    free(result);
+    CHECK(krait_agent_checkpoint_count() == 0);
+    CHECK(krait_agent_review_change(0, 1));
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"a.txt\",\"content\":\"second\"}]"); free(result);
+    CHECK(krait_agent_checkpoint_count() == 1);
+    CHECK(krait_agent_checkpoint_select(0));
+    CHECK(strcmp(krait_agent_change_content(0, 1), "first") == 0);
+    CHECK(krait_agent_change_review(0) == 1);
+    CHECK(!krait_agent_review_change(0, 0));
+    CHECK(!krait_agent_can_revert());
+    CHECK(krait_agent_checkpoint_select(-1));
+    CHECK(strcmp(krait_agent_change_content(0, 1), "second") == 0);
+    CHECK(krait_agent_bind_task(project, "other"));
+    CHECK(krait_agent_bind_task(project, "history"));
+    CHECK(krait_agent_checkpoint_count() == 1);
+    CHECK(krait_agent_checkpoint_select(0));
+    CHECK(strcmp(krait_agent_change_content(0, 1), "first") == 0);
+    CHECK(krait_agent_checkpoint_select(-1));
+    CHECK(krait_agent_revert() == 1);
+    CHECK(krait_agent_change_review(0) == 2);
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"b.txt\",\"content\":\"third\"}]"); free(result);
+    CHECK(krait_agent_checkpoint_count() == 2);
+    CHECK(krait_agent_checkpoint_select(1));
+    CHECK(strcmp(krait_agent_change_content(0, 1), "second") == 0);
+    CHECK(krait_agent_change_review(0) == 2);
+    CHECK(!krait_agent_checkpoint_select(2));
+    CHECK(krait_agent_checkpoint_select(-1));
+    CHECK(strcmp(krait_agent_change_path(0), "b.txt") == 0);
+
+    CHECK(krait_agent_bind_task(project, "archive-failure"));
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"c.txt\",\"content\":\"preserve me\"}]"); free(result);
+    unsigned hash = 2166136261u;
+    for(const char *p = project; *p; p++) hash = (hash ^ (unsigned char)*p) * 16777619u;
+    char blocked[2048];
+    snprintf(blocked, sizeof(blocked), "%s/.kryon/krait/agent/%s-%08x--archive-failure/history.jsonl.checkpoints",
+             getenv("HOME"), krait_basename(project), hash);
+    CHECK(krait_write_text_file_atomic(blocked, "not a directory"));
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"c.txt\",\"content\":\"must not land\"}]");
+    CHECK(result != NULL && strstr(result, "refused") != NULL); free(result);
+    CHECK(krait_agent_change_count() == 1);
+    CHECK(strcmp(krait_agent_change_content(0, 1), "preserve me") == 0);
+    CHECK(krait_agent_can_revert());
+    CHECK(krait_agent_revert() == 1);
+}
+
 /* Hex editor backend: open/edit/save round-trip with .bak backup. */
 static void
 test_hex_editor(void)
@@ -1040,6 +1092,7 @@ main(int argc, char **argv)
     test_change_recovery();
     test_selective_review();
     test_file_guards();
+    test_checkpoint_history();
     test_hex_editor();
     test_provider_selection();
     test_response_parsers();

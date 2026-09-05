@@ -25,7 +25,8 @@ acceptance checks before marking it done.
 - [x] Persist acceptance events with task/source fingerprints and criteria.
 - [ ] Acceptance-history browser and dependency-aware scheduling.
 - [x] Before/after review UI and persisted per-file acceptance/revert.
-- [ ] Checkpoint history and full large-file review without preview limits.
+- [x] Archive previous write batches and browse their before/after history.
+- [ ] Historical rollback, retention controls, and large-file review without preview limits.
 - [x] Detect stale writes against full file-tool read versions in the active session.
 - [ ] Persist read versions across restart and protect unsaved editor contents before writes.
 - [ ] Make multi-file changes transactional; handle external writers and
@@ -34,7 +35,7 @@ acceptance checks before marking it done.
 - [ ] Apply workspace boundaries consistently to search, screenshots and proposal application.
 - [ ] Context summarization and configurable execution budgets.
 
-Recovery currently covers the latest file-tool write batch only. It does not
+Direct recovery covers the latest file-tool write batch; earlier batches remain browsable in checkpoint history. It does not
 undo shell commands or provide filesystem isolation. Resume starts a new
 model turn that inspects current state instead of replaying an interrupted
 command. Cancellation terminates run-tool commands; graphics and compile-gate

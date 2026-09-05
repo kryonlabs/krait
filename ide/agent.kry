@@ -26,6 +26,10 @@ krait_agent_busy :: () -> int #extern
 krait_agent_files_changed :: () -> int #extern
 krait_agent_written_count :: () -> int #extern
 krait_agent_written_path :: (index: int) -> const char* #extern
+krait_agent_checkpoint_count :: () -> int #extern
+krait_agent_checkpoint_selected :: () -> int #extern
+krait_agent_checkpoint_name :: () -> const char* #extern
+krait_agent_checkpoint_select :: (index: int) -> int #extern
 krait_agent_change_count :: () -> int #extern
 krait_agent_change_path :: (index: int) -> const char* #extern
 krait_agent_change_content :: (index: int, after: int) -> const char* #extern
@@ -949,6 +953,29 @@ draw_change_review :: (bounds: Rectangle, busy: int) {
         Text("Changes are available when the active run stops.", x, y, ScaleUIPx(13), GetThemeText())
         return
     }
+    history_count := krait_agent_checkpoint_count()
+    selected := krait_agent_checkpoint_selected()
+    if StyledButton(x, y, ScaleUIPx(66), ScaleUIPx(26), "Older", ButtonStyleSecondary,
+                           history_count == 0 || selected == 0, NULL) {
+        krait_agent_checkpoint_select(selected < 0 ? history_count - 1 : selected - 1)
+        agent_review_index = 0
+        agent_review_scroll = 0
+    }
+    if StyledButton(x + ScaleUIPx(72), y, ScaleUIPx(66), ScaleUIPx(26), "Newer", ButtonStyleSecondary,
+                           selected < 0, NULL) {
+        krait_agent_checkpoint_select(selected + 1 < history_count ? selected + 1 : -1)
+        agent_review_index = 0
+        agent_review_scroll = 0
+    }
+    if StyledButton(x + ScaleUIPx(144), y, ScaleUIPx(66), ScaleUIPx(26), "Latest", ButtonStyleSecondary,
+                           selected < 0, NULL) {
+        krait_agent_checkpoint_select(-1)
+        agent_review_index = 0
+        agent_review_scroll = 0
+    }
+    Text(krait_agent_checkpoint_name(), x + ScaleUIPx(220), y + ScaleUIPx(6), ScaleUIPx(11), GetThemeIcon())
+    y = y + ScaleUIPx(34)
+    historical := krait_agent_checkpoint_selected() >= 0
     count := krait_agent_change_count()
     if count == 0 {
         Text("No recorded file changes in this session.", x, y, ScaleUIPx(13), GetThemeText())
@@ -977,14 +1004,14 @@ draw_change_review :: (bounds: Rectangle, busy: int) {
     y = y + ScaleUIPx(34)
     review := krait_agent_change_review(agent_review_index)
     if StyledButton(x, y, ScaleUIPx(104), ScaleUIPx(28), "Accept file", ButtonStylePrimary,
-                           review != 0, NULL) {
+                           review != 0 || historical, NULL) {
         krait_agent_review_change(agent_review_index, 1)
     }
     if StyledButton(x + ScaleUIPx(112), y, ScaleUIPx(104), ScaleUIPx(28), "Revert file", ButtonStyleSecondary,
-                           review != 0, NULL) {
+                           review != 0 || historical, NULL) {
         krait_agent_review_change(agent_review_index, 0)
     }
-    Text(review == 1 ? "Accepted" : (review == 2 ? "Reverted" : "Pending review"),
+    Text(historical ? "Historical snapshot (read only)" : (review == 1 ? "Accepted" : (review == 2 ? "Reverted" : "Pending review")),
                x + ScaleUIPx(226), y + ScaleUIPx(6), ScaleUIPx(12), GetThemeIcon())
     y = y + ScaleUIPx(36)
     half := ((int)bounds.width - pad * 3) / 2

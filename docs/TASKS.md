@@ -87,8 +87,17 @@ file's edits, while task acceptance also requires current validation and
 completed dependencies. Unsaved editor buffers are preserved on reload.
 The preview currently displays up to 4096 wrapped lines per version and
 indicates that limit. Open larger files in the editor for complete review.
-Only the latest batch is retained; checkpoint-history browsing remains on
-the roadmap.
+Previous batches are preserved before a new batch begins. Use **Older**,
+**Newer**, and **Latest** to browse them in Changes. History is read-only;
+Accept/Revert operates on the latest batch. Earlier snapshots preserve the
+review decisions made before they were archived. They survive restarting
+Krait and reopening the session. If the previous batch cannot be archived,
+new file writes are refused so its recovery record is retained.
+
+Checkpoints live in `history.jsonl.checkpoints/` next to the session transcript.
+They are not automatically pruned. Historical rollback and retention controls
+remain planned; use the recorded contents to reconstruct an earlier version
+when needed.
 
 ## File-tool conflicts and boundaries
 
