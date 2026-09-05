@@ -291,14 +291,14 @@ p:last-child { margin-bottom: 0; }
 main {
   position: relative;
   z-index: 1;
-  background-color: rgba(253, 252, 248, 0.96);
+  background-color: var(--surface);
 }
 
 section {
   max-width: var(--maxw);
   margin: 0 auto;
   padding: var(--space-xl) 20px;
-  background-color: rgba(253, 252, 248, 0.98);
+  background-color: var(--surface);
 }
 
 section + section { border-top: 1px solid var(--line); }
@@ -340,9 +340,7 @@ h3 {
   padding: var(--space-xl) 20px var(--space-lg);
   position: relative;
   z-index: 1;
-  background:
-    linear-gradient(180deg, rgba(255, 254, 249, 0.98), rgba(249, 246, 235, 0.96)),
-    var(--surface);
+  background: linear-gradient(180deg, var(--surface), var(--bg));
   border-bottom: 1px solid rgba(42, 59, 64, 0.10);
 }
 
@@ -961,6 +959,9 @@ h1, h2, h3 { color: var(--ink-strong); font-family: Inter, ui-sans-serif, system
 .btn:hover { color: #fff; background: #222542; border-color: rgba(177,150,255,.56); box-shadow: 0 0 0 3px rgba(177,150,255,.06); }
 .btn-primary { color: #0b0814; background: linear-gradient(135deg, #d7caff, #987bed); border-color: #c8b7ff; box-shadow: 0 16px 42px rgba(130,95,231,.2); }
 .btn-primary:hover { color: #080612; background: #e5ddff; }
+
+.header-nav a.btn-primary { color: #0b0814; }
+.header-nav a.btn-primary:hover { color: #080612; }
 
 .hero { min-height: 760px; gap: 56px; padding-top: 90px; padding-bottom: 80px; }
 .hero h1 { max-width: 620px; font-size: clamp(58px, 7vw, 92px); line-height: .94; letter-spacing: -.065em; }
