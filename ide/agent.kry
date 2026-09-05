@@ -96,6 +96,14 @@ agent_bound :: int #global
 agent_expanded :: int #global
 agent_pinned :: int #global
 agent_sessions_open :: int #global
+krait_agent_checks_load :: () -> int #extern
+krait_agent_checks_status :: () -> const char* #extern
+krait_agent_checks_count :: () -> int #extern
+krait_agent_check_text :: (index: int, field: int) -> const char* #extern
+krait_agent_check_number :: (index: int, duration: int) -> int #extern
+agent_check_index :: int #global
+agent_check_scroll :: int #global
+
 agent_review_open :: int #global
 agent_review_index :: int #global
 agent_review_scroll :: int #global
@@ -945,6 +953,63 @@ draw_agent_header :: (bounds: Rectangle, st: state.IdeState*, busy: int) {
                         0, NULL)
 }
 
+draw_checks :: (bounds: Rectangle, busy: int) {
+    pad := ScaleUIPx(10)
+    x := (int)bounds.x + pad
+    y := (int)bounds.y + pad
+    if StyledButton(x, y, ScaleUIPx(90), ScaleUIPx(26), "Refresh", ButtonStyleSecondary, busy, NULL) {
+        krait_agent_checks_load()
+        agent_check_index = 0
+        agent_check_scroll = 0
+    }
+    Text(krait_agent_checks_status(), x + ScaleUIPx(100), y + ScaleUIPx(6), ScaleUIPx(12), GetThemeText())
+    y = y + ScaleUIPx(34)
+    count := krait_agent_checks_count()
+    if count == 0 { return }
+    if agent_check_index >= count { agent_check_index = 0 }
+    if StyledButton(x, y, ScaleUIPx(30), ScaleUIPx(26), "<", ButtonStyleSecondary, agent_check_index == 0, NULL) {
+        agent_check_index = agent_check_index - 1
+        agent_check_scroll = 0
+    }
+    if StyledButton(x + ScaleUIPx(36), y, ScaleUIPx(30), ScaleUIPx(26), ">", ButtonStyleSecondary, agent_check_index >= count - 1, NULL) {
+        agent_check_index = agent_check_index + 1
+        agent_check_scroll = 0
+    }
+    label: [512] char
+    snprintf(label, sizeof(label), "%d/%d  %s  | exit %d | %d ms", agent_check_index + 1, count,
+             krait_agent_check_text(agent_check_index, 0), krait_agent_check_number(agent_check_index, 0),
+             krait_agent_check_number(agent_check_index, 1))
+    Text(label, x + ScaleUIPx(76), y + ScaleUIPx(6), ScaleUIPx(12), GetThemeLink())
+    y = y + ScaleUIPx(34)
+    width := (int)bounds.width - pad * 2
+    command := krait_agent_check_text(agent_check_index, 1)
+    command_rows := krait_wrap_lines(command, width, ScaleUIPx(12), 4)
+    for int row = 0; row < command_rows; row++ {
+        line: [2048] char
+        krait_wrap_line(command, width, ScaleUIPx(12), 4, row, line, sizeof(line))
+        Text(line, x, y, ScaleUIPx(12), GetThemeIcon())
+        y = y + ScaleUIPx(18)
+    }
+    y = y + ScaleUIPx(8)
+    output := krait_agent_check_text(agent_check_index, 2)
+    rows := ((int)(bounds.y + bounds.height) - y - pad) / ScaleUIPx(18)
+    if rows < 1 { return }
+    total := krait_wrap_lines(output, width, ScaleUIPx(12), 10000)
+    if CheckCollisionPointRec(GetMousePosition(), bounds) {
+        agent_check_scroll = agent_check_scroll - (int)(GetMouseWheelMove() * 3.0)
+    }
+    maximum := total > rows ? total - rows : 0
+    if agent_check_scroll > maximum { agent_check_scroll = maximum }
+    if agent_check_scroll < 0 { agent_check_scroll = 0 }
+    BeginScissorMode(x, y, width, rows * ScaleUIPx(18))
+    for int row = 0; row < rows; row++ {
+        line: [2048] char
+        krait_wrap_line(output, width, ScaleUIPx(12), 10000, agent_check_scroll + row, line, sizeof(line))
+        Text(line, x, y + row * ScaleUIPx(18), ScaleUIPx(12), GetThemeText())
+    }
+    EndScissorMode()
+}
+
 draw_change_review :: (bounds: Rectangle, busy: int) {
     pad := ScaleUIPx(10)
     x := (int)bounds.x + pad
@@ -1116,7 +1181,9 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     }
     transcript := (Rectangle){bounds.x, (float)content_top, bounds.width,
                               transcript_h}
-    if agent_review_open != 0 {
+    if agent_review_open == 2 {
+        draw_checks(transcript, busy)
+    } else if agent_review_open == 1 {
         draw_change_review(transcript, busy)
     } else {
         draw_transcript(transcript, busy, st)
@@ -1222,9 +1289,14 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
         krait_agent_validate()
     }
     if StyledButton((int)composer.x + ScaleUIPx(192), control_y + ScaleUIPx(34),
-                           ScaleUIPx(100), ScaleUIPx(24), agent_review_open != 0 ? "Conversation" : "Changes",
+                           ScaleUIPx(100), ScaleUIPx(24), agent_review_open == 0 ? "Changes" : (agent_review_open == 1 ? "Checks" : "Conversation"),
                            ButtonStyleSecondary, 0, NULL) {
-        agent_review_open = agent_review_open == 0 ? 1 : 0
+        agent_review_open = (agent_review_open + 1) % 3
+        if agent_review_open == 2 {
+            krait_agent_checks_load()
+            agent_check_index = 0
+            agent_check_scroll = 0
+        }
         agent_review_scroll = 0
     }
     if krait_agent_can_revert() != 0 {

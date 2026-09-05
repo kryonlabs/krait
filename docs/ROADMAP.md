@@ -59,7 +59,10 @@ the bound project's AGENTS.md; nested directory rules remain to be implemented.
 - [x] Configurable project validation commands, manual Validate, and persisted
   per-check command/exit/duration/output reports.
 - [x] Source snapshot evidence and refusal to accept stale validation.
-- [ ] Test-results explorer and completion gates across external synchronization.
+- [x] Saved validation-command results view with exit codes, timings, output
+  and source/task freshness checks on refresh.
+- [ ] Individual test-case explorer, report history, and completion gates across
+  external synchronization.
 - [ ] Diff/merge review and remote workspaces.
 
 Acceptance: edit, navigate, refactor, test and debug a real non-Kryon project

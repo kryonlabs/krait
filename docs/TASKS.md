@@ -143,3 +143,20 @@ operations. Edits made during the current frame may be published after an
 in-flight write has committed; the dirty buffer remains preserved by reload
 checks. Atomic coordination of buffer edits and disk writes, alternate path
 spellings, and shell-command writes remain outside this protection.
+
+
+## Inspecting validation results
+
+In Agent, use the conversation panel's **Changes → Checks** button to open
+the saved validation report. Use the arrows to visit each recorded command;
+its name, exit code, duration, command text and captured output appear above
+a scrollable output area. **Refresh** reloads the report and checks whether a
+passing result still matches current source files and task criteria. This
+freshness indication describes the last refresh; refresh again after edits.
+Switching sessions clears the previous report. Missing or incomplete reports
+show a message rather than the previous session's results.
+
+This view reports the commands from `.krait/tasks.json`, not individual test
+cases parsed from framework output. Command display is limited to four wrapped
+lines and captured output retains the runner's 8192-byte limit. Test-case
+parsers, validation history and source navigation remain planned.

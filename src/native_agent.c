@@ -1531,6 +1531,65 @@ krait_agent_validation_current(void)
     return krait_agent_validation_for(agent_project, agent_task);
 }
 
+static KryJson *validation_view;
+static char validation_view_status[160];
+
+int
+krait_agent_checks_load(void)
+{
+    kry_json_free(validation_view); validation_view = NULL;
+    snprintf(validation_view_status, sizeof(validation_view_status), "No saved validation report");
+    if(agent_busy || agent_tool_thread_running) {
+        snprintf(validation_view_status, sizeof(validation_view_status), "Wait for the active run to stop, then refresh"); return 0;
+    }
+    char path[KRAIT_PATH_MAX * 3], *text = NULL;
+    long len;
+    snprintf(path, sizeof(path), "%s.validation.json", agent_history_path);
+    struct stat st;
+    if(stat(path, &st) != 0) return 0;
+    if(st.st_size > 1024 * 1024 || !krait_read_file_alloc(path, &text, &len)) {
+        snprintf(validation_view_status, sizeof(validation_view_status), "Cannot read validation report"); return 0;
+    }
+    KryJson *root = kry_json_parse(text); free(text);
+    KryJson *checks = kry_json_get(root, "results");
+    int count = kry_json_count(checks);
+    if(kry_json_number(kry_json_get(root, "version")) != 1 ||
+       kry_json_type(checks) != KRY_JSON_ARRAY || count > 32) {
+        kry_json_free(root);
+        snprintf(validation_view_status, sizeof(validation_view_status), "Incomplete or invalid report; inspect the conversation and validate again"); return 0;
+    }
+    for(int i = 0; i < count; i++) {
+        KryJson *item = kry_json_at(checks, i);
+        if(!kry_json_string(kry_json_get(item, "name")) || !kry_json_string(kry_json_get(item, "command")) ||
+           !kry_json_string(kry_json_get(item, "output")) ||
+           kry_json_type(kry_json_get(item, "exit_code")) != KRY_JSON_NUMBER ||
+           kry_json_type(kry_json_get(item, "duration_ms")) != KRY_JSON_NUMBER) {
+            kry_json_free(root); snprintf(validation_view_status, sizeof(validation_view_status), "Invalid check record"); return 0;
+        }
+    }
+    validation_view = root;
+    int passed = kry_json_number(kry_json_get(root, "passed")) == 1;
+    snprintf(validation_view_status, sizeof(validation_view_status), "%s — %d recorded checks",
+        passed ? (krait_agent_validation_current() ? "Passed; evidence is current" : "Passed; evidence is stale") : "Validation failed", count);
+    return count;
+}
+
+const char *krait_agent_checks_status(void) { return validation_view_status; }
+int krait_agent_checks_count(void) { return kry_json_count(kry_json_get(validation_view, "results")); }
+const char *krait_agent_check_text(int index, int field)
+{
+    const char *keys[] = {"name", "command", "output"};
+    if(index < 0 || index >= krait_agent_checks_count() || field < 0 || field > 2) return "";
+    const char *value = kry_json_string(kry_json_get(kry_json_at(kry_json_get(validation_view, "results"), index), keys[field]));
+    return value ? value : "";
+}
+int krait_agent_check_number(int index, int duration)
+{
+    if(index < 0 || index >= krait_agent_checks_count()) return 0;
+    return (int)kry_json_number(kry_json_get(kry_json_at(kry_json_get(validation_view, "results"), index), duration ? "duration_ms" : "exit_code"));
+}
+
+
 /* Render the project's screen offscreen, encode the PNG, and hold it for
  * the next request. The tool result reports the size so the model knows
  * the screenshot landed. */
@@ -2296,6 +2355,8 @@ agent_bind_session(const char *project_dir, const char *task)
     agent_perm_always = 0;
     agent_checkpoints_reset();
     agent_written_count = 0;
+    kry_json_free(validation_view); validation_view = NULL;
+    snprintf(validation_view_status, sizeof(validation_view_status), "Session changed; refresh to load its checks");
     agent_read_version_count = 0;
     agent_read_version_failed = 0;
     if(agent_req != NULL) {
@@ -2739,6 +2800,7 @@ krait_agent_shutdown(void)
     memset(&agent_job, 0, sizeof(agent_job));
     agent_changes_clear();
     agent_checkpoints_reset();
+    kry_json_free(validation_view); validation_view = NULL;
     free(agent_read_versions);
     agent_read_versions = NULL;
     agent_read_version_count = agent_read_version_capacity = 0;

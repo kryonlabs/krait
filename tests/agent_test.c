@@ -225,6 +225,14 @@ test_project_validation(void)
     CHECK(krait_read_file_alloc(report_path, &report, &len));
     CHECK(report != NULL && strstr(report, "\"exit_code\":7") != NULL);
     CHECK(report != NULL && strstr(report, "\"passed\":0") != NULL);
+    CHECK(krait_agent_checks_load() == 2);
+    CHECK(!strcmp(krait_agent_check_text(0, 0), "build"));
+    CHECK(!strcmp(krait_agent_check_text(0, 1), "printf build-ok"));
+    CHECK(strstr(krait_agent_check_text(0, 2), "build-ok"));
+    CHECK(krait_agent_check_number(1, 0) == 7);
+    CHECK(krait_agent_check_number(0, 1) >= 0);
+    CHECK(strstr(krait_agent_checks_status(), "failed"));
+    CHECK(!*krait_agent_check_text(99, 0));
     free(report); report = NULL;
     CHECK(krait_write_text_file_atomic(config,
         "{\"tasks\":[{\"name\":\"test\",\"command\":\"printf all-passed\"}]}"));
@@ -239,13 +247,21 @@ test_project_validation(void)
     CHECK(krait_read_file_alloc(report_path, &report, &len));
     CHECK(report != NULL && strstr(report, "\"passed\":1") != NULL);
     CHECK(krait_agent_validation_current());
+    CHECK(krait_agent_checks_load() == 1);
+    CHECK(strstr(krait_agent_checks_status(), "current"));
     char source[1024];
     snprintf(source, sizeof(source), "%s/source.txt", project);
     CHECK(krait_write_text_file_atomic(source, "changed after validation"));
     CHECK(!krait_agent_validation_current());
+    CHECK(krait_agent_checks_load() == 1);
+    CHECK(strstr(krait_agent_checks_status(), "stale"));
     unlink(source);
     CHECK(krait_agent_validation_current());
     free(report); report = NULL;
+    CHECK(krait_write_text_file_atomic(report_path, "{broken"));
+    CHECK(krait_agent_checks_load() == 0);
+    CHECK(krait_agent_checks_count() == 0);
+    CHECK(strstr(krait_agent_checks_status(), "invalid"));
     CHECK(krait_write_text_file_atomic(config, "{broken"));
     result = krait_agent_run_tools("[{\"tool\":\"validate\"}]");
     CHECK(result != NULL && strstr(result, "FAILED") != NULL);
