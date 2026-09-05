@@ -3,6 +3,7 @@
 #include "native_internal.h"
 #include "app_host.h"
 #include "kry_dylib.h"
+#include "kry_sha256.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -503,5 +504,79 @@ krait_scratch_path(char *out, size_t out_size)
         snprintf(out, out_size, ".kryon/scratch.txt");
     else
         snprintf(out, out_size, "%s/.kryon/scratch.txt", home);
+    return 1;
+}
+
+/* Stable source-tree fingerprint. Generated output/dependency directories
+ * are excluded consistently; source names, modes and bytes are included. */
+static int
+snapshot_dir(const char *path, KrySha256 *hash, int depth)
+{
+    struct dirent **entries = NULL;
+    int count, ok = 1;
+    if(depth > 64)
+        return 0;
+    count = scandir(path, &entries, NULL, alphasort);
+    if(count < 0)
+        return 0;
+    for(int i = 0; i < count; i++) {
+        const char *name = entries[i]->d_name;
+        char full[KRAIT_PATH_MAX * 3];
+        struct stat st;
+        if(!strcmp(name, ".") || !strcmp(name, "..") || !strcmp(name, ".git")) {
+            free(entries[i]);
+            continue;
+        }
+        if(snprintf(full, sizeof(full), "%s/%s", path, name) >= (int)sizeof(full) ||
+           lstat(full, &st) != 0) { ok = 0; free(entries[i]); continue; }
+        if(S_ISDIR(st.st_mode) && (!strcmp(name, "build") || !strcmp(name, "out") ||
+           !strcmp(name, "node_modules") || !strcmp(name, ".cache"))) {
+            free(entries[i]);
+            continue;
+        }
+        kry_sha256_update(hash, name, strlen(name) + 1);
+        char mode[64];
+        snprintf(mode, sizeof(mode), "%o:%lld", (unsigned)(st.st_mode & (S_IFMT | 0777)),
+                 (long long)(S_ISDIR(st.st_mode) ? 0 : st.st_size));
+        kry_sha256_update(hash, mode, strlen(mode) + 1);
+        if(S_ISDIR(st.st_mode)) {
+            if(!snapshot_dir(full, hash, depth + 1)) ok = 0;
+        } else if(S_ISREG(st.st_mode)) {
+            FILE *f = fopen(full, "rb");
+            if(f == NULL) ok = 0;
+            else {
+                unsigned char buf[16384];
+                size_t n;
+                while((n = fread(buf, 1, sizeof(buf), f)) > 0)
+                    kry_sha256_update(hash, buf, n);
+                if(ferror(f)) ok = 0;
+                fclose(f);
+            }
+        } else if(S_ISLNK(st.st_mode)) {
+            char target[KRAIT_PATH_MAX * 3];
+            ssize_t n = readlink(full, target, sizeof(target));
+            if(n < 0 || n == sizeof(target)) ok = 0;
+            else kry_sha256_update(hash, target, (size_t)n);
+        } else ok = 0;
+        kry_sha256_update(hash, "\0END\0", 5);
+        free(entries[i]);
+    }
+    free(entries);
+    return ok;
+}
+
+int
+krait_project_snapshot(const char *project, char digest[65])
+{
+    KrySha256 hash;
+    unsigned char raw[32];
+    if(project == NULL || project[0] == 0 || digest == NULL)
+        return 0;
+    digest[0] = 0;
+    kry_sha256_init(&hash);
+    if(!snapshot_dir(project, &hash, 0))
+        return 0;
+    kry_sha256_final(&hash, raw);
+    kry_sha256_hex(raw, digest);
     return 1;
 }

@@ -19,7 +19,9 @@ acceptance checks before marking it done.
 - [x] Cancel pending approval/network waits and stop between tool calls.
 - [x] Terminate active run-tool commands and their process groups on cancellation
   or timeout, with forced cleanup for commands that ignore termination.
-- [ ] Goal acceptance and validation.
+- [x] Source-bound validation and explicit Review-to-Done acceptance for
+  project-bound cards through Krait's move API.
+- [ ] Structured acceptance criteria, task-spec validation, and acceptance history.
 - [ ] Review UI for changes, selective acceptance, and checkpoint history.
 - [ ] Detect stale writes against read versions and unsaved editor contents.
 - [ ] Make multi-file changes transactional; handle external writers and
@@ -43,7 +45,8 @@ the bound project's AGENTS.md; nested directory rules remain to be implemented.
 - [ ] DAP launch/attach, breakpoints, stepping, variables and call stacks.
 - [x] Configurable project validation commands, manual Validate, and persisted
   per-check command/exit/duration/output reports.
-- [ ] Test-results explorer, source-version evidence and completion gates.
+- [x] Source snapshot evidence and refusal to accept stale validation.
+- [ ] Test-results explorer and completion gates across external synchronization.
 - [ ] Diff/merge review and remote workspaces.
 
 Acceptance: edit, navigate, refactor, test and debug a real non-Kryon project

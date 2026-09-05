@@ -237,6 +237,13 @@ test_project_validation(void)
     CHECK(strcmp(krait_agent_run_state(), "review") == 0);
     CHECK(krait_read_file_alloc(report_path, &report, &len));
     CHECK(report != NULL && strstr(report, "\"passed\":1") != NULL);
+    CHECK(krait_agent_validation_current());
+    char source[1024];
+    snprintf(source, sizeof(source), "%s/source.txt", project);
+    CHECK(krait_write_text_file_atomic(source, "changed after validation"));
+    CHECK(!krait_agent_validation_current());
+    unlink(source);
+    CHECK(krait_agent_validation_current());
     free(report); report = NULL;
     CHECK(krait_write_text_file_atomic(config, "{broken"));
     result = krait_agent_run_tools("[{\"tool\":\"validate\"}]");
@@ -245,6 +252,47 @@ test_project_validation(void)
     CHECK(krait_read_file_alloc(report_path, &report, &len));
     CHECK(report != NULL && strstr(report, "\"passed\":0") != NULL);
     free(report);
+}
+
+static void
+test_card_acceptance_gate(void)
+{
+    const char *project = "/tmp/krait-card-acceptance";
+    char config[1024], source[1024], card_id[128];
+    char *result;
+    snprintf(source, sizeof(source), "%s/source.txt", project);
+    unlink(source);
+    snprintf(config, sizeof(config), "%s/.krait", project);
+    krait_mkdir_p(config);
+    snprintf(config, sizeof(config), "%s/.krait/tasks.json", project);
+    CHECK(krait_write_text_file_atomic(config,
+        "{\"tasks\":[{\"name\":\"check\",\"command\":\"true\"}]}"));
+    int index = krait_kanban_create(2, "Acceptance regression");
+    CHECK(index >= 0);
+    snprintf(card_id, sizeof(card_id), "%s", krait_kanban_card_id(2, index));
+    CHECK(krait_kanban_set_project(2, index, project));
+    CHECK(!krait_kanban_move(2, index, 3));
+    CHECK(strstr(krait_kanban_card_status(2, index), "Cannot accept") != NULL);
+    CHECK(krait_agent_bind_task(project, card_id));
+    result = krait_agent_run_tools("[{\"tool\":\"validate\"}]"); free(result);
+    CHECK(krait_agent_validation_current());
+    snprintf(source, sizeof(source), "%s/source.txt", project);
+    CHECK(krait_write_text_file_atomic(source, "new source"));
+    CHECK(!krait_kanban_move(2, index, 3));
+    result = krait_agent_run_tools("[{\"tool\":\"validate\"}]"); free(result);
+    CHECK(krait_kanban_move(2, index, 3));
+    for(int i = 0; i < krait_kanban_count(3); i++) {
+        if(strcmp(krait_kanban_card_id(3, i), card_id) == 0) {
+            CHECK(krait_kanban_delete(3, i));
+            break;
+        }
+    }
+    CHECK(krait_write_text_file_atomic(config,
+        "{\"tasks\":[{\"name\":\"mutates source\",\"command\":\"echo mutation >> source.txt\"}]}"));
+    result = krait_agent_run_tools("[{\"tool\":\"validate\"}]");
+    CHECK(result != NULL && strstr(result, "sources changed during validation") != NULL);
+    free(result);
+    CHECK(!krait_agent_validation_current());
 }
 
 /* Tools execute through the same public entry the live loop uses. */
@@ -885,6 +933,7 @@ main(int argc, char **argv)
     test_run_capture();
     test_command_cancellation();
     test_project_validation();
+    test_card_acceptance_gate();
     test_tools();
     test_change_recovery();
     test_hex_editor();

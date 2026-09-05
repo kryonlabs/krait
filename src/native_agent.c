@@ -410,7 +410,7 @@ agent_path_hash(const char *s)
 }
 
 static void
-agent_history_dir(char *dst, size_t dst_size)
+agent_history_dir(char *dst, size_t dst_size, const char *project, const char *task)
 {
     const char *home = getenv("HOME");
     char name[256];
@@ -419,7 +419,7 @@ agent_history_dir(char *dst, size_t dst_size)
 
     if(home == NULL || home[0] == '\0')
         home = ".";
-    base = agent_project[0] != '\0' ? agent_project : "none";
+    base = project[0] != '\0' ? project : "none";
     slash = strrchr(base, '/');
     snprintf(name, sizeof(name), "%s",
              slash != NULL && slash[1] != '\0' ? slash + 1 : base);
@@ -432,10 +432,10 @@ agent_history_dir(char *dst, size_t dst_size)
             if(*p == '/' || *p == ' ' || *p == ':')
                 *p = '_';
         snprintf(dst, dst_size, "%s/.kryon/krait/agent/%s-%08x", home, clean,
-                 agent_path_hash(agent_project));
-        if(agent_task[0] != '\0') {
+                 agent_path_hash(project));
+        if(task[0] != '\0') {
             size_t used = strlen(dst);
-            snprintf(dst + used, dst_size - used, "--%s", agent_task);
+            snprintf(dst + used, dst_size - used, "--%s", task);
         }
     }
 }
@@ -916,6 +916,7 @@ agent_tool_validate(char *out, size_t out_size)
 {
     char config_path[KRAIT_PATH_MAX * 2], report_path[KRAIT_PATH_MAX * 3];
     char *config = NULL;
+    char before[65], after[65];
     long len;
     KryJson *root = NULL, *tasks = NULL;
     KryJsonBuf report = {0};
@@ -953,6 +954,11 @@ agent_tool_validate(char *out, size_t out_size)
             return;
         }
     }
+    if(!krait_project_snapshot(agent_project, before)) {
+        snprintf(out + used, out_size - used, "[validate] FAILED: cannot snapshot project sources\n");
+        kry_json_free(root); free(config);
+        return;
+    }
     kry_json_buf_raw(&report, "{\"version\":1,\"project\":");
     kry_json_buf_str(&report, agent_project);
     kry_json_buf_raw(&report, ",\"task\":");
@@ -986,7 +992,13 @@ agent_tool_validate(char *out, size_t out_size)
                  name, rc == 0 ? "passed" : "FAILED", rc, elapsed, output);
         if(atomic_load(&agent_stop_requested)) { passed = 0; break; }
     }
-    kry_json_buf_raw(&report, "],\"passed\":"); kry_json_buf_num(&report, passed);
+    if(!krait_project_snapshot(agent_project, after) || strcmp(before, after) != 0) {
+        passed = 0;
+        used = strlen(out);
+        snprintf(out + used, out_size - used, "[validate] FAILED: project sources changed during validation\n");
+    }
+    kry_json_buf_raw(&report, "],\"source_snapshot\":"); kry_json_buf_str(&report, before);
+    kry_json_buf_raw(&report, ",\"passed\":"); kry_json_buf_num(&report, passed);
     kry_json_buf_raw(&report, "}");
     const char *json = kry_json_buf_finish(&report);
     snprintf(report_path, sizeof(report_path), "%s.validation.json", agent_history_path);
@@ -996,6 +1008,41 @@ agent_tool_validate(char *out, size_t out_size)
              passed && saved ? "passed" : "FAILED", saved ? " (report saved)" : " (could not save report)");
     agent_validation_passed = passed && saved;
     kry_json_buf_free(&report); kry_json_free(root); free(config);
+}
+
+int
+krait_agent_validation_for(const char *bound_project, const char *bound_task)
+{
+    char path[KRAIT_PATH_MAX * 3], snapshot[65];
+    char *text = NULL;
+    long len;
+    int valid = 0;
+    char dir[KRAIT_PATH_MAX * 2];
+    if(agent_busy || bound_project == NULL || bound_task == NULL || bound_project[0] == 0 ||
+       strchr(bound_task, '/') != NULL || strstr(bound_task, "..") != NULL)
+        return 0;
+    agent_history_dir(dir, sizeof(dir), bound_project, bound_task);
+    snprintf(path, sizeof(path), "%s/history.jsonl.validation.json", dir);
+    if(!krait_read_file_alloc(path, &text, &len))
+        return 0;
+    KryJson *root = kry_json_parse(text);
+    free(text);
+    const char *saved = kry_json_string(kry_json_get(root, "source_snapshot"));
+    const char *project = kry_json_string(kry_json_get(root, "project"));
+    const char *task = kry_json_string(kry_json_get(root, "task"));
+    if(saved != NULL && project != NULL && task != NULL &&
+       strcmp(project, bound_project) == 0 && strcmp(task, bound_task) == 0 &&
+       kry_json_number(kry_json_get(root, "passed")) == 1 &&
+       krait_project_snapshot(bound_project, snapshot) && strcmp(snapshot, saved) == 0)
+        valid = 1;
+    kry_json_free(root);
+    return valid;
+}
+
+int
+krait_agent_validation_current(void)
+{
+    return krait_agent_validation_for(agent_project, agent_task);
 }
 
 /* Render the project's screen offscreen, encode the PNG, and hold it for
@@ -1775,7 +1822,7 @@ agent_bind_session(const char *project_dir, const char *task)
     agent_pending_image = NULL;
     snprintf(agent_project, sizeof(agent_project), "%s", project_dir);
     snprintf(agent_task, sizeof(agent_task), "%s", task);
-    agent_history_dir(dir, sizeof(dir));
+    agent_history_dir(dir, sizeof(dir), agent_project, agent_task);
     snprintf(agent_history_path, sizeof(agent_history_path), "%s/history.jsonl",
              dir);
     krait_mkdir_p(dir);

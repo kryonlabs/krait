@@ -455,6 +455,12 @@ krait_kanban_move(int col, int index, int to_col)
 
     if(c == NULL || to_col < 0 || to_col > 3 || to_col == col)
         return 0;
+    if(to_col == 3 && c->project[0] != 0 &&
+       !krait_agent_validation_for(c->project, c->id)) {
+        snprintf(c->status, sizeof(c->status),
+                 "Cannot accept: run this card's validation against current sources first");
+        return 0;
+    }
     slash = strrchr(c->path, '/');
     if(slash == NULL)
         return 0;

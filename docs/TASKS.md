@@ -29,7 +29,20 @@ output for each check. Exit 124 indicates timeout; 130 indicates cancellation.
 A malformed configuration or interrupted check cannot leave the previous
 report marked as a successful current run.
 
-Passing validation places a manual run in Review; it does not mark a Kanban
-card Done. Results describe the checks at execution time and are not yet
-bound to a source snapshot. Re-run checks after changing code. Source-version
-validation and explicit task acceptance remain separate roadmap work.
+Passing validation places a manual run in Review. For a project-bound Kanban
+card, use that card's agent session to run validation, then click **Accept**
+in Review to move it to Done. Krait refuses the move if results are missing,
+failed, from another task, or stale. Cards without a project remain manually
+managed. Direct editing/import of board files is not an acceptance mechanism.
+
+Reports include a SHA-256 source snapshot. Validation checks the tree both
+before and after execution; checks that change source files do not pass.
+Acceptance recomputes the snapshot so later edits invalidate the result.
+Names, file modes, regular-file contents and symlink destinations contribute
+to it. The following directory names are excluded at every level: `.git`,
+`build`, `out`, `node_modules`, `.cache`. Keep source inputs outside these
+output/dependency directories. Symlink targets' contents and external
+services/dependencies are not covered; rerun validation when they change.
+`.krait/tasks.json` itself is included, so changing the checks invalidates
+older results. Source-based acceptance does not prove arbitrary product
+requirements: review the task's acceptance criteria before clicking Accept.

@@ -267,7 +267,7 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
     column_label: [64] char
     snprintf(column_label, sizeof(column_label), "%s",
              krait_kanban_column_name(col))
-    Text(column_label, (int)bounds.x + ScaleUIPx(140),
+    Text(column_label, (int)bounds.x + ScaleUIPx(190),
                (int)bounds.y + ScaleUIPx(13), ScaleUIPx(12), GetThemeIcon())
     if col > 0 {
         if StyledButton((int)bounds.x + pad + ScaleUIPx(72),
@@ -282,9 +282,11 @@ draw_card_detail :: (bounds: Rectangle, st: state.IdeState*, pad: int) {
     if col < 3 {
         if StyledButton((int)bounds.x + pad + ScaleUIPx(104),
                                (int)bounds.y + ScaleUIPx(6),
-                               ScaleUIPx(28), row_h, ">",
+                               col == 2 ? ScaleUIPx(70) : ScaleUIPx(28), row_h, col == 2 ? "Accept" : ">",
                                ButtonStyleSecondary, 0, NULL) {
-            krait_kanban_move(col, index, col + 1)
+            if krait_kanban_move(col, index, col + 1) == 0 {
+                return
+            }
             kanban_reset_selection()
             return
         }
