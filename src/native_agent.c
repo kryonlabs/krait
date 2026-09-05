@@ -32,6 +32,9 @@
 #include <unistd.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <fcntl.h>
+#include <errno.h>
+#include "kry_sha256.h"
 
 #define AGENT_MSG_USER 0
 #define AGENT_MSG_ASSISTANT 1
@@ -588,10 +591,183 @@ agent_remember(int kind, const char *text)
 static int
 agent_path_safe(const char *rel)
 {
-    if(rel == NULL || rel[0] == '\0' || rel[0] == '/')
-        return 0;
-    if(strstr(rel, "..") != NULL)
-        return 0;
+    if(rel == NULL || !*rel || *rel == '/' || strlen(rel) >= 256) return 0;
+    const char *part = rel;
+    for(const char *p = rel;; p++) {
+        if(*p == '/' || !*p) {
+            size_t n = (size_t)(p - part);
+            if(!n || (n == 1 && part[0] == '.') || (n == 2 && !memcmp(part, "..", 2)) ||
+               (n == 4 && !memcmp(part, ".git", 4))) return 0;
+            if(!*p) break;
+            part = p + 1;
+        }
+    }
+    return 1;
+}
+
+/* Descriptor-relative file access: no symlink component is followed. */
+static int
+agent_file_parent(const char *path, int create, char leaf[256])
+{
+    char copy[256], *save = NULL;
+    if(!agent_path_safe(path)) return -1;
+    int dir = open(agent_project, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if(dir < 0) return -1;
+    snprintf(copy, sizeof(copy), "%s", path);
+    char *part = strtok_r(copy, "/", &save);
+    for(;;) {
+        char *next = strtok_r(NULL, "/", &save);
+        if(next == NULL) { snprintf(leaf, 256, "%s", part); return dir; }
+        if(create && mkdirat(dir, part, 0755) != 0 && errno != EEXIST) {
+            close(dir); return -1;
+        }
+        int child = openat(dir, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        close(dir);
+        if(child < 0) return -1;
+        struct stat repository;
+        if(create && fstatat(child, ".git", &repository, AT_SYMLINK_NOFOLLOW) == 0) {
+            close(child); return -1; /* Nested repositories must be edited upstream. */
+        }
+        dir = child;
+        part = next;
+    }
+}
+
+/* 1 regular text file, 0 absent leaf, -1 refused or unreadable. */
+static int
+agent_read_at(int parent, const char *leaf, char **text, mode_t *mode)
+{
+    *text = NULL;
+    int fd = openat(parent, leaf, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if(fd < 0) return errno == ENOENT ? 0 : -1;
+    struct stat st;
+    if(fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < 0 || st.st_size > 16 * 1024 * 1024) {
+        close(fd); return -1;
+    }
+    size_t size = (size_t)st.st_size, used = 0;
+    char *data = malloc(size + 1);
+    if(data == NULL) { close(fd); return -1; }
+    while(used < size) {
+        ssize_t n = read(fd, data + used, size - used);
+        if(n < 0 && errno == EINTR) continue;
+        if(n <= 0) { free(data); close(fd); return -1; }
+        used += (size_t)n;
+    }
+    char extra;
+    ssize_t tail;
+    do { tail = read(fd, &extra, 1); } while(tail < 0 && errno == EINTR);
+    close(fd);
+    if(tail != 0 || memchr(data, 0, size) != NULL) { free(data); return -1; }
+    data[size] = 0;
+    *text = data;
+    if(mode) *mode = st.st_mode & 0777;
+    return 1;
+}
+
+static int
+agent_file_read(const char *path, char **text)
+{
+    char leaf[256];
+    int parent = agent_file_parent(path, 0, leaf);
+    *text = NULL;
+    if(parent < 0) return -1;
+    int result = agent_read_at(parent, leaf, text, NULL);
+    close(parent);
+    return result;
+}
+
+static int
+agent_file_replace(const char *path, const char *expected, int existed, const char *content)
+{
+    char leaf[256], temp[128], *current = NULL;
+    mode_t mode = 0644;
+    int parent = agent_file_parent(path, content != NULL, leaf);
+    if(parent < 0) return 0;
+    int found = agent_read_at(parent, leaf, &current, &mode);
+    if(found < 0 || found != existed || (found && strcmp(current, expected) != 0)) {
+        free(current); close(parent); return 0;
+    }
+    free(current);
+    if(content == NULL) {
+        int ok = !found || unlinkat(parent, leaf, 0) == 0;
+        close(parent); return ok;
+    }
+    static unsigned seq;
+    int fd = -1;
+    for(int i = 0; i < 100 && fd < 0; i++) {
+        snprintf(temp, sizeof(temp), ".krait-write-%d-%u", (int)getpid(), ++seq);
+        fd = openat(parent, temp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+        if(fd < 0 && errno != EEXIST) break;
+    }
+    if(fd < 0) { close(parent); return 0; }
+    size_t size = strlen(content), used = 0;
+    int ok = fchmod(fd, mode) == 0;
+    while(ok && used < size) {
+        ssize_t n = write(fd, content + used, size - used);
+        if(n < 0 && errno == EINTR) continue;
+        if(n <= 0) { ok = 0; break; }
+        used += (size_t)n;
+    }
+    if(fsync(fd) != 0) ok = 0;
+    if(close(fd) != 0) ok = 0;
+    current = NULL;
+    found = agent_read_at(parent, leaf, &current, NULL);
+    if(found < 0 || found != existed || (found && strcmp(current, expected) != 0)) ok = 0;
+    free(current);
+    if(ok) ok = renameat(parent, temp, parent, leaf) == 0;
+    if(!ok) unlinkat(parent, temp, 0);
+    close(parent);
+    return ok;
+}
+
+typedef struct { char path[256]; char digest[65]; } AgentReadVersion;
+static AgentReadVersion *agent_read_versions;
+static int agent_read_version_count;
+static int agent_read_version_capacity;
+static int agent_read_version_failed;
+
+static void
+agent_text_digest(const char *text, char digest[65])
+{
+    KrySha256 hash;
+    unsigned char raw[32];
+    kry_sha256_init(&hash);
+    kry_sha256_update(&hash, text, strlen(text));
+    kry_sha256_final(&hash, raw);
+    kry_sha256_hex(raw, digest);
+}
+
+static void
+agent_remember_read(const char *path, const char *text)
+{
+    int i;
+    for(i = 0; i < agent_read_version_count; i++)
+        if(!strcmp(path, agent_read_versions[i].path)) break;
+    if(i == agent_read_version_capacity) {
+        int capacity = agent_read_version_capacity ? agent_read_version_capacity * 2 : 64;
+        AgentReadVersion *next = realloc(agent_read_versions, (size_t)capacity * sizeof(*next));
+        if(next == NULL) { agent_read_version_failed = 1; return; }
+        agent_read_versions = next;
+        agent_read_version_capacity = capacity;
+    }
+    if(i == agent_read_version_count) agent_read_version_count++;
+    snprintf(agent_read_versions[i].path, sizeof(agent_read_versions[i].path), "%s", path);
+    if(text != NULL) agent_text_digest(text, agent_read_versions[i].digest);
+    else snprintf(agent_read_versions[i].digest, sizeof(agent_read_versions[i].digest), "-");
+}
+
+static int
+agent_read_is_current(const char *path, const char *text)
+{
+    if(agent_read_version_failed) return 0;
+    for(int i = 0; i < agent_read_version_count; i++) {
+        if(!strcmp(path, agent_read_versions[i].path)) {
+            char digest[65];
+            if(text == NULL) return !strcmp(agent_read_versions[i].digest, "-");
+            agent_text_digest(text, digest);
+            return !strcmp(digest, agent_read_versions[i].digest);
+        }
+    }
     return 1;
 }
 
@@ -629,12 +805,16 @@ agent_tool_read(const char *path, char *out, size_t out_size)
         return;
     }
     snprintf(full, sizeof(full), "%s/%s", agent_project, path);
-    if(!krait_read_file_alloc(full, &text, &len) || text == NULL) {
-        snprintf(out + used, out_size - used, "[read] no such file: %s\n",
+    int read_status = agent_file_read(path, &text);
+    if(read_status != 1) {
+        if(read_status == 0) agent_remember_read(path, NULL);
+        snprintf(out + used, out_size - used, "[read] refused or unavailable: %s\n",
                  path);
         free(text);
         return;
     }
+    agent_remember_read(path, text);
+    len = (long)strlen(text);
     if(len > AGENT_READ_CAP)
         text[AGENT_READ_CAP] = '\0';
     snprintf(out + used, out_size - used, "[read %s]\n%s\n", path, text);
@@ -693,19 +873,19 @@ static int agent_last_write_removed;
 static int
 agent_tool_write(const char *path, const char *content)
 {
-    char full[KRAIT_PATH_MAX * 2];
     char *orig = NULL;
-    long len;
     int had_orig, index;
     AgentChange *change;
 
     if(!agent_path_safe(path) || strlen(path) >= sizeof(agent_changes[0].path) ||
        content == NULL)
         return 0;
-    snprintf(full, sizeof(full), "%s/%s", agent_project, path);
-    krait_ensure_parent_dir(full);
-    had_orig = krait_read_file_alloc(full, &orig, &len);
-    if(!had_orig && krait_path_exists(full)) {
+    char leaf[256];
+    int parent = agent_file_parent(path, 1, leaf);
+    if(parent < 0) return 0;
+    had_orig = agent_read_at(parent, leaf, &orig, NULL);
+    close(parent);
+    if(had_orig < 0 || !agent_read_is_current(path, had_orig == 1 ? orig : NULL)) {
         free(orig);
         return 0;
     }
@@ -739,10 +919,11 @@ agent_tool_write(const char *path, const char *content)
     free(change->after);
     change->after = after;
     /* Persist the before/after images before modifying the project. */
-    if(!agent_changes_save() || !krait_write_text_file_atomic(full, content)) {
+    if(!agent_changes_save() || !agent_file_replace(path, orig, had_orig, content)) {
         free(orig);
         return 0;
     }
+    agent_remember_read(path, content);
     agent_diff_counts(had_orig ? orig : NULL, content,
                       &agent_last_write_added, &agent_last_write_removed);
     if(!had_orig)
@@ -799,15 +980,12 @@ krait_agent_change_review(int index)
 static int
 agent_change_matches(AgentChange *c, int reverting)
 {
-    char full[KRAIT_PATH_MAX * 2];
     char *current = NULL;
-    long len;
-    snprintf(full, sizeof(full), "%s/%s", agent_project, c->path);
-    int exists = krait_read_file_alloc(full, &current, &len);
-    int matches = exists && (strcmp(current, c->after) == 0 ||
+    int exists = agent_file_read(c->path, &current);
+    int matches = exists == 1 && (strcmp(current, c->after) == 0 ||
                              (reverting && c->existed && strcmp(current, c->before) == 0));
     free(current);
-    return matches || (reverting && !c->existed && !krait_path_exists(full));
+    return matches || (reverting && !c->existed && exists == 0);
 }
 
 int
@@ -823,8 +1001,12 @@ krait_agent_review_change(int index, int accept)
     if(!accept) {
         char full[KRAIT_PATH_MAX * 2];
         snprintf(full, sizeof(full), "%s/%s", agent_project, c->path);
-        int ok = c->existed ? krait_write_text_file_atomic(full, c->before) :
-                             (!krait_path_exists(full) || unlink(full) == 0);
+        char *current = NULL;
+        int found = agent_file_read(c->path, &current);
+        int ok = found >= 0 && agent_file_replace(c->path, current, found,
+                                                c->existed ? c->before : NULL);
+        free(current);
+        if(ok) agent_remember_read(c->path, c->existed ? c->before : NULL);
         if(!ok) {
             agent_set_status("Could not restore %s; retry available", c->path);
             return 0;
@@ -1873,6 +2055,8 @@ agent_bind_session(const char *project_dir, const char *task)
     agent_perm_count = 0;
     agent_perm_always = 0;
     agent_written_count = 0;
+    agent_read_version_count = 0;
+    agent_read_version_failed = 0;
     if(agent_req != NULL) {
         krait_ai_free(agent_req);
         agent_req = NULL;
@@ -2310,6 +2494,9 @@ krait_agent_shutdown(void)
     free(agent_job.result);
     memset(&agent_job, 0, sizeof(agent_job));
     agent_changes_clear();
+    free(agent_read_versions);
+    agent_read_versions = NULL;
+    agent_read_version_count = agent_read_version_capacity = 0;
 
     if(agent_req != NULL) {
         krait_ai_free(agent_req);

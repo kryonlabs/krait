@@ -467,6 +467,59 @@ test_selective_review(void)
     CHECK(krait_agent_change_review(1) == 2);
 }
 
+static void
+test_file_guards(void)
+{
+    char project[] = "/tmp/krait-file-guards-XXXXXX";
+    char outside[] = "/tmp/krait-outside-XXXXXX";
+    char file[1024], linkpath[1024], outside_file[1024];
+    char *result, *text = NULL;
+    long len;
+    CHECK(mkdtemp(project) != NULL);
+    CHECK(mkdtemp(outside) != NULL);
+    CHECK(krait_agent_bind_task(project, "guards"));
+    snprintf(outside_file, sizeof(outside_file), "%s/private.txt", outside);
+    CHECK(krait_write_text_file_atomic(outside_file, "outside untouched"));
+    snprintf(linkpath, sizeof(linkpath), "%s/link", project);
+    CHECK(symlink(outside, linkpath) == 0);
+    result = krait_agent_run_tools("[{\"tool\":\"read\",\"path\":\"link/private.txt\"},{\"tool\":\"write\",\"path\":\"link/private.txt\",\"content\":\"overwrite\"}]");
+    CHECK(result != NULL && strstr(result, "refused") != NULL);
+    CHECK(result != NULL && strstr(result, "outside untouched") == NULL);
+    free(result);
+    snprintf(file, sizeof(file), "%s/direct.txt", project);
+    CHECK(symlink(outside_file, file) == 0);
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"direct.txt\",\"content\":\"overwrite\"}]");
+    CHECK(result != NULL && strstr(result, "refused") != NULL); free(result);
+    CHECK(krait_read_file_alloc(outside_file, &text, &len));
+    CHECK(text != NULL && strcmp(text, "outside untouched") == 0); free(text); text = NULL;
+    snprintf(file, sizeof(file), "%s/vendor/module", project);
+    krait_mkdir_p(file);
+    snprintf(file, sizeof(file), "%s/vendor/module/.git", project);
+    CHECK(krait_write_text_file_atomic(file, "gitdir: elsewhere"));
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"vendor/module/code.txt\",\"content\":\"wrong repository\"}]");
+    CHECK(result != NULL && strstr(result, "refused") != NULL); free(result);
+    snprintf(file, sizeof(file), "%s/source.txt", project);
+    CHECK(krait_write_text_file_atomic(file, "first"));
+    result = krait_agent_run_tools("[{\"tool\":\"read\",\"path\":\"source.txt\"}]"); free(result);
+    CHECK(krait_write_text_file_atomic(file, "user revision"));
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"source.txt\",\"content\":\"stale overwrite\"}]");
+    CHECK(result != NULL && strstr(result, "refused") != NULL); free(result);
+    CHECK(krait_read_file_alloc(file, &text, &len));
+    CHECK(text != NULL && strcmp(text, "user revision") == 0); free(text);
+    result = krait_agent_run_tools("[{\"tool\":\"read\",\"path\":\"source.txt\"},{\"tool\":\"write\",\"path\":\"source.txt\",\"content\":\"fresh revision\"}]");
+    CHECK(result != NULL && strstr(result, "[write source.txt] ok") != NULL); free(result);
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"nested/deep/new.txt\",\"content\":\"nested\"}]");
+    CHECK(result != NULL && strstr(result, "[write nested/deep/new.txt] ok") != NULL); free(result);
+    snprintf(file, sizeof(file), "%s/nested/deep/new.txt", project);
+    CHECK(unlink(file) == 0);
+    CHECK(symlink(outside_file, file) == 0);
+    CHECK(!krait_agent_review_change(0, 0));
+    CHECK(unlink(file) == 0);
+    CHECK(krait_agent_review_change(0, 0));
+    result = krait_agent_run_tools("[{\"tool\":\"write\",\"path\":\"nested/deep/new.txt\",\"content\":\"recreated\"}]");
+    CHECK(result != NULL && strstr(result, "[write nested/deep/new.txt] ok") != NULL); free(result);
+}
+
 /* Hex editor backend: open/edit/save round-trip with .bak backup. */
 static void
 test_hex_editor(void)
@@ -986,6 +1039,7 @@ main(int argc, char **argv)
     test_tools();
     test_change_recovery();
     test_selective_review();
+    test_file_guards();
     test_hex_editor();
     test_provider_selection();
     test_response_parsers();

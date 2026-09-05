@@ -26,10 +26,12 @@ acceptance checks before marking it done.
 - [ ] Acceptance-history browser and dependency-aware scheduling.
 - [x] Before/after review UI and persisted per-file acceptance/revert.
 - [ ] Checkpoint history and full large-file review without preview limits.
-- [ ] Detect stale writes against read versions and unsaved editor contents.
+- [x] Detect stale writes against full file-tool read versions in the active session.
+- [ ] Persist read versions across restart and protect unsaved editor contents before writes.
 - [ ] Make multi-file changes transactional; handle external writers and
   filesystem errors without losing the previous recovery checkpoint.
-- [ ] Enforce workspace boundaries for file tools, including symlink paths.
+- [x] Descriptor-relative read/write/revert with symlink refusal and nested-repository write protection.
+- [ ] Apply workspace boundaries consistently to search, screenshots and proposal application.
 - [ ] Context summarization and configurable execution budgets.
 
 Recovery currently covers the latest file-tool write batch only. It does not

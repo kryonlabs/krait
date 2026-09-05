@@ -89,3 +89,24 @@ The preview currently displays up to 4096 wrapped lines per version and
 indicates that limit. Open larger files in the editor for complete review.
 Only the latest batch is retained; checkpoint-history browsing remains on
 the roadmap.
+
+## File-tool conflicts and boundaries
+
+Agent read/write/revert operations address paths relative to the bound
+project through directory descriptors. Absolute paths, traversal components,
+`.git` paths, symlink components, binary files and non-regular files are
+refused. File reads currently support text files up to 16 MiB. Symlinks are
+refused even when their target is inside the project. Writes into nested
+repositories are refused so those changes can be made upstream.
+
+The agent retains full-content fingerprints of files read during the active
+session, even when the displayed tool output is truncated. A write refuses
+files changed since that read; reread the file to work from its latest
+contents. Revert also rechecks the current file before replacing it. These
+checks reduce conflicting writes but are not a filesystem transaction with
+external editors. Read fingerprints do not yet persist across restart.
+
+Shell commands use their existing permission controls and are not confined
+by these file-tool rules. Search, screenshots and proposal application still
+need the same boundary audit. Unsaved editor buffers remain preserved during
+reload, but blocking agent writes against unsaved buffers is separate work.
