@@ -78,7 +78,9 @@ static int agent_bind_session(const char *project, const char *task);
 static char agent_history_path[KRAIT_PATH_MAX * 2];
 static KraitAiRequest *agent_req;
 static int agent_round;
-static int agent_stop_requested;
+static atomic_int agent_stop_requested;
+static char agent_run_state[32] = "idle";
+static void agent_run_save(const char *state);
 static int agent_http_retries;
 static int agent_busy;
 static char agent_status[160];
@@ -114,7 +116,15 @@ agent_tool_worker(void *userdata)
 static int
 agent_batch_needs_gl(const char *json)
 {
-    return json != NULL && strstr(json, "\"tool\":\"screenshot\"") != NULL;
+    KryJson *root = kry_json_parse(json);
+    int needs = 0;
+    for(int i = 0; root != NULL && i < kry_json_count(root); i++) {
+        const char *tool = kry_json_string(kry_json_get(kry_json_at(root, i), "tool"));
+        if(tool != NULL && strcmp(tool, "screenshot") == 0)
+            needs = 1;
+    }
+    kry_json_free(root);
+    return needs;
 }
 
 /* Kick a tool batch: sync for GL-needing batches, threaded otherwise.
@@ -131,8 +141,11 @@ agent_start_tools(const char *json, char **result)
     agent_job.json = strdup(json);
     agent_job.result = NULL;
     atomic_store(&agent_job.done, 0);
-    if(!KryThreadStart(&agent_tool_thread, agent_tool_worker, &agent_job))
-        return 0;
+    if(agent_job.json == NULL ||
+       !KryThreadStart(&agent_tool_thread, agent_tool_worker, &agent_job)) {
+        *result = NULL;
+        return 1;
+    }
     agent_tool_thread_running = 1;
     return 0;
 }
@@ -325,6 +338,61 @@ agent_set_status(const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(agent_status, sizeof(agent_status), fmt, ap);
     va_end(ap);
+}
+
+static void
+agent_run_save(const char *state)
+{
+    char path[KRAIT_PATH_MAX * 3];
+    snprintf(agent_run_state, sizeof(agent_run_state), "%s", state);
+    if(agent_history_path[0] == 0)
+        return;
+    snprintf(path, sizeof(path), "%s.run", agent_history_path);
+    if(!krait_write_text_file_atomic(path, state))
+        agent_set_status("Could not persist run state");
+}
+
+static void
+agent_run_load(void)
+{
+    char path[KRAIT_PATH_MAX * 3];
+    char *text = NULL;
+    long len;
+    snprintf(agent_run_state, sizeof(agent_run_state), "idle");
+    snprintf(path, sizeof(path), "%s.run", agent_history_path);
+    if(krait_read_file_alloc(path, &text, &len) && text != NULL) {
+        if(strcmp(text, "running") == 0 || strcmp(text, "tools") == 0 ||
+           strcmp(text, "approval") == 0 || strcmp(text, "interrupted") == 0) {
+            agent_run_save("interrupted");
+            agent_set_status("Interrupted run: Resume checks current files before continuing");
+        } else if(strcmp(text, "stopped") == 0 || strcmp(text, "failed") == 0 ||
+                  strcmp(text, "review") == 0 || strcmp(text, "idle") == 0)
+            snprintf(agent_run_state, sizeof(agent_run_state), "%s", text);
+    }
+    free(text);
+}
+
+const char *
+krait_agent_run_state(void)
+{
+    return agent_run_state;
+}
+
+int
+krait_agent_can_resume(void)
+{
+    return !agent_busy && (strcmp(agent_run_state, "interrupted") == 0 ||
+           strcmp(agent_run_state, "stopped") == 0 || strcmp(agent_run_state, "failed") == 0);
+}
+
+int
+krait_agent_resume(void)
+{
+    if(!krait_agent_can_resume())
+        return 0;
+    return krait_agent_send("Continue the interrupted task. First inspect current files and "
+        "the recorded tool results: an interrupted command may already have changed files. "
+        "Do not blindly replay commands. Verify remaining work before proceeding.");
 }
 
 static unsigned int
@@ -982,6 +1050,8 @@ krait_agent_run_tools(const char *json)
         const char *tool = kry_json_string(kry_json_get(action, "tool"));
         size_t before;
 
+        if(atomic_load(&agent_stop_requested))
+            break;
         if(tool == NULL)
             continue;
         agent_rec_begin(tool,
@@ -1370,6 +1440,7 @@ krait_agent_permission_respond(int allow, int always)
     }
     free(json);
     agent_busy = 0;
+    agent_run_save("stopped");
     agent_set_status("tools denied");
     agent_remember(AGENT_MSG_ERROR, "tool batch denied by user");
 }
@@ -1539,6 +1610,7 @@ agent_start_request(void)
     agent_pending_image = NULL;
     if(agent_req == NULL) {
         agent_busy = 0;
+        agent_run_save("failed");
         agent_set_status("agent request failed to start");
         agent_remember(AGENT_MSG_ERROR, "agent request failed to start");
         return;
@@ -1553,6 +1625,7 @@ agent_finish(const char *text)
     const char *usage = krait_ai_last_usage();
 
     agent_busy = 0;
+    agent_run_save("review");
     agent_round = 0;
     agent_set_status("%s", usage[0] != '\0' ? usage : "");
     if(text != NULL && text[0] != '\0')
@@ -1621,6 +1694,7 @@ agent_bind_session(const char *project_dir, const char *task)
     }
     agent_load_history();
     agent_changes_load();
+    agent_run_load();
     agent_session_scan = 0;
     return 1;
 }
@@ -1782,6 +1856,8 @@ krait_agent_send(const char *text)
         return 0;
     }
     agent_remember(AGENT_MSG_USER, text);
+    agent_run_save("running");
+    agent_http_retries = 0;
     agent_busy = 1;
     agent_round = 0;
     agent_stop_requested = 0;
@@ -1792,8 +1868,23 @@ krait_agent_send(const char *text)
 void
 krait_agent_stop(void)
 {
-    if(agent_busy)
-        agent_stop_requested = 1;
+    if(!agent_busy)
+        return;
+    atomic_store(&agent_stop_requested, 1);
+    agent_run_save("stopped");
+    free(agent_perm_json);
+    agent_perm_json = NULL;
+    agent_perm_count = 0;
+    if(agent_req != NULL) {
+        krait_ai_free(agent_req);
+        agent_req = NULL;
+    }
+    if(!agent_tool_thread_running) {
+        agent_busy = 0;
+        agent_set_status("stopped");
+    } else {
+        agent_set_status("Stopping after the current tool returns");
+    }
 }
 
 void
@@ -1818,6 +1909,7 @@ krait_agent_clear(void)
     agent_busy = 0;
     agent_round = 0;
     agent_set_status("");
+    agent_run_save("idle");
     if(agent_history_path[0] != '\0')
         remove(agent_history_path);
 }
@@ -1832,6 +1924,7 @@ agent_execute_actions(char *reply)
     char *results;
 
     agent_round++;
+    agent_run_save("tools");
     agent_remember(AGENT_MSG_ACTIONS, reply);
     agent_set_status("running tools (round %d/%d)...", agent_round,
                      AGENT_MAX_ROUNDS);
@@ -1839,12 +1932,14 @@ agent_execute_actions(char *reply)
         free(reply);
         if(results == NULL) {
             agent_busy = 0;
+            agent_run_save("failed");
             agent_set_status("tool failure");
             return;
         }
         agent_remember_tool_results(results);
         if(agent_round >= AGENT_MAX_ROUNDS) {
             agent_busy = 0;
+            agent_run_save("failed");
             agent_set_status("stopped: too many tool rounds");
             agent_remember(AGENT_MSG_ERROR, "stopped: too many tool rounds");
             return;
@@ -1873,12 +1968,20 @@ krait_agent_poll(void)
             return 1;
         if(results == NULL) {
             agent_busy = 0;
+            agent_run_save("failed");
             agent_set_status("tool failure");
             return 0;
         }
         agent_remember_tool_results(results);
+        if(atomic_load(&agent_stop_requested)) {
+            agent_busy = 0;
+            agent_run_save("stopped");
+            agent_set_status("stopped");
+            return 0;
+        }
         if(agent_round >= AGENT_MAX_ROUNDS) {
             agent_busy = 0;
+            agent_run_save("failed");
             agent_set_status("stopped: too many tool rounds");
             agent_remember(AGENT_MSG_ERROR, "stopped: too many tool rounds");
             return 0;
@@ -1891,7 +1994,8 @@ krait_agent_poll(void)
     if(s == KRAIT_AI_RUNNING || s == KRAIT_AI_PENDING)
         return 1;
     if(s != KRAIT_AI_DONE) {
-        const char *err = krait_ai_error(agent_req);
+        char err[512];
+        snprintf(err, sizeof(err), "%s", krait_ai_error(agent_req) != NULL ? krait_ai_error(agent_req) : "request failed");
 
         krait_ai_free(agent_req);
         agent_req = NULL;
@@ -1903,8 +2007,9 @@ krait_agent_poll(void)
             return 1;
         }
         agent_busy = 0;
+        agent_run_save("failed");
         agent_set_status("request failed");
-        agent_remember(AGENT_MSG_ERROR, err != NULL ? err : "request failed");
+        agent_remember(AGENT_MSG_ERROR, err);
         return 0;
     }
     agent_http_retries = 0;
@@ -1914,6 +2019,7 @@ krait_agent_poll(void)
     agent_req = NULL;
     if(reply == NULL) {
         agent_busy = 0;
+        agent_run_save("failed");
         agent_set_status("out of memory");
         agent_remember(AGENT_MSG_ERROR, "out of memory");
         return 0;
@@ -1931,6 +2037,7 @@ krait_agent_poll(void)
             free(agent_perm_json);
             agent_build_perm_lines(reply);
             agent_perm_json = reply;
+            agent_run_save("approval");
             agent_set_status("approve tools? (round %d/%d)", agent_round + 1,
                              AGENT_MAX_ROUNDS);
             return 1;

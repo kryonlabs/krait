@@ -14,6 +14,8 @@ krait_agent_consume_console :: () -> const char* #extern
 krait_agent_clear_console :: () #extern
 krait_agent_streaming_text :: () -> const char* #extern
 krait_agent_compile_errors :: () -> const char* #extern
+krait_agent_can_resume :: () -> int #extern
+krait_agent_resume :: () -> int #extern
 krait_agent_bind :: (project_dir: const char*) #extern
 krait_agent_count :: () -> int #extern
 krait_agent_kind :: (index: int) -> int #extern
@@ -1109,10 +1111,12 @@ draw_agent :: (bounds: Rectangle, st: state.IdeState*) {
     }
     if StyledButton((int)(composer.x + composer.width) - ScaleUIPx(12) - stop_w,
                            control_y, stop_w, ScaleUIPx(28),
-                           busy != 0 ? "Stop" : "Clear",
+                           busy != 0 ? "Stop" : (krait_agent_can_resume() != 0 ? "Resume" : "Clear"),
                            ButtonStyleSecondary, 0, NULL) {
         if busy != 0 {
             krait_agent_stop()
+        } else if krait_agent_can_resume() != 0 {
+            krait_agent_resume()
         } else {
             agent_reset(st)
         }

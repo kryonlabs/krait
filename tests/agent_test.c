@@ -99,6 +99,37 @@ test_task_sessions(void)
 }
 
 static void
+test_interrupted_run_recovery(void)
+{
+    const char *project = "/tmp/krait-agent-run-recovery";
+    char path[2048];
+    unsigned hash = 2166136261u;
+    for(const char *p = project; *p; p++)
+        hash = (hash ^ (unsigned char)*p) * 16777619u;
+    krait_mkdir_p(project);
+    CHECK(krait_agent_bind_task(project, "restart"));
+    CHECK(!krait_agent_can_resume());
+    snprintf(path, sizeof(path), "%s/.kryon/krait/agent/krait-agent-run-recovery-%08x--restart/history.jsonl.run",
+             getenv("HOME"), hash);
+    const char *states[] = {"running", "tools", "approval"};
+    for(int i = 0; i < 3; i++) {
+        CHECK(krait_agent_bind_task(project, "other"));
+        CHECK(krait_write_text_file_atomic(path, states[i]));
+        CHECK(krait_agent_bind_task(project, "restart"));
+        CHECK(strcmp(krait_agent_run_state(), "interrupted") == 0);
+        CHECK(krait_agent_can_resume());
+        CHECK(!krait_agent_busy());
+        CHECK(!krait_agent_permission_pending());
+    }
+    krait_agent_clear();
+    CHECK(strcmp(krait_agent_run_state(), "idle") == 0);
+    CHECK(!krait_agent_can_resume());
+    CHECK(krait_agent_bind_task(project, "other"));
+    CHECK(krait_agent_bind_task(project, "restart"));
+    CHECK(strcmp(krait_agent_run_state(), "idle") == 0);
+}
+
+static void
 test_compile_gate(void)
 {
     char status[256];
@@ -768,6 +799,7 @@ main(int argc, char **argv)
 
     test_history_roundtrip();
     test_task_sessions();
+    test_interrupted_run_recovery();
     test_compile_gate();
     test_run_capture();
     test_tools();
