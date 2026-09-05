@@ -619,6 +619,51 @@ test_selective_review(void)
 }
 
 static void
+test_nested_instructions(void)
+{
+    char root[] = "/tmp/krait-nested-rules-XXXXXX", path[1024], other[1024];
+    CHECK(mkdtemp(root) != NULL);
+    CHECK(krait_agent_bind_task(root, "rules"));
+    snprintf(path, sizeof(path), "%s/src/deep", root); krait_mkdir_p(path);
+    snprintf(path, sizeof(path), "%s/other", root); krait_mkdir_p(path);
+    snprintf(path, sizeof(path), "%s/AGENTS.md", root);
+    CHECK(krait_write_text_file_atomic(path, "root rule"));
+    snprintf(path, sizeof(path), "%s/src/AGENTS.md", root);
+    CHECK(krait_write_text_file_atomic(path, "source rule"));
+    snprintf(path, sizeof(path), "%s/src/deep/AGENTS.md", root);
+    CHECK(krait_write_text_file_atomic(path, "deep rule"));
+    snprintf(other, sizeof(other), "%s/other/AGENTS.md", root);
+    CHECK(krait_write_text_file_atomic(other, "sibling rule"));
+    char *rules = krait_agent_file_instructions("src/deep/new.txt");
+    CHECK(rules && strstr(rules, "root rule") && strstr(rules, "source rule") && strstr(rules, "deep rule"));
+    if(rules && strstr(rules, "root rule") && strstr(rules, "deep rule")) CHECK(strstr(rules, "root rule") < strstr(rules, "deep rule"));
+    CHECK(rules && !strstr(rules, "sibling rule")); free(rules);
+    rules = krait_agent_file_instructions("src/uncreated/new.txt");
+    CHECK(rules && strstr(rules, "source rule") && !strstr(rules, "deep rule")); free(rules);
+    CHECK(krait_agent_file_instructions("../escape.txt") == NULL);
+    CHECK(unlink(path) == 0);
+    CHECK(symlink(other, path) == 0);
+    CHECK(krait_agent_file_instructions("src/deep/new.txt") == NULL);
+    CHECK(unlink(path) == 0);
+    char *large = malloc(13001); CHECK(large != NULL);
+    if(large) {
+        memset(large, 'x', 13000); large[13000] = 0;
+        CHECK(krait_write_text_file_atomic(path, large)); free(large);
+        CHECK(krait_agent_file_instructions("src/deep/new.txt") == NULL);
+        char *direct = krait_agent_run_tools("[{\"tool\":\"read\",\"path\":\"src/deep/AGENTS.md\"}]");
+        CHECK(direct && strstr(direct, "[read src/deep/AGENTS.md]") && !strstr(direct, "refused"));
+        free(direct);
+    }
+    CHECK(krait_write_text_file_atomic(path, "deep rule"));
+    snprintf(path, sizeof(path), "%s/src/deep/file.txt", root);
+    CHECK(krait_write_text_file_atomic(path, "file content"));
+    char *result = krait_agent_run_tools("[{\"tool\":\"read\",\"path\":\"src/deep/file.txt\"}]");
+    CHECK(result && strstr(result, "deep rule") && strstr(result, "file content")); free(result);
+    result = krait_agent_run_tools("[{\"tool\":\"instructions\",\"path\":\"src/deep/new.txt\"}]");
+    CHECK(result && strstr(result, "deep rule") && !strstr(result, "sibling rule")); free(result);
+}
+
+static void
 test_run_deadline(void)
 {
     char root[] = "/tmp/krait-deadline-XXXXXX", path[1024], config[1024];
@@ -1439,6 +1484,7 @@ main(int argc, char **argv)
     test_tools();
     test_change_recovery();
     test_selective_review();
+    test_nested_instructions();
     test_run_deadline();
     test_agent_limits();
     test_validation_archive_failure();

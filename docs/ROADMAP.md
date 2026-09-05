@@ -15,6 +15,7 @@ acceptance checks before marking it done.
   files on revert and retain recovery after session switching.
 - [x] Preserve unsaved editor buffers when agent writes trigger reload.
 - [x] Include user and project AGENTS.md instructions in model context.
+- [x] Discover scoped ancestor AGENTS.md rules for existing and new file paths.
 - [x] Persist run state and offer Resume after interrupted sessions.
 - [x] Cancel pending approval/network waits and stop between tool calls.
 - [x] Terminate active run-tool commands and their process groups on cancellation
@@ -44,7 +45,8 @@ undo shell commands or provide filesystem isolation. Resume starts a new
 model turn that inspects current state instead of replaying an interrupted
 command. Cancellation terminates run-tool commands; graphics and compile-gate
 operations still finish their current operation before stopping. Instruction lookup currently reads ~/.kryon/krait/AGENTS.md and
-the bound project's AGENTS.md; nested directory rules remain to be implemented.
+the bound project's AGENTS.md. Path-specific instruction discovery and reads include
+ancestor directory rules; durable nested-rule context and acknowledgement enforcement remain open.
 
 ## 2. Daily coding
 

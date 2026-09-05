@@ -209,6 +209,7 @@ const char *krait_agent_checks_status(void);
 int krait_agent_checks_count(void);
 const char *krait_agent_check_text(int index, int field);
 int krait_agent_check_number(int index, int duration);
+char *krait_agent_file_instructions(const char *path);
 int krait_agent_limits_load(const char *project);
 int krait_agent_limit(int field);
 void krait_agent_run_budget_start(void);

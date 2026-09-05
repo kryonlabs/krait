@@ -213,3 +213,23 @@ operations finish before returning control, and command termination includes
 its cleanup grace period. A deadline therefore does not guarantee that all
 resources are released at that exact second. Token and monetary budgets and
 context summarization remain planned.
+
+
+## Directory instructions
+
+The `instructions` tool accepts a project-relative target path and returns
+existing `AGENTS.md` files from the project root through the target's parent,
+in that order. It also works for new files and directories. For example,
+`{"tool":"instructions","path":"src/ui/new.kry"}` discovers root,
+`src/`, and `src/ui/` rules without importing rules from sibling directories.
+The `read` tool includes the same rules before file contents. Direct reads of
+an `AGENTS.md` file return that file without recursively attaching rules.
+
+Symlinked instruction files or path components are refused. Rule collection
+is limited to 12,000 bytes including headings; an unreadable or oversized set
+refuses automatic discovery rather than silently dropping a rule. Inspect
+individual rule files explicitly when necessary. Root and user instructions
+remain in model context; nested instructions currently travel in tool output
+and can leave the rolling context. The model is instructed to discover rules
+before a separate write batch, but native enforcement of rule acknowledgement
+and durable retention of nested rules remain planned.

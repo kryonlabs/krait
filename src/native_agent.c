@@ -411,6 +411,10 @@ static const char *const agent_system_prompt =
     "{\"tool\":\"sfs_list\",\"path\":\"/widgets\"}, "
     "{\"tool\":\"sfs_read\",\"path\":\"/widgets/0/bounds\"}, "
     "{\"tool\":\"sfs_write\",\"path\":\"/widgets/0/tap\",\"value\":\"1\"}]. "
+    "Before changing any file, use instructions with its project-relative path to discover "
+    "applicable AGENTS.md rules, including for new files. Read also returns these rules. "
+    "Nested rules apply only within their directories; more specific rules override parent rules. "
+    "Do not combine first-time instruction discovery and dependent writes in one action batch. "
     "validate runs the project checks defined in .krait/tasks.json and saves "
     "their command results. Use it to verify work when configured. "
     "Writes are applied to the project immediately and a compile check "
@@ -897,6 +901,40 @@ agent_file_read(const char *path, char **text)
     return result;
 }
 
+/* Applicable project rules, ordered from root to the target's parent. */
+char *
+krait_agent_file_instructions(const char *path)
+{
+    if(!agent_path_safe(path)) return NULL;
+    char rule[512];
+    char *result = calloc(1, 1);
+    size_t used = 0;
+    if(!result) return NULL;
+    const char *part = path;
+    for(;;) {
+        size_t prefix = (size_t)(part - path);
+        snprintf(rule, sizeof(rule), "%.*sAGENTS.md", (int)prefix, path);
+        char *body = NULL;
+        errno = 0;
+        int found = agent_file_read(rule, &body);
+        if(found < 0 && errno != ENOENT) { free(result); free(body); return NULL; }
+        if(found == 1) {
+            size_t needed = strlen(body) + strlen(rule) + 96;
+            if(used + needed > 12000) { free(result); free(body); return NULL; }
+            char *next = realloc(result, used + needed + 1);
+            if(!next) { free(result); free(body); return NULL; }
+            result = next;
+            snprintf(result + used, needed + 1, "\n[Instructions: %s — apply within this directory and descendants]\n%s\n", rule, body);
+            used = strlen(result);
+        }
+        free(body);
+        const char *slash = strchr(part, '/');
+        if(!slash) break;
+        part = slash + 1;
+    }
+    return result;
+}
+
 int
 krait_project_file_replace(const char *root, const char *path, const char *expected, int existed, const char *content)
 {
@@ -1105,6 +1143,16 @@ agent_tool_read(const char *path, char *out, size_t out_size)
                  path != NULL ? path : "");
         return;
     }
+    const char *basename = strrchr(path, '/');
+    int rule_file = !strcmp(basename ? basename + 1 : path, "AGENTS.md");
+    char *instructions = rule_file ? strdup("") : krait_agent_file_instructions(path);
+    if(!instructions || strlen(instructions) + used + 128 >= out_size) {
+        free(instructions);
+        snprintf(out + used, out_size - used, "[read] refused: applicable AGENTS.md rules are unreadable or exceed the instruction limit; inspect ancestor rules explicitly\n"); return;
+    }
+    snprintf(out + used, out_size - used, "%s", instructions);
+    used = strlen(out);
+    free(instructions);
     snprintf(full, sizeof(full), "%s/%s", agent_project, path);
     int read_status = agent_file_read(path, &text);
     if(read_status != 1) {
@@ -1915,6 +1963,15 @@ krait_agent_run_tools(const char *json)
         else if(strcmp(tool, "search") == 0)
             agent_tool_search(kry_json_string(kry_json_get(action, "query")),
                               out, AGENT_TOOL_OUT_CAP);
+        else if(strcmp(tool, "instructions") == 0) {
+            const char *path = kry_json_string(kry_json_get(action, "path"));
+            char *rules = krait_agent_file_instructions(path);
+            size_t used = strlen(out);
+            if(!rules || used + strlen(rules) + 80 >= AGENT_TOOL_OUT_CAP)
+                snprintf(out + used, AGENT_TOOL_OUT_CAP - used, "[instructions] refused: unsafe path or unreadable/oversized rules\n");
+            else snprintf(out + used, AGENT_TOOL_OUT_CAP - used, "[instructions %s] %s\n", path, *rules ? rules : "No project AGENTS.md rules found");
+            free(rules);
+        }
         else if(strcmp(tool, "read") == 0)
             agent_tool_read(kry_json_string(kry_json_get(action, "path")),
                             out, AGENT_TOOL_OUT_CAP);
